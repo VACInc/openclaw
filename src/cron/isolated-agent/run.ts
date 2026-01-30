@@ -456,6 +456,7 @@ export async function runCronIsolatedAgentTurn(params: {
         to: resolvedDelivery.to,
         accountId: resolvedDelivery.accountId,
         payloads,
+        sessionKey: agentSessionKey,
         bestEffort: bestEffortDeliver,
         deps: createOutboundSendDeps(params.deps),
       });

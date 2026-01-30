@@ -1,7 +1,7 @@
 ---
 summary: "Hooks: event-driven automation for commands and lifecycle events"
 read_when:
-  - You want event-driven automation for /new, /reset, /stop, and agent lifecycle events
+  - You want event-driven automation for /new, /reset, /stop, session, message, and agent lifecycle events
   - You want to build, install, or debug hooks
 ---
 # Hooks
@@ -196,13 +196,14 @@ Each event includes:
 
 ```typescript
 {
-  type: 'command' | 'session' | 'agent' | 'gateway',
+  type: 'command' | 'session' | 'agent' | 'gateway' | 'message' | 'approval' | 'tool' | 'compaction',
   action: string,              // e.g., 'new', 'reset', 'stop'
   sessionKey: string,          // Session identifier
   timestamp: Date,             // When the event occurred
   messages: string[],          // Push messages here to send to user
   context: {
     sessionEntry?: SessionEntry,
+    previousSessionEntry?: SessionEntry,
     sessionId?: string,
     sessionFile?: string,
     commandSource?: string,    // e.g., 'whatsapp', 'telegram'
@@ -213,6 +214,13 @@ Each event includes:
   }
 }
 ```
+
+Context varies by event. Common fields include:
+
+- Session metadata: `sessionEntry`, `previousSessionEntry`, `sessionId`, `sessionFile`, `reason`
+- Agent run metadata: `runId`, `seq`, `stream`, `data`
+- Message metadata: `messageId`, `content`, `channelId`, `conversationId`, `from`, `to`, `provider`
+- Approval metadata: `id`, `decision`, `resolvedBy`, `request`, `createdAtMs`, `expiresAtMs`
 
 ## Event Types
 
@@ -225,31 +233,69 @@ Triggered when agent commands are issued:
 - **`command:reset`**: When `/reset` command is issued
 - **`command:stop`**: When `/stop` command is issued
 
+### Session Events
+
+- **`session:start`**: When a new session begins
+- **`session:end`**: When a session ends
+
 ### Agent Events
 
 - **`agent:bootstrap`**: Before workspace bootstrap files are injected (hooks may mutate `context.bootstrapFiles`)
+- **`agent:start`**: When an agent run starts
+- **`agent:end`**: When an agent run completes
+- **`agent:error`**: When an agent encounters an error
+
+### Message Events
+
+- **`message:received`**: When a message is received
+- **`message:sent`**: When a message is sent
+
+By default, `message:received` and `message:sent` only include safe metadata (lengths, channel ids,
+timestamps) and omit identifiers such as message IDs, recipient/sender IDs, and thread IDs. Enable
+`includeSensitiveHookContext` to include raw content, media URLs, and identifiers.
+
+`message:sent` fires once per delivery (text chunk or media item), not once per logical payload.
+
+### Approval Events
+
+Approval events currently cover exec approval requests.
+
+- **`approval:requested`**: When an approval request is created
+- **`approval:resolved`**: When an approval request is resolved
+- **`approval:expired`**: When an approval request times out
+
+Approval request payloads are redacted by default. Enable `includeSensitiveHookContext` to include
+the full command details in hook context.
+
+### Tool Events
+
+- **`tool:start`**: Tool execution begins
+- **`tool:update`**: Tool execution emits updates
+- **`tool:result`**: Tool execution completes
+
+Tool hook contexts omit tool arguments and results by default. Enable `includeSensitiveHookContext`
+to include full tool data.
+
+### Compaction Events
+
+- **`compaction:start`**: Auto-compaction begins
+- **`compaction:end`**: Auto-compaction completes
+
+Compaction hook contexts include only safe metadata unless `includeSensitiveHookContext` is enabled.
 
 ### Gateway Events
 
-Triggered when the gateway starts:
-
 - **`gateway:startup`**: After channels start and hooks are loaded
+- **`gateway:stop`**: When the gateway is shutting down
+
+`gateway:startup` only includes sanitized metadata (no config or dependency objects).
 
 ### Tool Result Hooks (Plugin API)
 
 These hooks are not event-stream listeners; they let plugins synchronously adjust tool results before Moltbot persists them.
+They are separate from the `tool:*` internal hook events listed above.
 
 - **`tool_result_persist`**: transform tool results before they are written to the session transcript. Must be synchronous; return the updated tool result payload or `undefined` to keep it as-is. See [Agent Loop](/concepts/agent-loop).
-
-### Future Events
-
-Planned event types:
-
-- **`session:start`**: When a new session begins
-- **`session:end`**: When a session ends
-- **`agent:error`**: When an agent encounters an error
-- **`message:sent`**: When a message is sent
-- **`message:received`**: When a message is received
 
 ## Creating Custom Hooks
 
@@ -347,6 +393,39 @@ Hooks can have custom configuration:
         }
       }
     }
+  }
+}
+```
+
+### Internal Hook Security Options
+
+Internal hooks include safe defaults for error and message contexts. `agent:error` omits error
+messages/details unless `includeSensitiveHookContext` is enabled. You can opt in to more detail:
+
+```json
+{
+  "hooks": {
+    "internal": {
+      "enabled": true,
+      "includeErrorStack": false,
+      "includeSensitiveHookContext": false
+    }
+  }
+}
+```
+
+- `includeErrorStack`: Include stack traces in `agent:error` hook context.
+- `includeSensitiveHookContext`: Include full payloads and identifiers in internal hook contexts
+  (message send/receive payloads, approval request details, tool data, and lifecycle details).
+
+### Egress Webhooks Toggle
+
+Disable outbound webhook forwarding (when configured) with a global toggle:
+
+```json
+{
+  "egressWebhooks": {
+    "enabled": false
   }
 }
 ```

@@ -2,6 +2,8 @@ import type { MoltbotConfig } from "../../config/config.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { loadSessionStore, resolveStorePath } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
+import { buildInternalHookContext } from "../../hooks/hook-context.js";
+import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import {
   logMessageProcessed,
@@ -134,30 +136,75 @@ export async function dispatchReplyFromConfig(params: {
   const inboundAudio = isInboundAudioContext(ctx);
   const sessionTtsAuto = resolveSessionTtsAuto(ctx, cfg);
   const hookRunner = getGlobalHookRunner();
-  if (hookRunner?.hasHooks("message_received")) {
-    const timestamp =
-      typeof ctx.Timestamp === "number" && Number.isFinite(ctx.Timestamp)
-        ? ctx.Timestamp
-        : undefined;
-    const messageIdForHook =
-      ctx.MessageSidFull ?? ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast;
-    const content =
-      typeof ctx.BodyForCommands === "string"
-        ? ctx.BodyForCommands
-        : typeof ctx.RawBody === "string"
-          ? ctx.RawBody
-          : typeof ctx.Body === "string"
-            ? ctx.Body
-            : "";
-    const channelId = (ctx.OriginatingChannel ?? ctx.Surface ?? ctx.Provider ?? "").toLowerCase();
-    const conversationId = ctx.OriginatingTo ?? ctx.To ?? ctx.From ?? undefined;
+  const includeSensitiveHookContext = Boolean(cfg.hooks?.internal?.includeSensitiveHookContext);
+  const hookTimestamp =
+    typeof ctx.Timestamp === "number" && Number.isFinite(ctx.Timestamp) ? ctx.Timestamp : undefined;
+  const messageIdForHook =
+    ctx.MessageSidFull ?? ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast;
+  const content =
+    typeof ctx.BodyForCommands === "string"
+      ? ctx.BodyForCommands
+      : typeof ctx.RawBody === "string"
+        ? ctx.RawBody
+        : typeof ctx.Body === "string"
+          ? ctx.Body
+          : "";
+  const channelId = (ctx.OriginatingChannel ?? ctx.Surface ?? ctx.Provider ?? "").toLowerCase();
+  const conversationId = ctx.OriginatingTo ?? ctx.To ?? ctx.From ?? undefined;
+  const hookSessionKey = sessionKey ?? "";
 
+  const internalHookEvent = createInternalHookEvent(
+    "message",
+    "received",
+    hookSessionKey,
+    buildInternalHookContext(
+      includeSensitiveHookContext,
+      {
+        content,
+        timestamp: hookTimestamp,
+        messageId: messageIdForHook,
+        channelId,
+        conversationId,
+        from: ctx.From,
+        to: ctx.To,
+        provider: ctx.Provider,
+        surface: ctx.Surface,
+        threadId: ctx.MessageThreadId,
+        originatingChannel: ctx.OriginatingChannel,
+        originatingTo: ctx.OriginatingTo,
+        senderId: ctx.SenderId,
+        senderName: ctx.SenderName,
+        senderUsername: ctx.SenderUsername,
+        senderE164: ctx.SenderE164,
+        isInboundAudio: inboundAudio,
+        mediaType: ctx.MediaType,
+        mediaTypes: ctx.MediaTypes,
+      },
+      {
+        hasContent: Boolean(content),
+        contentLength: content.length,
+        timestamp: hookTimestamp,
+        channelId,
+        provider: ctx.Provider,
+        surface: ctx.Surface,
+        originatingChannel: ctx.OriginatingChannel,
+        isInboundAudio: inboundAudio,
+        hasMedia: Boolean(
+          ctx.MediaType || (Array.isArray(ctx.MediaTypes) && ctx.MediaTypes.length),
+        ),
+        mediaType: ctx.MediaType,
+        mediaTypesCount: Array.isArray(ctx.MediaTypes) ? ctx.MediaTypes.length : 0,
+      },
+    ),
+  );
+  void triggerInternalHook(internalHookEvent);
+  if (hookRunner?.hasHooks("message_received")) {
     void hookRunner
       .runMessageReceived(
         {
           from: ctx.From ?? "",
           content,
-          timestamp,
+          timestamp: hookTimestamp,
           metadata: {
             to: ctx.To,
             provider: ctx.Provider,

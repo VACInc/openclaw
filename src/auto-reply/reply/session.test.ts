@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { MoltbotConfig } from "../../config/config.js";
 import { saveSessionStore } from "../../config/sessions.js";
+import * as internalHooks from "../../hooks/internal-hooks.js";
 import { initSessionState } from "./session.js";
 
 describe("initSessionState thread forking", () => {
@@ -196,6 +197,54 @@ describe("initSessionState RawBody", () => {
     });
 
     expect(result.triggerBodyNormalized).toBe("/status");
+  });
+});
+
+describe("initSessionState hook events", () => {
+  it("emits session:start for a new session", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "moltbot-session-hook-start-"));
+    const storePath = path.join(root, "sessions.json");
+    const cfg = { session: { store: storePath } } as MoltbotConfig;
+    const hookSpy = vi.spyOn(internalHooks, "triggerInternalHook").mockResolvedValue();
+
+    await initSessionState({
+      ctx: { Body: "Hello", SessionKey: "agent:main:whatsapp:direct:1" },
+      cfg,
+      commandAuthorized: true,
+    });
+
+    expect(hookSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "session", action: "start" }),
+    );
+    hookSpy.mockRestore();
+  });
+
+  it("emits session:end then session:start on /new", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "moltbot-session-hook-reset-"));
+    const storePath = path.join(root, "sessions.json");
+    const sessionKey = "agent:main:whatsapp:direct:2";
+    await saveSessionStore(storePath, {
+      [sessionKey]: {
+        sessionId: "prev-session",
+        sessionFile: path.join(root, "prev.jsonl"),
+        updatedAt: Date.now(),
+      },
+    });
+    const cfg = { session: { store: storePath } } as MoltbotConfig;
+    const hookSpy = vi.spyOn(internalHooks, "triggerInternalHook").mockResolvedValue();
+
+    await initSessionState({
+      ctx: { Body: "/new", RawBody: "/new", SessionKey: sessionKey },
+      cfg,
+      commandAuthorized: true,
+    });
+
+    expect(hookSpy).toHaveBeenCalledTimes(2);
+    const first = hookSpy.mock.calls[0]?.[0] as internalHooks.InternalHookEvent;
+    const second = hookSpy.mock.calls[1]?.[0] as internalHooks.InternalHookEvent;
+    expect(first.action).toBe("end");
+    expect(second.action).toBe("start");
+    hookSpy.mockRestore();
   });
 });
 

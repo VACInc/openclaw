@@ -119,6 +119,7 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
       payloads: [normalized],
       replyToId: resolvedReplyToId ?? null,
       threadId: resolvedThreadId,
+      sessionKey: params.sessionKey,
       abortSignal,
       mirror:
         params.mirror !== false && params.sessionKey

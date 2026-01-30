@@ -21,6 +21,7 @@ export type AgentRunContext = {
 const seqByRun = new Map<string, number>();
 const listeners = new Set<(evt: AgentEventPayload) => void>();
 const runContextById = new Map<string, AgentRunContext>();
+const lifecycleErrorByRun = new Map<string, boolean>();
 
 export function registerAgentRunContext(runId: string, context: AgentRunContext) {
   if (!runId) return;
@@ -46,10 +47,16 @@ export function getAgentRunContext(runId: string) {
 
 export function clearAgentRunContext(runId: string) {
   runContextById.delete(runId);
+  lifecycleErrorByRun.delete(runId);
 }
 
 export function resetAgentRunContextForTest() {
   runContextById.clear();
+  lifecycleErrorByRun.clear();
+}
+
+export function hasLifecycleError(runId: string) {
+  return lifecycleErrorByRun.get(runId) === true;
 }
 
 export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
@@ -66,6 +73,13 @@ export function emitAgentEvent(event: Omit<AgentEventPayload, "seq" | "ts">) {
     seq: nextSeq,
     ts: Date.now(),
   };
+  if (
+    enriched.stream === "lifecycle" &&
+    typeof enriched.data?.phase === "string" &&
+    enriched.data.phase === "error"
+  ) {
+    lifecycleErrorByRun.set(enriched.runId, true);
+  }
   for (const listener of listeners) {
     try {
       listener(enriched);

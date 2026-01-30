@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearInternalHooks,
+  clearInternalHookListenersForTest,
   createInternalHookEvent,
   getRegisteredEventKeys,
   isAgentBootstrapEvent,
+  onInternalHookEvent,
+  setInternalHookListenersEnabled,
   registerInternalHook,
   triggerInternalHook,
   unregisterInternalHook,
@@ -14,10 +17,14 @@ import {
 describe("hooks", () => {
   beforeEach(() => {
     clearInternalHooks();
+    clearInternalHookListenersForTest();
+    setInternalHookListenersEnabled(true);
   });
 
   afterEach(() => {
     clearInternalHooks();
+    clearInternalHookListenersForTest();
+    setInternalHookListenersEnabled(true);
   });
 
   describe("registerInternalHook", () => {
@@ -70,6 +77,17 @@ describe("hooks", () => {
   });
 
   describe("triggerInternalHook", () => {
+    it("should notify listeners even without handlers", async () => {
+      const listener = vi.fn();
+      const unsubscribe = onInternalHookEvent(listener);
+
+      const event = createInternalHookEvent("command", "new", "test-session");
+      await triggerInternalHook(event);
+
+      expect(listener).toHaveBeenCalledWith(event);
+      unsubscribe();
+    });
+
     it("should trigger handlers for general event type", async () => {
       const handler = vi.fn();
       registerInternalHook("command", handler);
@@ -138,6 +156,37 @@ describe("hooks", () => {
       );
 
       consoleError.mockRestore();
+    });
+
+    it("should catch and log errors from listeners", async () => {
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      onInternalHookEvent(async () => {
+        throw new Error("Listener failed");
+      });
+
+      const event = createInternalHookEvent("command", "new", "test-session");
+      await triggerInternalHook(event);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(consoleError).toHaveBeenCalledWith(
+        expect.stringContaining("Hook listener error"),
+        expect.stringContaining("Listener failed"),
+      );
+
+      consoleError.mockRestore();
+    });
+
+    it("skips listeners when disabled", async () => {
+      const listener = vi.fn();
+      setInternalHookListenersEnabled(false);
+      onInternalHookEvent(listener);
+
+      const event = createInternalHookEvent("command", "new", "test-session");
+      await triggerInternalHook(event);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(listener).not.toHaveBeenCalled();
+      setInternalHookListenersEnabled(true);
     });
 
     it("should not throw if no handlers are registered", async () => {

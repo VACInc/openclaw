@@ -11,6 +11,12 @@ import type { ChannelOutboundAdapter } from "../../channels/plugins/types.js";
 import type { MoltbotConfig } from "../../config/config.js";
 import { resolveMarkdownTableMode } from "../../config/markdown-tables.js";
 import type { sendMessageDiscord } from "../../discord/send.js";
+import {
+  buildInternalHookContext,
+  summarizeMediaUrls,
+  summarizeText,
+} from "../../hooks/hook-context.js";
+import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
 import type { sendMessageIMessage } from "../../imessage/send.js";
 import { markdownToSignalTextChunks, type SignalTextStyleRange } from "../../signal/format.js";
 import { sendMessageSignal } from "../../signal/send.js";
@@ -182,6 +188,7 @@ export async function deliverOutboundPayloads(params: {
   payloads: ReplyPayload[];
   replyToId?: string | null;
   threadId?: string | number | null;
+  sessionKey?: string;
   deps?: OutboundSendDeps;
   gifPlayback?: boolean;
   abortSignal?: AbortSignal;
@@ -201,6 +208,70 @@ export async function deliverOutboundPayloads(params: {
   const abortSignal = params.abortSignal;
   const sendSignal = params.deps?.sendSignal ?? sendMessageSignal;
   const results: OutboundDeliveryResult[] = [];
+  const hookSessionKey = params.sessionKey ?? params.mirror?.sessionKey ?? "";
+  const includeSensitiveHookContext = Boolean(cfg.hooks?.internal?.includeSensitiveHookContext);
+  const buildPayloadContext = (payload: NormalizedOutboundPayload, includeSensitive: boolean) =>
+    buildInternalHookContext(includeSensitive, payload, {
+      ...summarizeText(payload.text),
+      ...summarizeMediaUrls(payload.mediaUrls),
+      hasChannelData: Boolean(payload.channelData),
+    });
+  const buildResultContext = (result: OutboundDeliveryResult, includeSensitive: boolean) =>
+    buildInternalHookContext(includeSensitive, result, {
+      channel: result.channel,
+      timestamp: result.timestamp,
+    });
+  const buildDetailContext = (
+    details: { text?: string; mediaUrl?: string } | undefined,
+    includeSensitive: boolean,
+  ) => {
+    const detailText = details?.text;
+    const detailMediaUrl = details?.mediaUrl;
+    return buildInternalHookContext(
+      includeSensitive,
+      detailText || detailMediaUrl ? { text: detailText, mediaUrl: detailMediaUrl } : {},
+      {
+        ...summarizeText(detailText),
+        ...summarizeMediaUrls(detailMediaUrl ? [detailMediaUrl] : []),
+      },
+    );
+  };
+  const emitMessageSent = async (
+    payload: NormalizedOutboundPayload,
+    result: OutboundDeliveryResult,
+    details?: { text?: string; mediaUrl?: string },
+  ) => {
+    const hookEvent = createInternalHookEvent("message", "sent", hookSessionKey, {
+      ...buildInternalHookContext(
+        includeSensitiveHookContext,
+        {
+          channel,
+          to,
+          accountId,
+          replyToId: params.replyToId ?? null,
+          threadId: params.threadId ?? null,
+          payload: buildPayloadContext(payload, true),
+          ...buildDetailContext(details, true),
+          result: buildResultContext(result, true),
+        },
+        {
+          channel,
+          payload: buildPayloadContext(payload, false),
+          ...buildDetailContext(details, false),
+          result: buildResultContext(result, false),
+        },
+      ),
+    });
+    void triggerInternalHook(hookEvent);
+  };
+  const pushResult = async (
+    payload: NormalizedOutboundPayload,
+    result: OutboundDeliveryResult,
+    details?: { text?: string; mediaUrl?: string },
+  ) => {
+    results.push(result);
+    await emitMessageSent(payload, result, details);
+  };
   const handler = await createChannelHandler({
     cfg,
     channel,
@@ -231,10 +302,10 @@ export async function deliverOutboundPayloads(params: {
       })
     : undefined;
 
-  const sendTextChunks = async (text: string) => {
+  const sendTextChunks = async (text: string, payload: NormalizedOutboundPayload) => {
     throwIfAborted(abortSignal);
     if (!handler.chunker || textLimit === undefined) {
-      results.push(await handler.sendText(text));
+      await pushResult(payload, await handler.sendText(text), { text });
       return;
     }
     if (chunkMode === "newline") {
@@ -250,7 +321,7 @@ export async function deliverOutboundPayloads(params: {
         if (!chunks.length && blockChunk) chunks.push(blockChunk);
         for (const chunk of chunks) {
           throwIfAborted(abortSignal);
-          results.push(await handler.sendText(chunk));
+          await pushResult(payload, await handler.sendText(chunk), { text: chunk });
         }
       }
       return;
@@ -258,13 +329,17 @@ export async function deliverOutboundPayloads(params: {
     const chunks = handler.chunker(text, textLimit);
     for (const chunk of chunks) {
       throwIfAborted(abortSignal);
-      results.push(await handler.sendText(chunk));
+      await pushResult(payload, await handler.sendText(chunk), { text: chunk });
     }
   };
 
-  const sendSignalText = async (text: string, styles: SignalTextStyleRange[]) => {
+  const sendSignalText = async (
+    text: string,
+    styles: SignalTextStyleRange[],
+    payload: NormalizedOutboundPayload,
+  ) => {
     throwIfAborted(abortSignal);
-    return {
+    const result = {
       channel: "signal" as const,
       ...(await sendSignal(to, text, {
         maxBytes: signalMaxBytes,
@@ -273,9 +348,11 @@ export async function deliverOutboundPayloads(params: {
         textStyles: styles,
       })),
     };
+    await pushResult(payload, result, { text });
+    return result;
   };
 
-  const sendSignalTextChunks = async (text: string) => {
+  const sendSignalTextChunks = async (text: string, payload: NormalizedOutboundPayload) => {
     throwIfAborted(abortSignal);
     let signalChunks =
       textLimit === undefined
@@ -288,11 +365,15 @@ export async function deliverOutboundPayloads(params: {
     }
     for (const chunk of signalChunks) {
       throwIfAborted(abortSignal);
-      results.push(await sendSignalText(chunk.text, chunk.styles));
+      await sendSignalText(chunk.text, chunk.styles, payload);
     }
   };
 
-  const sendSignalMedia = async (caption: string, mediaUrl: string) => {
+  const sendSignalMedia = async (
+    caption: string,
+    mediaUrl: string,
+    payload: NormalizedOutboundPayload,
+  ) => {
     throwIfAborted(abortSignal);
     const formatted = markdownToSignalTextChunks(caption, Number.POSITIVE_INFINITY, {
       tableMode: signalTableMode,
@@ -300,7 +381,7 @@ export async function deliverOutboundPayloads(params: {
       text: caption,
       styles: [],
     };
-    return {
+    const result = {
       channel: "signal" as const,
       ...(await sendSignal(to, formatted.text, {
         mediaUrl,
@@ -310,6 +391,8 @@ export async function deliverOutboundPayloads(params: {
         textStyles: formatted.styles,
       })),
     };
+    await pushResult(payload, result, { text: caption, mediaUrl });
+    return result;
   };
   const normalizedPayloads = normalizeReplyPayloadsForDelivery(payloads);
   for (const payload of normalizedPayloads) {
@@ -322,14 +405,17 @@ export async function deliverOutboundPayloads(params: {
       throwIfAborted(abortSignal);
       params.onPayload?.(payloadSummary);
       if (handler.sendPayload && payload.channelData) {
-        results.push(await handler.sendPayload(payload));
+        await pushResult(payloadSummary, await handler.sendPayload(payload), {
+          text: payloadSummary.text,
+          mediaUrl: payloadSummary.mediaUrls?.[0],
+        });
         continue;
       }
       if (payloadSummary.mediaUrls.length === 0) {
         if (isSignalChannel) {
-          await sendSignalTextChunks(payloadSummary.text);
+          await sendSignalTextChunks(payloadSummary.text, payloadSummary);
         } else {
-          await sendTextChunks(payloadSummary.text);
+          await sendTextChunks(payloadSummary.text, payloadSummary);
         }
         continue;
       }
@@ -340,9 +426,12 @@ export async function deliverOutboundPayloads(params: {
         const caption = first ? payloadSummary.text : "";
         first = false;
         if (isSignalChannel) {
-          results.push(await sendSignalMedia(caption, url));
+          await sendSignalMedia(caption, url, payloadSummary);
         } else {
-          results.push(await handler.sendMedia(caption, url));
+          await pushResult(payloadSummary, await handler.sendMedia(caption, url), {
+            text: caption,
+            mediaUrl: url,
+          });
         }
       }
     } catch (err) {

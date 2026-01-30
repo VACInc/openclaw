@@ -11,7 +11,7 @@ import type {
   GatewayConfig,
   TalkConfig,
 } from "./types.gateway.js";
-import type { HooksConfig } from "./types.hooks.js";
+import type { EgressWebhooksConfig, HooksConfig } from "./types.hooks.js";
 import type {
   AudioConfig,
   BroadcastConfig,
@@ -91,6 +91,7 @@ export type MoltbotConfig = {
   channels?: ChannelsConfig;
   cron?: CronConfig;
   hooks?: HooksConfig;
+  egressWebhooks?: EgressWebhooksConfig;
   discovery?: DiscoveryConfig;
   canvasHost?: CanvasHostConfig;
   talk?: TalkConfig;

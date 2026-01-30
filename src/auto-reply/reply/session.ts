@@ -33,6 +33,8 @@ import { stripMentions, stripStructuralPrefixes } from "./mentions.js";
 import { formatInboundBodyWithSenderMeta } from "./inbound-sender-meta.js";
 import { normalizeInboundTextNewlines } from "./inbound-text.js";
 import { normalizeSessionDeliveryFields } from "../../utils/delivery-context.js";
+import { buildInternalHookContext } from "../../hooks/hook-context.js";
+import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
 
 export type SessionInitResult = {
   sessionCtx: TemplateContext;
@@ -94,6 +96,7 @@ export async function initSessionState(params: {
   commandAuthorized: boolean;
 }): Promise<SessionInitResult> {
   const { ctx, cfg, commandAuthorized } = params;
+  const includeSensitiveHookContext = Boolean(cfg.hooks?.internal?.includeSensitiveHookContext);
   // Native slash commands (Telegram/Discord/Slack) are delivered on a separate
   // "slash session" key, but should mutate the target chat session.
   const targetSessionKey =
@@ -188,6 +191,7 @@ export async function initSessionState(params: {
 
   sessionKey = resolveSessionKey(sessionScope, sessionCtxForState, mainKey);
   const entry = sessionStore[sessionKey];
+  const existingEntry = entry ? { ...entry } : undefined;
   const previousSessionEntry = resetTriggered && entry ? { ...entry } : undefined;
   const now = Date.now();
   const isThread = resolveThreadFlag({
@@ -354,6 +358,91 @@ export async function initSessionState(params: {
     SessionId: sessionId,
     IsNewSession: isNewSession ? "true" : "false",
   };
+
+  const buildSessionHookContext = (base: {
+    reason: string;
+    resetTriggered: boolean;
+    resetType?: string;
+    resetPolicy?: string;
+    sessionEntry?: SessionEntry;
+    previousSessionEntry?: SessionEntry;
+    sessionId?: string;
+    sessionFile?: string;
+    isGroup: boolean;
+    groupResolution?: GroupKeyResolution;
+    commandSource?: string;
+    channel?: string;
+    from?: string;
+    to?: string;
+    threadId?: string | number;
+    hasPreviousSession?: boolean;
+  }) =>
+    buildInternalHookContext(includeSensitiveHookContext, base, {
+      reason: base.reason,
+      resetTriggered: base.resetTriggered,
+      resetType: base.resetType,
+      resetPolicy: base.resetPolicy,
+      sessionId: base.sessionId,
+      isGroup: base.isGroup,
+      commandSource: base.commandSource,
+      channel: base.channel,
+      hasPreviousSession: base.hasPreviousSession,
+    });
+
+  if (isNewSession && existingEntry) {
+    const endReason = resetTriggered ? "reset" : "expired";
+    const endEvent = createInternalHookEvent(
+      "session",
+      "end",
+      sessionKey,
+      buildSessionHookContext({
+        reason: endReason,
+        resetTriggered,
+        resetType,
+        resetPolicy,
+        sessionEntry: existingEntry,
+        sessionId: existingEntry.sessionId,
+        sessionFile: existingEntry.sessionFile,
+        isGroup,
+        groupResolution,
+        commandSource: ctx.CommandSource,
+        channel: ctx.OriginatingChannel ?? ctx.Surface ?? ctx.Provider,
+        from: ctx.From,
+        to: ctx.To,
+        threadId: ctx.MessageThreadId,
+        hasPreviousSession: true,
+      }),
+    );
+    void triggerInternalHook(endEvent);
+  }
+
+  if (isNewSession) {
+    const startReason = resetTriggered ? "reset" : existingEntry ? "expired" : "new";
+    const startEvent = createInternalHookEvent(
+      "session",
+      "start",
+      sessionKey,
+      buildSessionHookContext({
+        reason: startReason,
+        resetTriggered,
+        resetType,
+        resetPolicy,
+        sessionEntry,
+        previousSessionEntry: existingEntry,
+        sessionId: sessionEntry.sessionId,
+        sessionFile: sessionEntry.sessionFile,
+        isGroup,
+        groupResolution,
+        commandSource: ctx.CommandSource,
+        channel: ctx.OriginatingChannel ?? ctx.Surface ?? ctx.Provider,
+        from: ctx.From,
+        to: ctx.To,
+        threadId: ctx.MessageThreadId,
+        hasPreviousSession: Boolean(existingEntry),
+      }),
+    );
+    void triggerInternalHook(startEvent);
+  }
 
   return {
     sessionCtx,

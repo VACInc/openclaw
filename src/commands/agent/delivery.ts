@@ -160,6 +160,7 @@ export async function deliverAgentCommandResult(params: {
         payloads: deliveryPayloads,
         replyToId: resolvedReplyToId ?? null,
         threadId: resolvedThreadTarget ?? null,
+        sessionKey: opts.sessionKey,
         bestEffort: bestEffortDeliver,
         onError: (err) => logDeliveryError(err),
         onPayload: logPayload,

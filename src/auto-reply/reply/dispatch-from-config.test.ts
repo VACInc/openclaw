@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MoltbotConfig } from "../../config/config.js";
+import * as internalHooks from "../../hooks/internal-hooks.js";
 import type { MsgContext } from "../templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import type { ReplyDispatcher } from "./reply-dispatcher.js";
@@ -370,6 +371,35 @@ describe("dispatchReplyFromConfig", () => {
         conversationId: "telegram:999",
       }),
     );
+  });
+
+  it("emits message:received internal hook", async () => {
+    mocks.tryFastAbortFromMessage.mockResolvedValue({
+      handled: false,
+      aborted: false,
+    });
+    const hookSpy = vi.spyOn(internalHooks, "triggerInternalHook").mockResolvedValue();
+    const cfg = {} as MoltbotConfig;
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      Provider: "telegram",
+      Surface: "telegram",
+      SessionKey: "agent:main:telegram:direct:1",
+      CommandBody: "hello",
+      MessageSid: "msg-1",
+    });
+
+    const replyResolver = async () => ({ text: "hi" }) satisfies ReplyPayload;
+    await dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(hookSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "message", action: "received" }),
+    );
+    const event = hookSpy.mock.calls[0]?.[0] as internalHooks.InternalHookEvent;
+    expect((event.context as Record<string, unknown>).messageId).toBeUndefined();
+    expect((event.context as Record<string, unknown>).content).toBeUndefined();
+    hookSpy.mockRestore();
   });
 
   it("emits diagnostics when enabled", async () => {

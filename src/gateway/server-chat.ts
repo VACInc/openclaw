@@ -215,6 +215,34 @@ export function createAgentEventHandler({
     }
   };
 
+  const shouldIncludeErrorStack = (sessionKey?: string) => {
+    if (sessionKey) {
+      try {
+        const { cfg } = loadSessionEntry(sessionKey);
+        return Boolean(cfg.hooks?.internal?.includeErrorStack);
+      } catch {
+        // Fall through to global config.
+      }
+    }
+    try {
+      return Boolean(loadConfig().hooks?.internal?.includeErrorStack);
+    } catch {
+      return false;
+    }
+  };
+
+  const sanitizeLifecycleStack = (evt: AgentEventPayload, includeErrorStack: boolean) => {
+    if (includeErrorStack) return evt;
+    if (evt.stream !== "lifecycle") return evt;
+    if (!evt.data || typeof evt.data !== "object") return evt;
+    if (!("stack" in evt.data)) return evt;
+    const data = evt.data as Record<string, unknown>;
+    const dataWithoutStack = Object.fromEntries(
+      Object.entries(data).filter(([key]) => key !== "stack"),
+    );
+    return { ...evt, data: dataWithoutStack };
+  };
+
   return (evt: AgentEventPayload) => {
     const chatLink = chatRunState.registry.peek(evt.runId);
     const sessionKey = chatLink?.sessionKey ?? resolveSessionKeyForRun(evt.runId);
@@ -222,7 +250,9 @@ export function createAgentEventHandler({
     const isAborted =
       chatRunState.abortedRuns.has(clientRunId) || chatRunState.abortedRuns.has(evt.runId);
     // Include sessionKey so Control UI can filter tool streams per session.
-    const agentPayload = sessionKey ? { ...evt, sessionKey } : evt;
+    const includeErrorStack = shouldIncludeErrorStack(sessionKey);
+    const sanitizedEvent = sanitizeLifecycleStack(evt, includeErrorStack);
+    const agentPayload = sessionKey ? { ...sanitizedEvent, sessionKey } : sanitizedEvent;
     const last = agentRunSeq.get(evt.runId) ?? 0;
     if (evt.stream === "tool" && !shouldEmitToolEvents(evt.runId, sessionKey)) {
       agentRunSeq.set(evt.runId, evt.seq);

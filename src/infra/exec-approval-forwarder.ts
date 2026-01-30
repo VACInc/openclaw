@@ -163,6 +163,7 @@ async function deliverToTargets(params: {
   targets: ForwardTarget[];
   text: string;
   deliver: typeof deliverOutboundPayloads;
+  sessionKey?: string;
   shouldSend?: () => boolean;
 }) {
   const deliveries = params.targets.map(async (target) => {
@@ -177,6 +178,7 @@ async function deliverToTargets(params: {
         accountId: target.accountId,
         threadId: target.threadId,
         payloads: [{ text: params.text }],
+        sessionKey: params.sessionKey,
       });
     } catch (err) {
       log.error(`exec approvals: failed to deliver to ${channel}:${target.to}: ${String(err)}`);
@@ -233,7 +235,13 @@ export function createExecApprovalForwarder(
         if (!entry) return;
         pending.delete(request.id);
         const expiredText = buildExpiredMessage(request);
-        await deliverToTargets({ cfg, targets: entry.targets, text: expiredText, deliver });
+        await deliverToTargets({
+          cfg,
+          targets: entry.targets,
+          text: expiredText,
+          deliver,
+          sessionKey: request.request.sessionKey ?? undefined,
+        });
       })();
     }, expiresInMs);
     timeoutId.unref?.();
@@ -249,6 +257,7 @@ export function createExecApprovalForwarder(
       targets,
       text,
       deliver,
+      sessionKey: request.request.sessionKey ?? undefined,
       shouldSend: () => pending.get(request.id) === pendingEntry,
     });
   };
@@ -261,7 +270,13 @@ export function createExecApprovalForwarder(
 
     const cfg = getConfig();
     const text = buildResolvedMessage(resolved);
-    await deliverToTargets({ cfg, targets: entry.targets, text, deliver });
+    await deliverToTargets({
+      cfg,
+      targets: entry.targets,
+      text,
+      deliver,
+      sessionKey: entry.request.request.sessionKey ?? undefined,
+    });
   };
 
   const stop = () => {

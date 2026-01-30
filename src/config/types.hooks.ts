@@ -97,6 +97,13 @@ export type HookInstallRecord = {
 export type InternalHooksConfig = {
   /** Enable hooks system */
   enabled?: boolean;
+  /** Include error stack traces in agent:error hook context. */
+  includeErrorStack?: boolean;
+  /**
+   * Include full payload/identifier data for internal hook context
+   * (message send/receive, approval request details, tool data, lifecycle details).
+   */
+  includeSensitiveHookContext?: boolean;
   /** Legacy: List of internal hook handlers to register (still supported) */
   handlers?: InternalHookHandlerConfig[];
   /** Per-hook configuration overrides */
@@ -108,6 +115,11 @@ export type InternalHooksConfig = {
   };
   /** Install records for hook packs or hooks */
   installs?: Record<string, HookInstallRecord>;
+};
+
+export type EgressWebhooksConfig = {
+  /** Enable outbound webhook delivery for internal hook events. */
+  enabled?: boolean;
 };
 
 export type HooksConfig = {

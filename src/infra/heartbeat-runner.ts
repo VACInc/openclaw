@@ -538,6 +538,7 @@ export async function runHeartbeatOnce(opts: {
       to: delivery.to,
       accountId: delivery.accountId,
       payloads: [{ text: heartbeatOkText }],
+      sessionKey,
       deps: opts.deps,
     });
     return true;
@@ -713,6 +714,7 @@ export async function runHeartbeatOnce(opts: {
               },
             ]),
       ],
+      sessionKey,
       deps: opts.deps,
     });
 

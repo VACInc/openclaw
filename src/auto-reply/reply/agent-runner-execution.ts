@@ -20,7 +20,13 @@ import {
   updateSessionStore,
 } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
-import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
+import {
+  emitAgentEvent,
+  hasLifecycleError,
+  registerAgentRunContext,
+} from "../../infra/agent-events.js";
+import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
+import { buildInternalHookContext } from "../../hooks/hook-context.js";
 import { defaultRuntime } from "../../runtime.js";
 import {
   isMarkdownCapableMessageChannel,
@@ -82,6 +88,50 @@ export async function runAgentTurnWithFallback(params: {
   let autoCompactionCompleted = false;
   // Track payloads sent directly (not via pipeline) during tool flush to avoid duplicates.
   const directlySentBlockKeys = new Set<string>();
+  let lifecycleErrorEmitted = false;
+  const includeSensitiveHookContext = Boolean(
+    params.followupRun.run.config?.hooks?.internal?.includeSensitiveHookContext,
+  );
+  const includeErrorStack = Boolean(
+    params.followupRun.run.config?.hooks?.internal?.includeErrorStack,
+  );
+
+  const formatUnknownError = (err: unknown) => {
+    if (err instanceof Error) return err.message;
+    if (typeof err === "string") return err;
+    if (typeof err === "number" || typeof err === "boolean" || err == null) {
+      return String(err);
+    }
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return "[unserializable error]";
+    }
+  };
+
+  const sanitizeHookError = (err: unknown) => {
+    if (!err) return undefined;
+    if (err instanceof Error) {
+      return {
+        name: err.name,
+        message: err.message,
+        ...(includeErrorStack && err.stack ? { stack: err.stack } : {}),
+      };
+    }
+    if (typeof err === "object") {
+      const record = err as Record<string, unknown>;
+      const name = typeof record.name === "string" ? record.name : "Error";
+      const message = typeof record.message === "string" ? record.message : formatUnknownError(err);
+      const stack =
+        includeErrorStack && typeof record.stack === "string" ? record.stack : undefined;
+      return {
+        name,
+        message,
+        ...(stack ? { stack } : {}),
+      };
+    }
+    return { name: "Error", message: formatUnknownError(err) };
+  };
 
   const runId = params.opts?.runId ?? crypto.randomUUID();
   params.opts?.onAgentRunStart?.(runId);
@@ -96,6 +146,38 @@ export async function runAgentTurnWithFallback(params: {
   let fallbackProvider = params.followupRun.run.provider;
   let fallbackModel = params.followupRun.run.model;
   let didResetAfterCompactionFailure = false;
+  const emitAgentErrorHook = (message: string, opts?: { error?: unknown; source?: string }) => {
+    if (lifecycleErrorEmitted || hasLifecycleError(runId)) return;
+    const safeContext = {
+      runId,
+      source: opts?.source,
+      provider: fallbackProvider,
+      model: fallbackModel,
+      isHeartbeat: params.isHeartbeat,
+      hasMessage: Boolean(message),
+      messageLength: message.length,
+      hasError: Boolean(opts?.error),
+    };
+    const hookEvent = createInternalHookEvent(
+      "agent",
+      "error",
+      params.sessionKey ?? "",
+      buildInternalHookContext(
+        includeSensitiveHookContext,
+        {
+          runId,
+          message,
+          source: opts?.source,
+          error: sanitizeHookError(opts?.error),
+          provider: fallbackProvider,
+          model: fallbackModel,
+          isHeartbeat: params.isHeartbeat,
+        },
+        safeContext,
+      ),
+    );
+    void triggerInternalHook(hookEvent);
+  };
 
   while (true) {
     try {
@@ -204,6 +286,7 @@ export async function runAgentTurnWithFallback(params: {
                 return result;
               })
               .catch((err) => {
+                lifecycleErrorEmitted = true;
                 emitAgentEvent({
                   runId,
                   stream: "lifecycle",
@@ -211,7 +294,8 @@ export async function runAgentTurnWithFallback(params: {
                     phase: "error",
                     startedAt,
                     endedAt: Date.now(),
-                    error: err instanceof Error ? err.message : String(err),
+                    error: err instanceof Error ? err.message : formatUnknownError(err),
+                    stack: err instanceof Error ? err.stack : undefined,
                   },
                 });
                 throw err;
@@ -369,7 +453,7 @@ export async function runAgentTurnWithFallback(params: {
                   void params.typingSignals
                     .signalTextDelta(cleaned ?? taggedPayload.text)
                     .catch((err) => {
-                      logVerbose(`block reply typing signal failed: ${String(err)}`);
+                      logVerbose(`block reply typing signal failed: ${formatUnknownError(err)}`);
                     });
 
                   // Use pipeline if available (block streaming enabled), otherwise send directly
@@ -407,7 +491,7 @@ export async function runAgentTurnWithFallback(params: {
                     });
                   })()
                     .catch((err) => {
-                      logVerbose(`tool result delivery failed: ${String(err)}`);
+                      logVerbose(`tool result delivery failed: ${formatUnknownError(err)}`);
                     })
                     .finally(() => {
                       params.pendingToolTasks.delete(task);
@@ -450,10 +534,17 @@ export async function runAgentTurnWithFallback(params: {
           };
         }
       }
+      if (embeddedError) {
+        emitAgentErrorHook(embeddedError.message, {
+          error: embeddedError,
+          source: "embedded-run-meta",
+        });
+      }
 
       break;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = err instanceof Error ? err.message : formatUnknownError(err);
+      emitAgentErrorHook(message, { error: err, source: "agent-runner" });
       const isContextOverflow = isLikelyContextOverflowError(message);
       const isCompactionFailure = isCompactionFailureError(message);
       const isSessionCorruption = /function call turn comes immediately after/i.test(message);

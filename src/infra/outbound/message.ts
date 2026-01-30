@@ -169,6 +169,7 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       deps: params.deps,
       bestEffort: params.bestEffort,
       abortSignal: params.abortSignal,
+      sessionKey: params.mirror?.sessionKey,
       mirror: params.mirror
         ? {
             ...params.mirror,

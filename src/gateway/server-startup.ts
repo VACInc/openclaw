@@ -9,9 +9,12 @@ import type { CliDeps } from "../cli/deps.js";
 import type { loadConfig } from "../config/config.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { startGmailWatcher } from "../hooks/gmail-watcher.js";
+import { startAgentEventsHookBridge } from "../hooks/agent-events-bridge.js";
 import {
+  clearInternalHookListeners,
   clearInternalHooks,
   createInternalHookEvent,
+  setInternalHookListenersEnabled,
   triggerInternalHook,
 } from "../hooks/internal-hooks.js";
 import { loadInternalHooks } from "../hooks/loader.js";
@@ -38,6 +41,8 @@ export async function startGatewaySidecars(params: {
   logChannels: { info: (msg: string) => void; error: (msg: string) => void };
   logBrowser: { error: (msg: string) => void };
 }) {
+  const internalHooksEnabled = params.cfg.hooks?.internal?.enabled === true;
+  setInternalHookListenersEnabled(params.cfg.egressWebhooks?.enabled !== false);
   // Start clawd browser control server (unless disabled via config).
   let browserControl: Awaited<ReturnType<typeof startBrowserControlServerIfEnabled>> = null;
   try {
@@ -101,6 +106,7 @@ export async function startGatewaySidecars(params: {
   try {
     // Clear any previously registered hooks to ensure fresh loading
     clearInternalHooks();
+    clearInternalHookListeners();
     const loadedCount = await loadInternalHooks(params.cfg, params.defaultWorkspaceDir);
     if (loadedCount > 0) {
       params.logHooks.info(
@@ -110,6 +116,12 @@ export async function startGatewaySidecars(params: {
   } catch (err) {
     params.logHooks.error(`failed to load hooks: ${String(err)}`);
   }
+
+  const agentHookUnsub = startAgentEventsHookBridge({
+    enabled: internalHooksEnabled,
+    includeSensitiveHookContext: params.cfg.hooks?.internal?.includeSensitiveHookContext,
+    includeErrorStack: params.cfg.hooks?.internal?.includeErrorStack,
+  });
 
   // Launch configured channels so gateway replies via the surface the message came from.
   // Tests can opt out via CLAWDBOT_SKIP_CHANNELS (or legacy CLAWDBOT_SKIP_PROVIDERS).
@@ -128,12 +140,15 @@ export async function startGatewaySidecars(params: {
     );
   }
 
-  if (params.cfg.hooks?.internal?.enabled) {
+  if (internalHooksEnabled) {
     setTimeout(() => {
       const hookEvent = createInternalHookEvent("gateway", "startup", "gateway:startup", {
-        cfg: params.cfg,
-        deps: params.deps,
         workspaceDir: params.defaultWorkspaceDir,
+        hooks: {
+          internal: { enabled: internalHooksEnabled },
+          gmail: { enabled: Boolean(params.cfg.hooks?.gmail?.enabled) },
+        },
+        channels: { started: !skipChannels },
       });
       void triggerInternalHook(hookEvent);
     }, 250);
@@ -156,5 +171,5 @@ export async function startGatewaySidecars(params: {
     }, 750);
   }
 
-  return { browserControl, pluginServices };
+  return { browserControl, pluginServices, agentHookUnsub };
 }

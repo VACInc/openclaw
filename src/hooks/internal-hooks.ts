@@ -8,7 +8,15 @@
 import type { WorkspaceBootstrapFile } from "../agents/workspace.js";
 import type { MoltbotConfig } from "../config/config.js";
 
-export type InternalHookEventType = "command" | "session" | "agent" | "gateway";
+export type InternalHookEventType =
+  | "command"
+  | "session"
+  | "agent"
+  | "gateway"
+  | "message"
+  | "approval"
+  | "tool"
+  | "compaction";
 
 export type AgentBootstrapHookContext = {
   workspaceDir: string;
@@ -44,6 +52,8 @@ export type InternalHookHandler = (event: InternalHookEvent) => Promise<void> | 
 
 /** Registry of hook handlers by event key */
 const handlers = new Map<string, InternalHookHandler[]>();
+const listeners = new Set<(event: InternalHookEvent) => Promise<void> | void>();
+let internalHookListenersEnabled = true;
 
 /**
  * Register a hook handler for a specific event type or event:action combination
@@ -99,6 +109,30 @@ export function unregisterInternalHook(eventKey: string, handler: InternalHookHa
  */
 export function clearInternalHooks(): void {
   handlers.clear();
+  clearInternalHookListeners();
+}
+
+export function onInternalHookEvent(
+  listener: (event: InternalHookEvent) => Promise<void> | void,
+): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+export function setInternalHookListenersEnabled(enabled: boolean): void {
+  internalHookListenersEnabled = enabled;
+}
+
+export function areInternalHookListenersEnabled(): boolean {
+  return internalHookListenersEnabled;
+}
+
+export function clearInternalHookListeners(): void {
+  listeners.clear();
+}
+
+export function clearInternalHookListenersForTest(): void {
+  clearInternalHookListeners();
 }
 
 /**
@@ -126,7 +160,7 @@ export async function triggerInternalHook(event: InternalHookEvent): Promise<voi
 
   const allHandlers = [...typeHandlers, ...specificHandlers];
 
-  if (allHandlers.length === 0) {
+  if (allHandlers.length === 0 && listeners.size === 0) {
     return;
   }
 
@@ -138,6 +172,17 @@ export async function triggerInternalHook(event: InternalHookEvent): Promise<voi
         `Hook error [${event.type}:${event.action}]:`,
         err instanceof Error ? err.message : String(err),
       );
+    }
+  }
+
+  if (listeners.size > 0 && internalHookListenersEnabled) {
+    for (const listener of listeners) {
+      void Promise.resolve(listener(event)).catch((err) => {
+        console.error(
+          `Hook listener error [${event.type}:${event.action}]:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      });
     }
   }
 }

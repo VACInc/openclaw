@@ -414,6 +414,7 @@ export async function startGatewayServer(
   const execApprovalForwarder = createExecApprovalForwarder();
   const execApprovalHandlers = createExecApprovalHandlers(execApprovalManager, {
     forwarder: execApprovalForwarder,
+    includeSensitiveHookContext: cfgAtStart.hooks?.internal?.includeSensitiveHookContext,
   });
 
   const canvasHostServerPort = (canvasHostServer as CanvasHostServer | null)?.port;
@@ -493,7 +494,8 @@ export async function startGatewayServer(
   });
 
   let browserControl: Awaited<ReturnType<typeof startBrowserControlServerIfEnabled>> = null;
-  ({ browserControl, pluginServices } = await startGatewaySidecars({
+  let agentHookUnsub: (() => void) | null = null;
+  ({ browserControl, pluginServices, agentHookUnsub } = await startGatewaySidecars({
     cfg: cfgAtStart,
     pluginRegistry,
     defaultWorkspaceDir,
@@ -559,6 +561,7 @@ export async function startGatewayServer(
     healthInterval,
     dedupeCleanup,
     agentUnsub,
+    agentHookUnsub,
     heartbeatUnsub,
     chatRunState,
     clients,

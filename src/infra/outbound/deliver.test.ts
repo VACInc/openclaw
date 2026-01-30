@@ -11,6 +11,7 @@ import {
   createOutboundTestPlugin,
   createTestRegistry,
 } from "../../test-utils/channel-plugins.js";
+import * as internalHooks from "../../hooks/internal-hooks.js";
 
 const mocks = vi.hoisted(() => ({
   appendAssistantMessageToSessionTranscript: vi.fn(async () => ({ ok: true, sessionFile: "x" })),
@@ -67,6 +68,41 @@ describe("deliverOutboundPayloads", () => {
         process.env.TELEGRAM_BOT_TOKEN = prevTelegramToken;
       }
     }
+  });
+
+  it("emits message:sent hooks with safe context by default", async () => {
+    const sendTelegram = vi.fn().mockResolvedValue({ messageId: "m1", chatId: "c1" });
+    const hookSpy = vi.spyOn(internalHooks, "triggerInternalHook").mockResolvedValue();
+    const cfg: MoltbotConfig = {
+      channels: { telegram: { botToken: "tok-1" } },
+      hooks: { internal: { enabled: true } },
+    };
+
+    await deliverOutboundPayloads({
+      cfg,
+      channel: "telegram",
+      to: "123",
+      payloads: [{ text: "hi" }],
+      deps: { sendTelegram },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(hookSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "message", action: "sent" }),
+    );
+    const event = hookSpy.mock.calls[0]?.[0] as internalHooks.InternalHookEvent;
+    expect(event.context).toMatchObject({ channel: "telegram" });
+    expect((event.context as Record<string, unknown>).to).toBeUndefined();
+    expect((event.context as Record<string, unknown>).accountId).toBeUndefined();
+    expect((event.context as Record<string, unknown>).replyToId).toBeUndefined();
+    expect((event.context as Record<string, unknown>).threadId).toBeUndefined();
+    expect(event.context).toMatchObject({
+      payload: expect.objectContaining({ hasText: true, textLength: 2, hasChannelData: false }),
+    });
+    expect((event.context.payload as Record<string, unknown>).text).toBeUndefined();
+    expect((event.context.result as Record<string, unknown>).messageId).toBeUndefined();
+    hookSpy.mockRestore();
   });
 
   it("passes explicit accountId to sendTelegram", async () => {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ExecApprovalManager } from "../exec-approval-manager.js";
 import { createExecApprovalHandlers } from "./exec-approval.js";
 import { validateExecApprovalRequestParams } from "../protocol/index.js";
+import * as internalHooks from "../../hooks/internal-hooks.js";
 
 const noop = () => {};
 
@@ -103,6 +104,82 @@ describe("exec approval handlers", () => {
       undefined,
     );
     expect(broadcasts.some((entry) => entry.event === "exec.approval.resolved")).toBe(true);
+  });
+
+  it("emits approval hooks for request + resolve", async () => {
+    const manager = new ExecApprovalManager();
+    const handlers = createExecApprovalHandlers(manager);
+    const hookSpy = vi.spyOn(internalHooks, "triggerInternalHook").mockResolvedValue();
+    const respond = vi.fn();
+    const context = { broadcast: () => {} };
+
+    const requestPromise = handlers["exec.approval.request"]({
+      params: { command: "echo ok", timeoutMs: 2000, sessionKey: "agent:main:whatsapp:direct:1" },
+      respond,
+      context: context as unknown as Parameters<
+        (typeof handlers)["exec.approval.request"]
+      >[0]["context"],
+      client: null,
+      req: { id: "req-1", type: "req", method: "exec.approval.request" },
+      isWebchatConnect: noop,
+    });
+
+    const first = hookSpy.mock.calls.find(
+      (call) => (call[0] as internalHooks.InternalHookEvent).action === "requested",
+    );
+    expect(first).toBeTruthy();
+
+    await handlers["exec.approval.resolve"]({
+      params: {
+        id: (first?.[0] as internalHooks.InternalHookEvent)?.context?.id as string,
+        decision: "allow-once",
+      },
+      respond: vi.fn(),
+      context: context as unknown as Parameters<
+        (typeof handlers)["exec.approval.resolve"]
+      >[0]["context"],
+      client: { connect: { client: { id: "cli", displayName: "CLI" } } },
+      req: { id: "req-2", type: "req", method: "exec.approval.resolve" },
+      isWebchatConnect: noop,
+    });
+
+    await requestPromise;
+
+    expect(
+      hookSpy.mock.calls.some(
+        (call) => (call[0] as internalHooks.InternalHookEvent).action === "resolved",
+      ),
+    ).toBe(true);
+    hookSpy.mockRestore();
+  });
+
+  it("emits approval:expired hook on timeout", async () => {
+    const manager = new ExecApprovalManager();
+    vi.spyOn(manager, "waitForDecision").mockResolvedValue(null);
+    const handlers = createExecApprovalHandlers(manager);
+    const hookSpy = vi.spyOn(internalHooks, "triggerInternalHook").mockResolvedValue();
+    const respond = vi.fn();
+    const context = { broadcast: () => {} };
+
+    const requestPromise = handlers["exec.approval.request"]({
+      params: { command: "echo ok", timeoutMs: 5 },
+      respond,
+      context: context as unknown as Parameters<
+        (typeof handlers)["exec.approval.request"]
+      >[0]["context"],
+      client: null,
+      req: { id: "req-1", type: "req", method: "exec.approval.request" },
+      isWebchatConnect: noop,
+    });
+
+    await requestPromise;
+
+    expect(
+      hookSpy.mock.calls.some(
+        (call) => (call[0] as internalHooks.InternalHookEvent).action === "expired",
+      ),
+    ).toBe(true);
+    hookSpy.mockRestore();
   });
 
   it("accepts resolve during broadcast", async () => {

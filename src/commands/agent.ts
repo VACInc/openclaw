@@ -481,7 +481,8 @@ export async function agentCommand(
             phase: "error",
             startedAt,
             endedAt: Date.now(),
-            error: String(err),
+            error: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : undefined,
           },
         });
       }

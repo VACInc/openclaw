@@ -74,6 +74,8 @@ const HookInstallRecordSchema = z
 export const InternalHooksSchema = z
   .object({
     enabled: z.boolean().optional(),
+    includeErrorStack: z.boolean().optional(),
+    includeSensitiveHookContext: z.boolean().optional(),
     handlers: z.array(InternalHookHandlerSchema).optional(),
     entries: z.record(z.string(), HookConfigSchema).optional(),
     load: z
@@ -125,6 +127,13 @@ export const HooksGmailSchema = z
         z.literal("high"),
       ])
       .optional(),
+  })
+  .strict()
+  .optional();
+
+export const EgressWebhooksSchema = z
+  .object({
+    enabled: z.boolean().optional(),
   })
   .strict()
   .optional();

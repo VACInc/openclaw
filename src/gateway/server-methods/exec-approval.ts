@@ -1,6 +1,8 @@
 import type { ExecApprovalDecision } from "../../infra/exec-approvals.js";
 import type { ExecApprovalForwarder } from "../../infra/exec-approval-forwarder.js";
 import type { ExecApprovalManager } from "../exec-approval-manager.js";
+import { buildInternalHookContext } from "../../hooks/hook-context.js";
+import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
 import {
   ErrorCodes,
   errorShape,
@@ -12,8 +14,28 @@ import type { GatewayRequestHandlers } from "./types.js";
 
 export function createExecApprovalHandlers(
   manager: ExecApprovalManager,
-  opts?: { forwarder?: ExecApprovalForwarder },
+  opts?: { forwarder?: ExecApprovalForwarder; includeSensitiveHookContext?: boolean },
 ): GatewayRequestHandlers {
+  const includeSensitiveHookContext = Boolean(opts?.includeSensitiveHookContext);
+  const buildRequestContext = (request: {
+    command: string;
+    cwd: string | null;
+    host: string | null;
+    security: string | null;
+    ask: string | null;
+    agentId: string | null;
+    resolvedPath: string | null;
+    sessionKey: string | null;
+  }) =>
+    buildInternalHookContext(includeSensitiveHookContext, request, {
+      hasCommand: Boolean(request.command),
+      hasCwd: Boolean(request.cwd),
+      hasHost: Boolean(request.host),
+      security: request.security,
+      hasAsk: Boolean(request.ask),
+      agentId: request.agentId,
+      hasResolvedPath: Boolean(request.resolvedPath),
+    });
   return {
     "exec.approval.request": async ({ params, respond, context }) => {
       if (!validateExecApprovalRequestParams(params)) {
@@ -63,6 +85,18 @@ export function createExecApprovalHandlers(
       };
       const record = manager.create(request, timeoutMs, explicitId);
       const decisionPromise = manager.waitForDecision(record, timeoutMs);
+      const requestedEvent = createInternalHookEvent(
+        "approval",
+        "requested",
+        record.request.sessionKey ?? "",
+        {
+          id: record.id,
+          request: buildRequestContext(record.request),
+          createdAtMs: record.createdAtMs,
+          expiresAtMs: record.expiresAtMs,
+        },
+      );
+      void triggerInternalHook(requestedEvent);
       context.broadcast(
         "exec.approval.requested",
         {
@@ -84,6 +118,20 @@ export function createExecApprovalHandlers(
           context.logGateway?.error?.(`exec approvals: forward request failed: ${String(err)}`);
         });
       const decision = await decisionPromise;
+      if (decision === null) {
+        const expiredEvent = createInternalHookEvent(
+          "approval",
+          "expired",
+          record.request.sessionKey ?? "",
+          {
+            id: record.id,
+            request: buildRequestContext(record.request),
+            createdAtMs: record.createdAtMs,
+            expiresAtMs: record.expiresAtMs,
+          },
+        );
+        void triggerInternalHook(expiredEvent);
+      }
       respond(
         true,
         {
@@ -115,12 +163,26 @@ export function createExecApprovalHandlers(
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "invalid decision"));
         return;
       }
+      const snapshot = manager.getSnapshot(p.id);
       const resolvedBy = client?.connect?.client?.displayName ?? client?.connect?.client?.id;
       const ok = manager.resolve(p.id, decision, resolvedBy ?? null);
       if (!ok) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "unknown approval id"));
         return;
       }
+      const resolvedEvent = createInternalHookEvent(
+        "approval",
+        "resolved",
+        snapshot?.request.sessionKey ?? "",
+        {
+          id: p.id,
+          decision,
+          resolvedBy,
+          ts: Date.now(),
+          request: snapshot?.request ? buildRequestContext(snapshot.request) : null,
+        },
+      );
+      void triggerInternalHook(resolvedEvent);
       context.broadcast(
         "exec.approval.resolved",
         { id: p.id, decision, resolvedBy, ts: Date.now() },

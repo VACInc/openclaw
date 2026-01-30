@@ -2,6 +2,7 @@ import type { Server as HttpServer } from "node:http";
 import type { WebSocketServer } from "ws";
 import type { CanvasHostHandler, CanvasHostServer } from "../canvas-host/server.js";
 import { type ChannelId, listChannelPlugins } from "../channels/plugins/index.js";
+import { createInternalHookEvent, triggerInternalHook } from "../hooks/internal-hooks.js";
 import { stopGmailWatcher } from "../hooks/gmail-watcher.js";
 import type { HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import type { PluginServicesHandle } from "../plugins/services.js";
@@ -21,6 +22,7 @@ export function createGatewayCloseHandler(params: {
   healthInterval: ReturnType<typeof setInterval>;
   dedupeCleanup: ReturnType<typeof setInterval>;
   agentUnsub: (() => void) | null;
+  agentHookUnsub: (() => void) | null;
   heartbeatUnsub: (() => void) | null;
   chatRunState: { clear: () => void };
   clients: Set<{ socket: { close: (code: number, reason: string) => void } }>;
@@ -37,6 +39,11 @@ export function createGatewayCloseHandler(params: {
       typeof opts?.restartExpectedMs === "number" && Number.isFinite(opts.restartExpectedMs)
         ? Math.max(0, Math.floor(opts.restartExpectedMs))
         : null;
+    const hookEvent = createInternalHookEvent("gateway", "stop", "gateway:stop", {
+      reason,
+      restartExpectedMs,
+    });
+    void triggerInternalHook(hookEvent);
     if (params.bonjourStop) {
       try {
         await params.bonjourStop();
@@ -84,6 +91,13 @@ export function createGatewayCloseHandler(params: {
     if (params.agentUnsub) {
       try {
         params.agentUnsub();
+      } catch {
+        /* ignore */
+      }
+    }
+    if (params.agentHookUnsub) {
+      try {
+        params.agentHookUnsub();
       } catch {
         /* ignore */
       }
