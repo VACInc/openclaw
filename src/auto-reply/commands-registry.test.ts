@@ -12,6 +12,7 @@ import {
   listNativeCommandSpecsForConfig,
   normalizeCommandBody,
   parseCommandArgs,
+  isReadOnlySlashCommand,
   resolveCommandArgMenu,
   serializeCommandArgs,
   shouldHandleTextCommands,
@@ -205,6 +206,22 @@ describe("commands registry", () => {
 
   it("normalizes dock command aliases", () => {
     expect(normalizeCommandBody("/dock_telegram")).toBe("/dock-telegram");
+  });
+
+  it("detects read-only slash commands for session-lane bypass", () => {
+    expect(isReadOnlySlashCommand("/status")).toBe(true);
+    expect(isReadOnlySlashCommand("/models openai")).toBe(true);
+    expect(isReadOnlySlashCommand("/thinking")).toBe(true);
+    expect(isReadOnlySlashCommand("/verbose")).toBe(true);
+    expect(isReadOnlySlashCommand("/reasoning")).toBe(true);
+    expect(isReadOnlySlashCommand("/elevated")).toBe(true);
+
+    expect(isReadOnlySlashCommand("/thinking high")).toBe(false);
+    expect(isReadOnlySlashCommand("/verbose on")).toBe(false);
+    expect(isReadOnlySlashCommand("/reasoning stream")).toBe(false);
+    expect(isReadOnlySlashCommand("/elevated ask")).toBe(false);
+    expect(isReadOnlySlashCommand("/model openai/gpt-5")).toBe(false);
+    expect(isReadOnlySlashCommand("hello /status")).toBe(false);
   });
 });
 

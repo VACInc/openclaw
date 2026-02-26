@@ -43,6 +43,14 @@ let cachedTextAliasCommands: ChatCommandDefinition[] | null = null;
 let cachedDetection: CommandDetection | undefined;
 let cachedDetectionCommands: ChatCommandDefinition[] | null = null;
 
+const READ_ONLY_COMMAND_KEYS_ALWAYS = new Set<string>(["help", "models", "status"]);
+const READ_ONLY_COMMAND_KEYS_NO_ARGS = new Set<string>([
+  "think",
+  "verbose",
+  "reasoning",
+  "elevated",
+]);
+
 function getTextAliasMap(): Map<string, TextAliasSpec> {
   const commands = getChatCommands();
   if (cachedTextAliasMap && cachedTextAliasCommands === commands) {
@@ -505,6 +513,20 @@ export function resolveTextCommand(
   }
   const args = trimmed.slice(alias.length).trim();
   return { command, args: args || undefined };
+}
+
+export function isReadOnlySlashCommand(raw: string, cfg?: OpenClawConfig): boolean {
+  const resolved = resolveTextCommand(raw, cfg);
+  if (!resolved) {
+    return false;
+  }
+  if (READ_ONLY_COMMAND_KEYS_ALWAYS.has(resolved.command.key)) {
+    return true;
+  }
+  if (READ_ONLY_COMMAND_KEYS_NO_ARGS.has(resolved.command.key)) {
+    return !resolved.args;
+  }
+  return false;
 }
 
 export function isNativeCommandSurface(surface?: string): boolean {

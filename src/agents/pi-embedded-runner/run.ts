@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
+import { isReadOnlySlashCommand } from "../../auto-reply/commands-registry.js";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import { generateSecureToken } from "../../infra/secure-random.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
@@ -207,8 +208,10 @@ export async function runEmbeddedPiAgent(
         : "plain"
       : "markdown");
   const isProbeSession = params.sessionId?.startsWith("probe-") ?? false;
+  // Read-only slash commands can skip the per-session transcript lane lock.
+  const bypassSessionLane = isReadOnlySlashCommand(params.prompt);
 
-  return enqueueSession(() =>
+  const runInGlobalLane = () =>
     enqueueGlobal(async () => {
       const started = Date.now();
       const workspaceResolution = resolveRunWorkspaceDir({
@@ -1159,6 +1162,10 @@ export async function runEmbeddedPiAgent(
       } finally {
         process.chdir(prevCwd);
       }
-    }),
-  );
+    });
+
+  if (bypassSessionLane) {
+    return runInGlobalLane();
+  }
+  return enqueueSession(runInGlobalLane);
 }
