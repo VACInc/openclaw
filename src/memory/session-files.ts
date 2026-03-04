@@ -1,11 +1,18 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { parseSessionArchiveTimestamp } from "../config/sessions/artifacts.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { redactSensitiveText } from "../logging/redact.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { hashText } from "./internal.js";
 
 const log = createSubsystemLogger("memory");
+
+function isResetArchiveTranscriptFileName(fileName: string): boolean {
+  return (
+    fileName.includes(".jsonl.reset.") && parseSessionArchiveTimestamp(fileName, "reset") !== null
+  );
+}
 
 export type SessionFileEntry = {
   path: string;
@@ -18,6 +25,18 @@ export type SessionFileEntry = {
   lineMap: number[];
 };
 
+export function isIndexableSessionTranscriptFileName(fileName: string): boolean {
+  const normalized = fileName.trim();
+  if (!normalized) {
+    return false;
+  }
+  return normalized.endsWith(".jsonl") || isResetArchiveTranscriptFileName(normalized);
+}
+
+export function isArchivedSessionTranscriptPath(filePath: string): boolean {
+  return isResetArchiveTranscriptFileName(path.basename(filePath).trim());
+}
+
 export async function listSessionFilesForAgent(agentId: string): Promise<string[]> {
   const dir = resolveSessionTranscriptsDirForAgent(agentId);
   try {
@@ -25,7 +44,7 @@ export async function listSessionFilesForAgent(agentId: string): Promise<string[
     return entries
       .filter((entry) => entry.isFile())
       .map((entry) => entry.name)
-      .filter((name) => name.endsWith(".jsonl"))
+      .filter((name) => isIndexableSessionTranscriptFileName(name))
       .map((name) => path.join(dir, name));
   } catch {
     return [];
