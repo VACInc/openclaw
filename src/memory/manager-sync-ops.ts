@@ -442,7 +442,11 @@ export abstract class MemoryManagerSyncOps {
     this.sessionPendingFiles.clear();
     let shouldSync = false;
     for (const sessionFile of pending) {
-      if (isArchivedSessionTranscriptPath(sessionFile)) {
+      if (
+        isArchivedSessionTranscriptPath(sessionFile, {
+          includeResetArchives: this.settings.sync.sessions.includeResetArchives,
+        })
+      ) {
         this.sessionsDirtyFiles.add(sessionFile);
         this.sessionsDirty = true;
         shouldSync = true;
@@ -732,7 +736,9 @@ export abstract class MemoryManagerSyncOps {
       return;
     }
 
-    const files = await listSessionFilesForAgent(this.agentId);
+    const files = await listSessionFilesForAgent(this.agentId, {
+      includeResetArchives: this.settings.sync.sessions.includeResetArchives,
+    });
     const activePaths = new Set(files.map((file) => sessionPathForFile(file)));
     const knownPaths = params.needsFullReindex
       ? new Set<string>()

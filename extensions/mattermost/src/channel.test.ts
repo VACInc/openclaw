@@ -102,9 +102,8 @@ describe("mattermostPlugin", () => {
 
       const actions = mattermostPlugin.actions?.listActions?.({ cfg }) ?? [];
       expect(actions).toContain("react");
-      expect(actions).toContain("send");
+      expect(actions).not.toContain("send");
       expect(mattermostPlugin.actions?.supportsAction?.({ action: "react" })).toBe(true);
-      expect(mattermostPlugin.actions?.supportsAction?.({ action: "send" })).toBe(true);
     });
 
     it("hides react when mattermost is not configured", () => {
@@ -134,7 +133,7 @@ describe("mattermostPlugin", () => {
 
       const actions = mattermostPlugin.actions?.listActions?.({ cfg }) ?? [];
       expect(actions).not.toContain("react");
-      expect(actions).toContain("send");
+      expect(actions).not.toContain("send");
     });
 
     it("respects per-account actions.reactions in listActions", () => {

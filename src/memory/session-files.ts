@@ -14,6 +14,10 @@ function isResetArchiveTranscriptFileName(fileName: string): boolean {
   );
 }
 
+type SessionTranscriptFilterOptions = {
+  includeResetArchives?: boolean;
+};
+
 export type SessionFileEntry = {
   path: string;
   absPath: string;
@@ -25,26 +29,45 @@ export type SessionFileEntry = {
   lineMap: number[];
 };
 
-export function isIndexableSessionTranscriptFileName(fileName: string): boolean {
+export function isIndexableSessionTranscriptFileName(
+  fileName: string,
+  opts?: SessionTranscriptFilterOptions,
+): boolean {
   const normalized = fileName.trim();
   if (!normalized) {
     return false;
   }
-  return normalized.endsWith(".jsonl") || isResetArchiveTranscriptFileName(normalized);
+  if (normalized.endsWith(".jsonl")) {
+    return true;
+  }
+  // Reset archives can include sensitive historical content; keep them opt-in.
+  if (opts?.includeResetArchives !== true) {
+    return false;
+  }
+  return isResetArchiveTranscriptFileName(normalized);
 }
 
-export function isArchivedSessionTranscriptPath(filePath: string): boolean {
+export function isArchivedSessionTranscriptPath(
+  filePath: string,
+  opts?: SessionTranscriptFilterOptions,
+): boolean {
+  if (opts?.includeResetArchives !== true) {
+    return false;
+  }
   return isResetArchiveTranscriptFileName(path.basename(filePath).trim());
 }
 
-export async function listSessionFilesForAgent(agentId: string): Promise<string[]> {
+export async function listSessionFilesForAgent(
+  agentId: string,
+  opts?: SessionTranscriptFilterOptions,
+): Promise<string[]> {
   const dir = resolveSessionTranscriptsDirForAgent(agentId);
   try {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     return entries
       .filter((entry) => entry.isFile())
       .map((entry) => entry.name)
-      .filter((name) => isIndexableSessionTranscriptFileName(name))
+      .filter((name) => isIndexableSessionTranscriptFileName(name, opts))
       .map((name) => path.join(dir, name));
   } catch {
     return [];

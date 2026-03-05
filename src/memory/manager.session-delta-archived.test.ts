@@ -49,7 +49,11 @@ function createMemoryConfig(workspaceDir: string): OpenClawConfig {
             watch: false,
             onSessionStart: false,
             onSearch: false,
-            sessions: { deltaBytes: 999_999, deltaMessages: 999_999 },
+            sessions: {
+              deltaBytes: 999_999,
+              deltaMessages: 999_999,
+              includeResetArchives: true,
+            },
           },
           query: { minScore: 0, hybrid: { enabled: false } },
         },

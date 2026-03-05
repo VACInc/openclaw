@@ -1982,6 +1982,7 @@ describe("QmdMemoryManager", () => {
           ...currentMemory?.qmd,
           sessions: {
             enabled: true,
+            includeResetArchives: true,
           },
         },
       },
