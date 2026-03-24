@@ -461,6 +461,7 @@ export function buildAgentSystemPrompt(params: {
     "- openclaw gateway start",
     "- openclaw gateway stop",
     "- openclaw gateway restart",
+    "For restarts that must continue the current session afterward, do not use raw `openclaw gateway restart`; use the `gateway` tool so OpenClaw can write a restart sentinel first.",
     "If unsure, ask the user to run `openclaw help` (or `openclaw gateway --help`) and paste the output.",
     "",
     ...skillsSection,
@@ -473,7 +474,7 @@ export function buildAgentSystemPrompt(params: {
           "Do not run config.apply or update.run unless the user explicitly requests an update or config change; if it's not explicit, ask first.",
           "Use config.schema.lookup with a specific dot path to inspect only the relevant config subtree before making config changes or answering config-field questions; avoid guessing field names/types.",
           "Actions: config.schema.lookup, config.get, config.apply (validate + write full config, then restart), config.patch (partial update, merges with existing), update.run (update deps or git, then restart).",
-          "After restart, OpenClaw pings the last active session automatically.",
+          "Continuation after restart only works for restart flows that write a restart sentinel first; use the `gateway` tool for that.",
         ].join("\n")
       : "",
     hasGateway && !isMinimal ? "" : "",

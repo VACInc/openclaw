@@ -212,6 +212,9 @@ describe("buildAgentSystemPrompt", () => {
 
     expect(prompt).toContain("## OpenClaw CLI Quick Reference");
     expect(prompt).toContain("openclaw gateway restart");
+    expect(prompt).toContain(
+      "For restarts that must continue the current session afterward, do not use raw `openclaw gateway restart`",
+    );
     expect(prompt).toContain("Do not invent commands");
   });
 

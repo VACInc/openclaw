@@ -12,11 +12,12 @@ import { scheduleGatewaySigusr1Restart } from "../../infra/restart.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { stringEnum } from "../schema/typebox.js";
 import { type AnyAgentTool, jsonResult, readStringParam } from "./common.js";
-import { callGatewayTool, readGatewayCallOptions } from "./gateway.js";
+import { callGatewayTool, readGatewayCallOptions, resolveGatewayCallTarget } from "./gateway.js";
 
 const log = createSubsystemLogger("gateway-tool");
 
 const DEFAULT_UPDATE_TIMEOUT_MS = 20 * 60_000;
+const RESTART_YIELD_MESSAGE = "Restarting now; I'll continue after restart.";
 
 function resolveBaseHashFromSnapshot(snapshot: unknown): string | undefined {
   if (!snapshot || typeof snapshot !== "object") {
@@ -70,6 +71,7 @@ const GatewayToolSchema = Type.Object({
 export function createGatewayTool(opts?: {
   agentSessionKey?: string;
   config?: OpenClawConfig;
+  onYield?: (message: string) => Promise<void> | void;
 }): AnyAgentTool {
   return {
     label: "Gateway",
@@ -128,6 +130,7 @@ export function createGatewayTool(opts?: {
           delayMs,
           reason,
         });
+        await opts?.onYield?.(RESTART_YIELD_MESSAGE);
         return jsonResult(scheduled);
       }
 
@@ -192,6 +195,9 @@ export function createGatewayTool(opts?: {
           note,
           restartDelayMs,
         });
+        if (resolveGatewayCallTarget(gatewayOpts) === "local") {
+          await opts?.onYield?.(RESTART_YIELD_MESSAGE);
+        }
         return jsonResult({ ok: true, result });
       }
       if (action === "config.patch") {
@@ -204,6 +210,9 @@ export function createGatewayTool(opts?: {
           note,
           restartDelayMs,
         });
+        if (resolveGatewayCallTarget(gatewayOpts) === "local") {
+          await opts?.onYield?.(RESTART_YIELD_MESSAGE);
+        }
         return jsonResult({ ok: true, result });
       }
       if (action === "update.run") {
@@ -219,6 +228,12 @@ export function createGatewayTool(opts?: {
           restartDelayMs,
           timeoutMs: updateTimeoutMs,
         });
+        if (
+          resolveGatewayCallTarget(updateGatewayOpts) === "local" &&
+          (result as { restart?: unknown } | null)?.restart
+        ) {
+          await opts?.onYield?.(RESTART_YIELD_MESSAGE);
+        }
         return jsonResult({ ok: true, result });
       }
 

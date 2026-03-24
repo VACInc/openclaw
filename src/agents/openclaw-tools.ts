@@ -189,6 +189,7 @@ export function createOpenClawTools(
     createGatewayTool({
       agentSessionKey: options?.agentSessionKey,
       config: options?.config,
+      onYield: options?.onYield,
     }),
     createAgentsListTool({
       agentSessionKey: options?.agentSessionKey,

@@ -35,6 +35,7 @@ function createGatewayToolModuleMocks() {
       return { ok: true };
     }),
     readGatewayCallOptions: vi.fn(() => ({})),
+    resolveGatewayCallTarget: vi.fn(() => "local"),
   };
 }
 
@@ -48,9 +49,13 @@ async function loadFreshOpenClawToolsModuleForTest() {
   ({ createOpenClawTools } = await import("./openclaw-tools.js"));
 }
 
-function requireGatewayTool(agentSessionKey?: string) {
+function requireGatewayTool(params?: {
+  agentSessionKey?: string;
+  onYield?: (message: string) => Promise<void> | void;
+}) {
   const tool = createOpenClawTools({
-    ...(agentSessionKey ? { agentSessionKey } : {}),
+    ...(params?.agentSessionKey ? { agentSessionKey: params.agentSessionKey } : {}),
+    ...(params?.onYield ? { onYield: params.onYield, sessionId: "session-1" } : {}),
     config: { commands: { restart: true } },
   }).find((candidate) => candidate.name === "gateway");
   expect(tool).toBeDefined();
@@ -139,7 +144,7 @@ describe("gateway tool", () => {
   it("passes config.apply through gateway call", async () => {
     const { callGatewayTool } = await import("./tools/gateway.js");
     const sessionKey = "agent:main:whatsapp:dm:+15555550123";
-    const tool = requireGatewayTool(sessionKey);
+    const tool = requireGatewayTool({ agentSessionKey: sessionKey });
 
     const raw = '{\n  agents: { defaults: { workspace: "~/openclaw" } }\n}\n';
     await tool.execute("call2", {
@@ -158,7 +163,7 @@ describe("gateway tool", () => {
   it("passes config.patch through gateway call", async () => {
     const { callGatewayTool } = await import("./tools/gateway.js");
     const sessionKey = "agent:main:whatsapp:dm:+15555550123";
-    const tool = requireGatewayTool(sessionKey);
+    const tool = requireGatewayTool({ agentSessionKey: sessionKey });
 
     const raw = '{\n  channels: { telegram: { groups: { "*": { requireMention: false } } } }\n}\n';
     await tool.execute("call4", {
@@ -177,7 +182,7 @@ describe("gateway tool", () => {
   it("passes update.run through gateway call", async () => {
     const { callGatewayTool } = await import("./tools/gateway.js");
     const sessionKey = "agent:main:whatsapp:dm:+15555550123";
-    const tool = requireGatewayTool(sessionKey);
+    const tool = requireGatewayTool({ agentSessionKey: sessionKey });
 
     await tool.execute("call3", {
       action: "update.run",
@@ -233,5 +238,72 @@ describe("gateway tool", () => {
     const schema = (result.details as { result?: { schema?: { properties?: unknown } } }).result
       ?.schema;
     expect(schema?.properties).toBeUndefined();
+  });
+
+  it("yields after scheduling a local restart", async () => {
+    vi.useFakeTimers();
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const onYield = vi.fn();
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-test-"));
+
+    try {
+      await withEnvAsync(
+        { OPENCLAW_STATE_DIR: stateDir, OPENCLAW_PROFILE: "isolated" },
+        async () => {
+          const tool = requireGatewayTool({ onYield });
+          await tool.execute("call6", {
+            action: "restart",
+            delayMs: 0,
+          });
+          expect(onYield).toHaveBeenCalledWith("Restarting now; I'll continue after restart.");
+          await vi.runAllTimersAsync();
+        },
+      );
+    } finally {
+      kill.mockRestore();
+      vi.useRealTimers();
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("yields after local config.patch but not remote config.patch", async () => {
+    const { resolveGatewayCallTarget } = await import("./tools/gateway.js");
+    const onYield = vi.fn();
+    const sessionKey = "agent:main:whatsapp:dm:+15555550123";
+    const raw = '{\n  channels: { telegram: { groups: { "*": { requireMention: false } } } }\n}\n';
+
+    vi.mocked(resolveGatewayCallTarget).mockReturnValueOnce("local");
+    await requireGatewayTool({ agentSessionKey: sessionKey, onYield }).execute("call7", {
+      action: "config.patch",
+      raw,
+    });
+    expect(onYield).toHaveBeenCalledTimes(1);
+
+    vi.mocked(resolveGatewayCallTarget).mockReturnValueOnce("remote");
+    await requireGatewayTool({ agentSessionKey: sessionKey, onYield }).execute("call8", {
+      action: "config.patch",
+      raw,
+      gatewayUrl: "wss://gateway.example",
+    });
+    expect(onYield).toHaveBeenCalledTimes(1);
+  });
+
+  it("only yields after local update.run when restart is scheduled", async () => {
+    const { callGatewayTool, resolveGatewayCallTarget } = await import("./tools/gateway.js");
+    const onYield = vi.fn();
+
+    vi.mocked(resolveGatewayCallTarget).mockReturnValueOnce("local");
+    vi.mocked(callGatewayTool).mockResolvedValueOnce({ ok: true, restart: { ok: true } } as never);
+    await requireGatewayTool({ onYield }).execute("call9", {
+      action: "update.run",
+    });
+    expect(onYield).toHaveBeenCalledTimes(1);
+
+    vi.mocked(resolveGatewayCallTarget).mockReturnValueOnce("local");
+    vi.mocked(callGatewayTool).mockResolvedValueOnce({ ok: false, restart: null } as never);
+    await requireGatewayTool({ onYield }).execute("call10", {
+      action: "update.run",
+    });
+    expect(onYield).toHaveBeenCalledTimes(1);
   });
 });

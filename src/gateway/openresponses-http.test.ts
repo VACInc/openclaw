@@ -728,6 +728,57 @@ describe("OpenResponses HTTP API (e2e)", () => {
     expect(events.some((event) => event.data === "[DONE]")).toBe(true);
   });
 
+  it("returns empty assistant text for non-stream end_turn responses", async () => {
+    const port = enabledPort;
+    agentCommand.mockClear();
+    agentCommand.mockResolvedValueOnce({
+      payloads: [],
+      meta: { stopReason: "end_turn" },
+    } as never);
+
+    const res = await postResponses(port, {
+      stream: false,
+      model: "openclaw",
+      input: "restart and continue later",
+    });
+
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      status?: string;
+      output?: Array<{ content?: Array<{ text?: string }> }>;
+    };
+    expect(json.status).toBe("completed");
+    expect(json.output?.[0]?.content?.[0]?.text ?? "").toBe("");
+  });
+
+  it("returns empty assistant text for streamed end_turn responses", async () => {
+    const port = enabledPort;
+    agentCommand.mockClear();
+    agentCommand.mockResolvedValueOnce({
+      payloads: [],
+      meta: { stopReason: "end_turn" },
+    } as never);
+
+    const res = await postResponses(port, {
+      stream: true,
+      model: "openclaw",
+      input: "restart and continue later",
+    });
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const events = parseSseEvents(text);
+    const completed = events.find((event) => event.event === "response.completed");
+    expect(completed).toBeTruthy();
+    const response = (
+      JSON.parse(completed?.data ?? "{}") as {
+        response?: { output?: Array<{ content?: Array<{ text?: string }> }> };
+      }
+    ).response;
+    expect(response?.output?.[0]?.content?.[0]?.text ?? "").toBe("");
+    expect(events.some((event) => event.data === "[DONE]")).toBe(true);
+  });
+
   it("reuses the prior session when previous_response_id is provided", async () => {
     const port = enabledPort;
     agentCommand.mockClear();

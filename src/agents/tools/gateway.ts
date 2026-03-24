@@ -13,7 +13,7 @@ export type GatewayCallOptions = {
   timeoutMs?: number;
 };
 
-type GatewayOverrideTarget = "local" | "remote";
+export type GatewayOverrideTarget = "local" | "remote";
 
 export function readGatewayCallOptions(params: Record<string, unknown>): GatewayCallOptions {
   return {
@@ -111,6 +111,29 @@ function resolveGatewayOverrideToken(params: {
     remoteTokenFallback: params.target === "remote" ? "remote-only" : "remote-env-local",
     remotePasswordFallback: params.target === "remote" ? "remote-only" : "remote-env-local",
   }).token;
+}
+
+export function resolveGatewayCallTarget(opts?: GatewayCallOptions): GatewayOverrideTarget {
+  const cfg = loadConfig();
+  const gatewayUrl = trimToUndefined(opts?.gatewayUrl);
+  if (gatewayUrl) {
+    return validateGatewayUrlOverrideForAgentTools({
+      cfg,
+      urlOverride: gatewayUrl,
+    }).target;
+  }
+
+  const envGatewayUrl = trimToUndefined(process.env.OPENCLAW_GATEWAY_URL);
+  if (envGatewayUrl) {
+    return validateGatewayUrlOverrideForAgentTools({
+      cfg,
+      urlOverride: envGatewayUrl,
+    }).target;
+  }
+
+  const remoteUrl =
+    typeof cfg.gateway?.remote?.url === "string" ? cfg.gateway.remote.url.trim() : "";
+  return cfg.gateway?.mode === "remote" && remoteUrl ? "remote" : "local";
 }
 
 export function resolveGatewayOptions(opts?: GatewayCallOptions) {

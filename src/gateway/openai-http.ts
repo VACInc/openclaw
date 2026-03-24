@@ -394,16 +394,21 @@ function coerceRequest(val: unknown): OpenAiChatCompletionRequest {
   return val as OpenAiChatCompletionRequest;
 }
 
+function isEndTurnResult(result: unknown): boolean {
+  const meta = (result as { meta?: { stopReason?: unknown } } | null)?.meta;
+  return meta?.stopReason === "end_turn";
+}
+
 function resolveAgentResponseText(result: unknown): string {
   const payloads = (result as { payloads?: Array<{ text?: string }> } | null)?.payloads;
   if (!Array.isArray(payloads) || payloads.length === 0) {
-    return "No response from OpenClaw.";
+    return isEndTurnResult(result) ? "" : "No response from OpenClaw.";
   }
   const content = payloads
     .map((p) => (typeof p.text === "string" ? p.text : ""))
     .filter(Boolean)
     .join("\n\n");
-  return content || "No response from OpenClaw.";
+  return content || (isEndTurnResult(result) ? "" : "No response from OpenClaw.");
 }
 
 export async function handleOpenAiHttpRequest(

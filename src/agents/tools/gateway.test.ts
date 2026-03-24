@@ -13,6 +13,7 @@ vi.mock("../../gateway/call.js", () => ({
 }));
 
 let callGatewayTool: typeof import("./gateway.js").callGatewayTool;
+let resolveGatewayCallTarget: typeof import("./gateway.js").resolveGatewayCallTarget;
 let resolveGatewayOptions: typeof import("./gateway.js").resolveGatewayOptions;
 
 async function loadFreshGatewayToolModuleForTest() {
@@ -24,7 +25,8 @@ async function loadFreshGatewayToolModuleForTest() {
   vi.doMock("../../gateway/call.js", () => ({
     callGateway: (...args: unknown[]) => callGatewayMock(...args),
   }));
-  ({ callGatewayTool, resolveGatewayOptions } = await import("./gateway.js"));
+  ({ callGatewayTool, resolveGatewayCallTarget, resolveGatewayOptions } =
+    await import("./gateway.js"));
 }
 
 describe("gateway tool defaults", () => {
@@ -98,6 +100,27 @@ describe("gateway tool defaults", () => {
     const opts = resolveGatewayOptions({ gatewayUrl: "wss://gateway.example" });
     expect(opts.url).toBe("wss://gateway.example");
     expect(opts.token).toBe("remote-token");
+  });
+
+  it("resolves call target to remote when remote mode is configured", () => {
+    configState.value = {
+      gateway: {
+        mode: "remote",
+        remote: {
+          url: "wss://gateway.example",
+        },
+      },
+    };
+    expect(resolveGatewayCallTarget()).toBe("remote");
+  });
+
+  it("resolves call target to local when remote mode is misconfigured", () => {
+    configState.value = {
+      gateway: {
+        mode: "remote",
+      },
+    };
+    expect(resolveGatewayCallTarget()).toBe("local");
   });
 
   it("does not leak local env/config tokens to remote overrides", () => {

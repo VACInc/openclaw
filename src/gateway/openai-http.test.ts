@@ -578,6 +578,18 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
       }
 
       {
+        agentCommand.mockClear();
+        agentCommand.mockResolvedValueOnce({
+          payloads: [],
+          meta: { stopReason: "end_turn" },
+        } as never);
+        const json = await postSyncUserMessage("hi");
+        const choice0 = (json.choices as Array<Record<string, unknown>>)[0] ?? {};
+        const msg = (choice0.message as Record<string, unknown> | undefined) ?? {};
+        expect(msg.content).toBe("");
+      }
+
+      {
         const res = await postChatCompletions(port, {
           model: "openclaw",
           messages: [{ role: "system", content: "yo" }],

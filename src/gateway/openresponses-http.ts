@@ -331,6 +331,26 @@ function resolveStopReasonAndPendingToolCalls(meta: unknown): {
   return { stopReason: record.stopReason, pendingToolCalls: record.pendingToolCalls };
 }
 
+function extractPayloadText(payloads: Array<{ text?: string }> | undefined): string {
+  return Array.isArray(payloads)
+    ? payloads
+        .map((p) => (typeof p.text === "string" ? p.text : ""))
+        .filter(Boolean)
+        .join("\n\n")
+    : "";
+}
+
+function resolveAssistantTextFromResult(params: {
+  payloads: Array<{ text?: string }> | undefined;
+  stopReason: string | undefined;
+}): string {
+  const content = extractPayloadText(params.payloads);
+  if (content) {
+    return content;
+  }
+  return params.stopReason === "end_turn" ? "" : "No response from OpenClaw.";
+}
+
 function createResponseResource(params: {
   id: string;
   model: string;
@@ -669,13 +689,7 @@ export async function handleOpenResponsesHttpRequest(
         const functionCall = pendingToolCalls[0];
         const functionCallItemId = `call_${randomUUID()}`;
 
-        const assistantText =
-          Array.isArray(payloads) && payloads.length > 0
-            ? payloads
-                .map((p) => (typeof p.text === "string" ? p.text : ""))
-                .filter(Boolean)
-                .join("\n\n")
-            : "";
+        const assistantText = extractPayloadText(payloads);
 
         const output: OutputItem[] = [];
         if (assistantText) {
@@ -708,13 +722,7 @@ export async function handleOpenResponsesHttpRequest(
         return true;
       }
 
-      const content =
-        Array.isArray(payloads) && payloads.length > 0
-          ? payloads
-              .map((p) => (typeof p.text === "string" ? p.text : ""))
-              .filter(Boolean)
-              .join("\n\n")
-          : "No response from OpenClaw.";
+      const content = resolveAssistantTextFromResult({ payloads, stopReason });
 
       const response = createResponseResource({
         id: responseId,
@@ -884,7 +892,7 @@ export async function handleOpenResponsesHttpRequest(
     if (evt.stream === "lifecycle") {
       const phase = evt.data?.phase;
       if (phase === "end" || phase === "error") {
-        const finalText = accumulatedText || "No response from OpenClaw.";
+        const finalText = accumulatedText;
         const finalStatus = phase === "error" ? "failed" : "completed";
         requestFinalize(finalStatus, finalText);
       }
@@ -918,6 +926,13 @@ export async function handleOpenResponsesHttpRequest(
       const meta = resultAny.meta;
       const { stopReason, pendingToolCalls } = resolveStopReasonAndPendingToolCalls(meta);
 
+      if (finalizeRequested && !sawAssistantDelta) {
+        finalizeRequested.text = resolveAssistantTextFromResult({
+          payloads: resultAny.payloads,
+          stopReason,
+        });
+      }
+
       if (
         !closed &&
         stopReason === "tool_calls" &&
@@ -926,14 +941,7 @@ export async function handleOpenResponsesHttpRequest(
       ) {
         const functionCall = pendingToolCalls[0];
         const usage = finalUsage ?? createEmptyUsage();
-        const finalText =
-          accumulatedText ||
-          (Array.isArray(resultAny.payloads)
-            ? resultAny.payloads
-                .map((p) => (typeof p.text === "string" ? p.text : ""))
-                .filter(Boolean)
-                .join("\n\n")
-            : "");
+        const finalText = accumulatedText || extractPayloadText(resultAny.payloads);
 
         writeSseEvent(res, {
           type: "response.output_text.done",
@@ -1010,14 +1018,10 @@ export async function handleOpenResponsesHttpRequest(
 
       // Fallback: if no streaming deltas were received, send the full response as text
       if (!sawAssistantDelta) {
-        const payloads = resultAny.payloads;
-        const content =
-          Array.isArray(payloads) && payloads.length > 0
-            ? payloads
-                .map((p) => (typeof p.text === "string" ? p.text : ""))
-                .filter(Boolean)
-                .join("\n\n")
-            : "No response from OpenClaw.";
+        const content = resolveAssistantTextFromResult({
+          payloads: resultAny.payloads,
+          stopReason,
+        });
 
         accumulatedText = content;
         sawAssistantDelta = true;
