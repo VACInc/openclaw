@@ -4,6 +4,7 @@ import { listAgentIds, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { listChannelPlugins } from "../channels/plugins/index.js";
 import type { ChannelId } from "../channels/plugins/types.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { normalizeResolvedSecretInputString } from "../config/types.secrets.js";
 import { readJsonBodyWithLimit, requestBodyErrorToText } from "../infra/http-body.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
 import type { HookExternalContentSource } from "../security/external-content.js";
@@ -40,7 +41,11 @@ export function resolveHooksConfig(cfg: OpenClawConfig): HooksConfigResolved | n
   if (cfg.hooks?.enabled !== true) {
     return null;
   }
-  const token = cfg.hooks?.token?.trim();
+  const token = normalizeResolvedSecretInputString({
+    value: cfg.hooks?.token,
+    defaults: cfg.secrets?.defaults,
+    path: "hooks.token",
+  });
   if (!token) {
     throw new Error("hooks.enabled requires hooks.token");
   }

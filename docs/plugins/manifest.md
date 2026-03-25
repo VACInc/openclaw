@@ -182,6 +182,18 @@ Each field hint can include:
 | `sensitive`   | `boolean`  | Marks the field as secret or sensitive. |
 | `placeholder` | `string`   | Placeholder text for form inputs.       |
 
+SecretRef behavior:
+
+- Sensitive string config fields accept either plaintext strings or SecretRefs.
+- OpenClaw derives plugin SecretRef support from `configSchema` plus
+  `uiHints.sensitive`.
+- Common secret field names such as `apiKey`, `token`, `password`,
+  `accessToken`, and `auth` are treated as sensitive by default when the schema
+  allows string values.
+- Set `uiHints.<path>.sensitive` to `true` to mark an additional field as a
+  secret, or to `false` to opt out for a field that would otherwise match the
+  default secret-name rules.
+
 ## Manifest versus package.json
 
 The two files serve different jobs:

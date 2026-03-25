@@ -100,6 +100,17 @@ describe("config secret refs schema", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("accepts hooks.token refs", () => {
+    const result = validateConfigObjectRaw({
+      hooks: {
+        enabled: true,
+        token: { source: "env", provider: "default", id: "HOOKS_TOKEN" },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it('accepts file refs with id "value" for singleValue mode providers', () => {
     const result = validateConfigObjectRaw({
       secrets: {

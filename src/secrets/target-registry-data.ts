@@ -1,7 +1,29 @@
+import { BUNDLED_PLUGIN_METADATA } from "../plugins/bundled-plugin-metadata.js";
+import { listPluginConfigSecretPaths } from "../plugins/config-secrets.js";
 import type { SecretTargetRegistryEntry } from "./target-registry-types.js";
 
 const SECRET_INPUT_SHAPE = "secret_input"; // pragma: allowlist secret
 const SIBLING_REF_SHAPE = "sibling_ref"; // pragma: allowlist secret
+
+function buildBundledPluginSecretTargets(): SecretTargetRegistryEntry[] {
+  return BUNDLED_PLUGIN_METADATA.flatMap((plugin) => {
+    const secretPaths = listPluginConfigSecretPaths({
+      schema: plugin.manifest.configSchema,
+      uiHints: plugin.manifest.uiHints,
+    });
+    return secretPaths.map((pathPattern) => ({
+      id: `plugins.entries.${plugin.manifest.id}.config.${pathPattern}`,
+      targetType: `plugins.entries.${plugin.manifest.id}.config.${pathPattern}`,
+      configFile: "openclaw.json",
+      pathPattern: `plugins.entries.${plugin.manifest.id}.config.${pathPattern}`,
+      secretShape: SECRET_INPUT_SHAPE,
+      expectedResolvedValue: "string",
+      includeInPlan: true,
+      includeInConfigure: true,
+      includeInAudit: true,
+    }));
+  });
+}
 
 const SECRET_TARGET_REGISTRY: SecretTargetRegistryEntry[] = [
   {
@@ -629,6 +651,17 @@ const SECRET_TARGET_REGISTRY: SecretTargetRegistryEntry[] = [
     includeInAudit: true,
   },
   {
+    id: "hooks.token",
+    targetType: "hooks.token",
+    configFile: "openclaw.json",
+    pathPattern: "hooks.token",
+    secretShape: SECRET_INPUT_SHAPE,
+    expectedResolvedValue: "string",
+    includeInPlan: true,
+    includeInConfigure: true,
+    includeInAudit: true,
+  },
+  {
     id: "messages.tts.elevenlabs.apiKey",
     targetType: "messages.tts.elevenlabs.apiKey",
     configFile: "openclaw.json",
@@ -734,32 +767,10 @@ const SECRET_TARGET_REGISTRY: SecretTargetRegistryEntry[] = [
     includeInAudit: true,
   },
   {
-    id: "plugins.entries.brave.config.webSearch.apiKey",
-    targetType: "plugins.entries.brave.config.webSearch.apiKey",
-    configFile: "openclaw.json",
-    pathPattern: "plugins.entries.brave.config.webSearch.apiKey",
-    secretShape: SECRET_INPUT_SHAPE,
-    expectedResolvedValue: "string",
-    includeInPlan: true,
-    includeInConfigure: true,
-    includeInAudit: true,
-  },
-  {
     id: "tools.web.search.gemini.apiKey",
     targetType: "tools.web.search.gemini.apiKey",
     configFile: "openclaw.json",
     pathPattern: "tools.web.search.gemini.apiKey",
-    secretShape: SECRET_INPUT_SHAPE,
-    expectedResolvedValue: "string",
-    includeInPlan: true,
-    includeInConfigure: true,
-    includeInAudit: true,
-  },
-  {
-    id: "plugins.entries.google.config.webSearch.apiKey",
-    targetType: "plugins.entries.google.config.webSearch.apiKey",
-    configFile: "openclaw.json",
-    pathPattern: "plugins.entries.google.config.webSearch.apiKey",
     secretShape: SECRET_INPUT_SHAPE,
     expectedResolvedValue: "string",
     includeInPlan: true,
@@ -778,32 +789,10 @@ const SECRET_TARGET_REGISTRY: SecretTargetRegistryEntry[] = [
     includeInAudit: true,
   },
   {
-    id: "plugins.entries.xai.config.webSearch.apiKey",
-    targetType: "plugins.entries.xai.config.webSearch.apiKey",
-    configFile: "openclaw.json",
-    pathPattern: "plugins.entries.xai.config.webSearch.apiKey",
-    secretShape: SECRET_INPUT_SHAPE,
-    expectedResolvedValue: "string",
-    includeInPlan: true,
-    includeInConfigure: true,
-    includeInAudit: true,
-  },
-  {
     id: "tools.web.search.kimi.apiKey",
     targetType: "tools.web.search.kimi.apiKey",
     configFile: "openclaw.json",
     pathPattern: "tools.web.search.kimi.apiKey",
-    secretShape: SECRET_INPUT_SHAPE,
-    expectedResolvedValue: "string",
-    includeInPlan: true,
-    includeInConfigure: true,
-    includeInAudit: true,
-  },
-  {
-    id: "plugins.entries.moonshot.config.webSearch.apiKey",
-    targetType: "plugins.entries.moonshot.config.webSearch.apiKey",
-    configFile: "openclaw.json",
-    pathPattern: "plugins.entries.moonshot.config.webSearch.apiKey",
     secretShape: SECRET_INPUT_SHAPE,
     expectedResolvedValue: "string",
     includeInPlan: true,
@@ -821,39 +810,7 @@ const SECRET_TARGET_REGISTRY: SecretTargetRegistryEntry[] = [
     includeInConfigure: true,
     includeInAudit: true,
   },
-  {
-    id: "plugins.entries.perplexity.config.webSearch.apiKey",
-    targetType: "plugins.entries.perplexity.config.webSearch.apiKey",
-    configFile: "openclaw.json",
-    pathPattern: "plugins.entries.perplexity.config.webSearch.apiKey",
-    secretShape: SECRET_INPUT_SHAPE,
-    expectedResolvedValue: "string",
-    includeInPlan: true,
-    includeInConfigure: true,
-    includeInAudit: true,
-  },
-  {
-    id: "plugins.entries.firecrawl.config.webSearch.apiKey",
-    targetType: "plugins.entries.firecrawl.config.webSearch.apiKey",
-    configFile: "openclaw.json",
-    pathPattern: "plugins.entries.firecrawl.config.webSearch.apiKey",
-    secretShape: SECRET_INPUT_SHAPE,
-    expectedResolvedValue: "string",
-    includeInPlan: true,
-    includeInConfigure: true,
-    includeInAudit: true,
-  },
-  {
-    id: "plugins.entries.tavily.config.webSearch.apiKey",
-    targetType: "plugins.entries.tavily.config.webSearch.apiKey",
-    configFile: "openclaw.json",
-    pathPattern: "plugins.entries.tavily.config.webSearch.apiKey",
-    secretShape: SECRET_INPUT_SHAPE,
-    expectedResolvedValue: "string",
-    includeInPlan: true,
-    includeInConfigure: true,
-    includeInAudit: true,
-  },
+  ...buildBundledPluginSecretTargets(),
 ];
 
 export { SECRET_TARGET_REGISTRY };

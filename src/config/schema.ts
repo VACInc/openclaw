@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { CHANNEL_IDS } from "../channels/registry.js";
+import { augmentPluginConfigUiHints } from "../plugins/config-secrets.js";
 import { GENERATED_BASE_CONFIG_SCHEMA } from "./schema.base.generated.js";
 import type { ConfigUiHint, ConfigUiHints } from "./schema.hints.js";
 import { applySensitiveHints } from "./schema.hints.js";
@@ -191,7 +192,11 @@ function applyPluginHints(hints: ConfigUiHints, plugins: PluginUiMetadata[]): Co
       help: `Plugin-defined config payload for ${id}.`,
     };
 
-    const uiHints = plugin.configUiHints ?? {};
+    const uiHints =
+      augmentPluginConfigUiHints({
+        schema: asSchemaObject(plugin.configSchema) ?? undefined,
+        uiHints: plugin.configUiHints,
+      }) ?? {};
     for (const [relPathRaw, hint] of Object.entries(uiHints)) {
       const relPath = relPathRaw.trim().replace(/^\./, "");
       if (!relPath) {

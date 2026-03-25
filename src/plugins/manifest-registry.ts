@@ -4,6 +4,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import { resolveUserPath } from "../utils.js";
 import { resolveRuntimeServiceVersion } from "../version.js";
 import { loadBundleManifest } from "./bundle-manifest.js";
+import { augmentPluginConfigSchema, augmentPluginConfigUiHints } from "./config-secrets.js";
 import { normalizePluginsConfig, type NormalizedPluginsConfig } from "./config-state.js";
 import { discoverOpenClawPlugins, type PluginCandidate } from "./discovery.js";
 import { loadPluginManifest, type PluginManifest } from "./manifest.js";
@@ -158,6 +159,10 @@ function buildRecord(params: {
   schemaCacheKey?: string;
   configSchema?: Record<string, unknown>;
 }): PluginManifestRecord {
+  const configUiHints = augmentPluginConfigUiHints({
+    schema: params.configSchema,
+    uiHints: params.manifest.uiHints,
+  });
   return {
     id: params.manifest.id,
     name: normalizeManifestLabel(params.manifest.name) ?? params.candidate.packageName,
@@ -185,8 +190,11 @@ function buildRecord(params: {
       true,
     manifestPath: params.manifestPath,
     schemaCacheKey: params.schemaCacheKey,
-    configSchema: params.configSchema,
-    configUiHints: params.manifest.uiHints,
+    configSchema: augmentPluginConfigSchema({
+      schema: params.configSchema,
+      uiHints: configUiHints,
+    }),
+    configUiHints,
     ...(params.candidate.packageManifest?.channel?.id
       ? {
           channelCatalogMeta: {

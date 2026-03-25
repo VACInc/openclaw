@@ -405,6 +405,53 @@ describe("ensureGatewayStartupAuth", () => {
       }),
     ).rejects.toThrow(/hooks\.token must not match gateway auth token/i);
   });
+
+  it("throws when hooks token SecretRef resolves to the gateway auth token", async () => {
+    await expect(
+      ensureGatewayStartupAuth({
+        cfg: {
+          hooks: {
+            enabled: true,
+            token: { source: "env", provider: "default", id: "HOOKS_TOKEN" },
+          },
+          secrets: {
+            providers: {
+              default: { source: "env" },
+            },
+          },
+        },
+        env: {
+          OPENCLAW_GATEWAY_TOKEN: "shared-gateway-token-1234567890",
+          HOOKS_TOKEN: "shared-gateway-token-1234567890",
+        } as NodeJS.ProcessEnv,
+      }),
+    ).rejects.toThrow(/hooks\.token must not match gateway auth token/i);
+  });
+
+  it("fails when hooks.token SecretRef is active and unresolved", async () => {
+    await expect(
+      ensureGatewayStartupAuth({
+        cfg: {
+          hooks: {
+            enabled: true,
+            token: { source: "env", provider: "default", id: "MISSING_HOOKS_TOKEN" },
+          },
+          gateway: {
+            auth: {
+              mode: "token",
+              token: "configured-gateway-token",
+            },
+          },
+          secrets: {
+            providers: {
+              default: { source: "env" },
+            },
+          },
+        },
+        env: {} as NodeJS.ProcessEnv,
+      }),
+    ).rejects.toThrow(/MISSING_HOOKS_TOKEN/i);
+  });
 });
 
 describe("assertHooksTokenSeparateFromGatewayAuth", () => {

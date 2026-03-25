@@ -81,6 +81,7 @@ describe("config plugin validation", () => {
   let enumPluginDir = "";
   let bluebubblesPluginDir = "";
   let googleOverridePluginDir = "";
+  let secretFieldsPluginDir = "";
   let voiceCallSchemaPluginDir = "";
   let bundlePluginDir = "";
   let manifestlessClaudeBundleDir = "";
@@ -150,6 +151,26 @@ describe("config plugin validation", () => {
         },
       },
     });
+    secretFieldsPluginDir = path.join(suiteHome, "secret-fields-plugin");
+    await writePluginFixture({
+      dir: secretFieldsPluginDir,
+      id: "secret-fields",
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          auth: { type: "string" },
+          tokens: { type: "string" },
+          nested: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              accessToken: { type: "string" },
+            },
+          },
+        },
+      },
+    });
     bundlePluginDir = path.join(suiteHome, "bundle-plugin");
     await writeBundleFixture({
       dir: bundlePluginDir,
@@ -190,6 +211,7 @@ describe("config plugin validation", () => {
             bluebubblesPluginDir,
             bundlePluginDir,
             manifestlessClaudeBundleDir,
+            secretFieldsPluginDir,
             voiceCallSchemaPluginDir,
           ],
         },
@@ -244,6 +266,59 @@ describe("config plugin validation", () => {
         message:
           "plugin not found: missing-plugin (stale config entry ignored; remove it from plugins config)",
       });
+    }
+  });
+
+  it("accepts SecretRefs for plugin config fields inferred as secrets", async () => {
+    const res = validateInSuite({
+      plugins: {
+        enabled: false,
+        load: { paths: [secretFieldsPluginDir] },
+        entries: {
+          "secret-fields": {
+            config: {
+              auth: { source: "env", provider: "default", id: "SECRET_FIELDS_AUTH" },
+              nested: {
+                accessToken: {
+                  source: "file",
+                  provider: "filemain",
+                  id: "/plugins/secret-fields/accessToken",
+                },
+              },
+              tokens: "keeps-plaintext-validation",
+            },
+          },
+        },
+      },
+    });
+
+    expect(res.ok).toBe(true);
+  });
+
+  it("does not overmatch non-secret plural plugin fields", async () => {
+    const res = validateInSuite({
+      plugins: {
+        enabled: false,
+        load: { paths: [secretFieldsPluginDir] },
+        entries: {
+          "secret-fields": {
+            config: {
+              tokens: { source: "env", provider: "default", id: "SECRET_FIELDS_TOKENS" },
+            },
+          },
+        },
+      },
+    });
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(
+        res.issues.some(
+          (issue) =>
+            issue.path === "plugins.entries.secret-fields.config.tokens" &&
+            issue.message.includes("invalid config"),
+        ),
+      ).toBe(true);
     }
   });
 

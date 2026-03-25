@@ -5,7 +5,7 @@ import type {
   OpenClawConfig,
 } from "../config/config.js";
 import { writeConfigFile } from "../config/config.js";
-import { hasConfiguredSecretInput } from "../config/types.secrets.js";
+import { hasConfiguredSecretInput, normalizeSecretInputString } from "../config/types.secrets.js";
 import { assertExplicitGatewayAuthModeWhenBothConfigured } from "./auth-mode-policy.js";
 import { resolveGatewayAuth, type ResolvedGatewayAuth } from "./auth.js";
 import {
@@ -13,7 +13,10 @@ import {
   hasGatewayTokenEnvCandidate,
   readGatewayTokenEnv,
 } from "./credentials.js";
-import { resolveRequiredConfiguredSecretRefInputString } from "./resolve-configured-secret-input-string.js";
+import {
+  resolveConfiguredSecretInputString,
+  resolveRequiredConfiguredSecretRefInputString,
+} from "./resolve-configured-secret-input-string.js";
 
 export function mergeGatewayAuthConfig(
   base?: GatewayAuthConfig,
@@ -215,6 +218,52 @@ async function resolveGatewayPasswordSecretRef(
   });
 }
 
+async function resolveHooksTokenForStartup(
+  cfg: OpenClawConfig,
+  env: NodeJS.ProcessEnv,
+): Promise<string | undefined> {
+  const resolved = await resolveConfiguredSecretInputString({
+    config: cfg,
+    env,
+    value: cfg.hooks?.token,
+    path: "hooks.token",
+  });
+  if (resolved.value) {
+    return resolved.value;
+  }
+  if (hasConfiguredSecretInput(cfg.hooks?.token, cfg.secrets?.defaults)) {
+    throw new Error(
+      resolved.unresolvedRefReason ??
+        "hooks.token SecretRef is configured but unavailable during startup auth checks.",
+    );
+  }
+  return undefined;
+}
+
+async function assertHooksTokenSeparateFromGatewayAuthAtStartup(params: {
+  cfg: OpenClawConfig;
+  auth: ResolvedGatewayAuth;
+  env: NodeJS.ProcessEnv;
+}): Promise<void> {
+  if (params.cfg.hooks?.enabled !== true) {
+    return;
+  }
+  const hooksToken = (await resolveHooksTokenForStartup(params.cfg, params.env))?.trim() ?? "";
+  if (!hooksToken) {
+    return;
+  }
+  const gatewayToken =
+    params.auth.mode === "token" && typeof params.auth.token === "string"
+      ? params.auth.token.trim()
+      : "";
+  if (!gatewayToken || hooksToken !== gatewayToken) {
+    return;
+  }
+  throw new Error(
+    "Invalid config: hooks.token must not match gateway auth token. Set a distinct hooks.token for hook ingress.",
+  );
+}
+
 export async function ensureGatewayStartupAuth(params: {
   cfg: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
@@ -249,7 +298,11 @@ export async function ensureGatewayStartupAuth(params: {
     tailscaleOverride: params.tailscaleOverride,
   });
   if (resolved.mode !== "token" || (resolved.token?.trim().length ?? 0) > 0) {
-    assertHooksTokenSeparateFromGatewayAuth({ cfg: params.cfg, auth: resolved });
+    await assertHooksTokenSeparateFromGatewayAuthAtStartup({
+      cfg: params.cfg,
+      auth: resolved,
+      env,
+    });
     return { cfg: params.cfg, auth: resolved, persistedGeneratedToken: false };
   }
 
@@ -279,7 +332,11 @@ export async function ensureGatewayStartupAuth(params: {
     authOverride: params.authOverride,
     tailscaleOverride: params.tailscaleOverride,
   });
-  assertHooksTokenSeparateFromGatewayAuth({ cfg: nextCfg, auth: nextAuth });
+  await assertHooksTokenSeparateFromGatewayAuthAtStartup({
+    cfg: nextCfg,
+    auth: nextAuth,
+    env,
+  });
   return {
     cfg: nextCfg,
     auth: nextAuth,
@@ -295,8 +352,7 @@ export function assertHooksTokenSeparateFromGatewayAuth(params: {
   if (params.cfg.hooks?.enabled !== true) {
     return;
   }
-  const hooksToken =
-    typeof params.cfg.hooks.token === "string" ? params.cfg.hooks.token.trim() : "";
+  const hooksToken = normalizeSecretInputString(params.cfg.hooks.token) ?? "";
   if (!hooksToken) {
     return;
   }

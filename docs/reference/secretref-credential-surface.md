@@ -31,14 +31,25 @@ Scope intent:
 - `talk.providers.*.apiKey`
 - `messages.tts.elevenlabs.apiKey`
 - `messages.tts.openai.apiKey`
+- `hooks.token`
 - `tools.web.fetch.firecrawl.apiKey`
 - `plugins.entries.brave.config.webSearch.apiKey`
+- `plugins.entries.exa.config.webSearch.apiKey`
 - `plugins.entries.google.config.webSearch.apiKey`
 - `plugins.entries.xai.config.webSearch.apiKey`
 - `plugins.entries.moonshot.config.webSearch.apiKey`
 - `plugins.entries.perplexity.config.webSearch.apiKey`
 - `plugins.entries.firecrawl.config.webSearch.apiKey`
+- `plugins.entries.memory-lancedb.config.embedding.apiKey`
 - `plugins.entries.tavily.config.webSearch.apiKey`
+- `plugins.entries.voice-call.config.plivo.authToken`
+- `plugins.entries.voice-call.config.streaming.openaiApiKey`
+- `plugins.entries.voice-call.config.telnyx.apiKey`
+- `plugins.entries.voice-call.config.telnyx.publicKey`
+- `plugins.entries.voice-call.config.tts.elevenlabs.apiKey`
+- `plugins.entries.voice-call.config.tts.openai.apiKey`
+- `plugins.entries.voice-call.config.tunnel.ngrokAuthToken`
+- `plugins.entries.voice-call.config.twilio.authToken`
 - `tools.web.search.apiKey`
 - `tools.web.search.gemini.apiKey`
 - `tools.web.search.grok.apiKey`
@@ -116,6 +127,7 @@ Notes:
   - In auto mode (`tools.web.search.provider` unset), only the first provider key that resolves by precedence is active.
   - In auto mode, non-selected provider refs are treated as inactive until selected.
   - Legacy `tools.web.search.*` provider paths still resolve during the compatibility window, but the canonical SecretRef surface is `plugins.entries.<plugin>.config.webSearch.*`.
+- Bundled plugin config credentials are schema-driven: OpenClaw derives supported SecretRef fields from bundled plugin `configSchema` plus `uiHints.sensitive` and common secret field names such as `apiKey`, `token`, `password`, `accessToken`, and `auth`.
 
 ## Unsupported credentials
 
@@ -126,7 +138,6 @@ Out-of-scope credentials include:
 - `commands.ownerDisplaySecret`
 - `channels.matrix.accessToken`
 - `channels.matrix.accounts.*.accessToken`
-- `hooks.token`
 - `hooks.gmail.pushToken`
 - `hooks.mappings[].sessionKey`
 - `auth-profiles.oauth.*`

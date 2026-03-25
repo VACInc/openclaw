@@ -11,6 +11,7 @@ describe("command secret target ids", () => {
     const ids = getAgentRuntimeCommandSecretTargetIds();
     expect(ids.has("agents.defaults.memorySearch.remote.apiKey")).toBe(true);
     expect(ids.has("agents.list[].memorySearch.remote.apiKey")).toBe(true);
+    expect(ids.has("plugins.entries.voice-call.config.twilio.authToken")).toBe(true);
     expect(ids.has("tools.web.fetch.firecrawl.apiKey")).toBe(true);
   });
 
@@ -31,6 +32,7 @@ describe("command secret target ids", () => {
     expect(ids.has("gateway.auth.password")).toBe(true);
     expect(ids.has("gateway.remote.token")).toBe(true);
     expect(ids.has("gateway.remote.password")).toBe(true);
+    expect(ids.has("hooks.token")).toBe(true);
   });
 
   it("scopes channel targets to the requested channel", () => {

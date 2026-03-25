@@ -81,6 +81,9 @@ describe("exec SecretRef id parity", () => {
     if (id.startsWith("gateway.remote.")) {
       return "gateway.remote";
     }
+    if (id.startsWith("hooks.")) {
+      return "hooks";
+    }
     if (id.startsWith("messages.")) {
       return "messages";
     }
@@ -93,14 +96,14 @@ describe("exec SecretRef id parity", () => {
     if (id.startsWith("skills.entries.")) {
       return "skills";
     }
+    if (id.startsWith("plugins.entries.")) {
+      return "plugins.config";
+    }
     if (id.startsWith("talk.")) {
       return "talk";
     }
     if (id.startsWith("tools.web.fetch.")) {
       return "tools.web.fetch";
-    }
-    if (id.startsWith("plugins.entries.") && id.includes(".config.webSearch.apiKey")) {
-      return "tools.web.search";
     }
     if (id.startsWith("tools.web.search.")) {
       return "tools.web.search";

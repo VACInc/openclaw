@@ -26,6 +26,7 @@ const COMMAND_SECRET_TARGETS = {
     "agents.defaults.memorySearch.remote.",
     "agents.list[].memorySearch.remote.",
     "skills.entries.",
+    "plugins.entries.",
     "messages.tts.",
     "tools.web.search",
     "tools.web.fetch.firecrawl.",
@@ -35,7 +36,7 @@ const COMMAND_SECRET_TARGETS = {
     "agents.defaults.memorySearch.remote.",
     "agents.list[].memorySearch.remote.",
   ]),
-  securityAudit: idsByPrefix(["channels.", "gateway.auth.", "gateway.remote."]),
+  securityAudit: idsByPrefix(["channels.", "gateway.auth.", "gateway.remote.", "hooks."]),
 } as const;
 
 function toTargetIdSet(values: readonly string[]): Set<string> {

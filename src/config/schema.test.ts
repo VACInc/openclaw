@@ -121,6 +121,35 @@ describe("config schema", () => {
     expect(res.uiHints["plugins.entries.voice-call.config.tokens"]?.sensitive).toBe(false);
   });
 
+  it("infers sensitive plugin config hints from schema when uiHints are absent", () => {
+    const res = buildConfigSchema({
+      plugins: [
+        {
+          id: "secret-fields",
+          configSchema: {
+            type: "object",
+            properties: {
+              auth: { type: "string" },
+              nested: {
+                type: "object",
+                properties: {
+                  accessToken: { type: "string" },
+                },
+              },
+              tokens: { type: "string" },
+            },
+          },
+        },
+      ],
+    });
+
+    expect(res.uiHints["plugins.entries.secret-fields.config.auth"]?.sensitive).toBe(true);
+    expect(res.uiHints["plugins.entries.secret-fields.config.nested.accessToken"]?.sensitive).toBe(
+      true,
+    );
+    expect(res.uiHints["plugins.entries.secret-fields.config.tokens"]?.sensitive).toBeUndefined();
+  });
+
   it("merges plugin + channel schemas", () => {
     const res = buildConfigSchema(mergedSchemaInput);
 

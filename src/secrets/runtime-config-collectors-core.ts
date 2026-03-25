@@ -313,6 +313,29 @@ function collectCronAssignments(params: {
   });
 }
 
+function collectHooksAssignments(params: {
+  config: OpenClawConfig;
+  defaults: SecretDefaults | undefined;
+  context: ResolverContext;
+}): void {
+  const hooks = params.config.hooks as Record<string, unknown> | undefined;
+  if (!isRecord(hooks)) {
+    return;
+  }
+  collectSecretInputAssignment({
+    value: hooks.token,
+    path: "hooks.token",
+    expected: "string",
+    defaults: params.defaults,
+    context: params.context,
+    active: hooks.enabled === true,
+    inactiveReason: "hooks.enabled is not true.",
+    apply: (value) => {
+      hooks.token = value;
+    },
+  });
+}
+
 function collectSandboxSshAssignments(params: {
   config: OpenClawConfig;
   defaults: SecretDefaults | undefined;
@@ -426,4 +449,5 @@ export function collectCoreConfigAssignments(params: {
   collectSandboxSshAssignments(params);
   collectMessagesTtsAssignments(params);
   collectCronAssignments(params);
+  collectHooksAssignments(params);
 }

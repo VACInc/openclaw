@@ -330,6 +330,123 @@ describe("secrets runtime snapshot", () => {
     ).toEqual({ source: "env", provider: "default", id: "OPENAI_API_KEY" });
   });
 
+  it("resolves hooks.token and schema-discovered plugin config SecretRefs", async () => {
+    const snapshot = await prepareSecretsRuntimeSnapshot({
+      config: asConfig({
+        hooks: {
+          enabled: true,
+          token: { source: "env", provider: "default", id: "HOOKS_TOKEN" },
+        },
+        plugins: {
+          entries: {
+            "voice-call": {
+              enabled: true,
+              config: {
+                provider: "twilio",
+                twilio: {
+                  authToken: {
+                    source: "env",
+                    provider: "default",
+                    id: "VOICE_CALL_AUTH_TOKEN",
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      env: {
+        HOOKS_TOKEN: "hooks-token-resolved",
+        VOICE_CALL_AUTH_TOKEN: "voice-call-token-resolved",
+      } as NodeJS.ProcessEnv,
+      agentDirs: ["/tmp/openclaw-agent-main"],
+      loadAuthStore: () => ({ version: 1, profiles: {} }),
+    });
+
+    expect(snapshot.config.hooks?.token).toBe("hooks-token-resolved");
+    expect(snapshot.config.plugins?.entries?.["voice-call"]?.config).toEqual({
+      provider: "twilio",
+      twilio: {
+        authToken: "voice-call-token-resolved",
+      },
+    });
+  });
+
+  it("fails when an enabled plugin config SecretRef is unavailable", async () => {
+    await expect(
+      prepareSecretsRuntimeSnapshot({
+        config: asConfig({
+          plugins: {
+            entries: {
+              "voice-call": {
+                enabled: true,
+                config: {
+                  provider: "twilio",
+                  twilio: {
+                    authToken: {
+                      source: "env",
+                      provider: "default",
+                      id: "MISSING_VOICE_CALL_AUTH_TOKEN",
+                    },
+                  },
+                },
+              },
+            },
+          },
+        }),
+        env: {} as NodeJS.ProcessEnv,
+        agentDirs: ["/tmp/openclaw-agent-main"],
+        loadAuthStore: () => ({ version: 1, profiles: {} }),
+      }),
+    ).rejects.toThrow(/MISSING_VOICE_CALL_AUTH_TOKEN/i);
+  });
+
+  it("warns instead of failing for inactive plugin config SecretRefs", async () => {
+    const snapshot = await prepareSecretsRuntimeSnapshot({
+      config: asConfig({
+        plugins: {
+          entries: {
+            "voice-call": {
+              enabled: false,
+              config: {
+                provider: "twilio",
+                twilio: {
+                  authToken: {
+                    source: "env",
+                    provider: "default",
+                    id: "MISSING_VOICE_CALL_AUTH_TOKEN",
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      env: {} as NodeJS.ProcessEnv,
+      agentDirs: ["/tmp/openclaw-agent-main"],
+      loadAuthStore: () => ({ version: 1, profiles: {} }),
+    });
+
+    expect(snapshot.config.plugins?.entries?.["voice-call"]?.config).toEqual({
+      provider: "twilio",
+      twilio: {
+        authToken: {
+          source: "env",
+          provider: "default",
+          id: "MISSING_VOICE_CALL_AUTH_TOKEN",
+        },
+      },
+    });
+    expect(snapshot.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "SECRETS_REF_IGNORED_INACTIVE_SURFACE",
+          path: "plugins.entries.voice-call.config.twilio.authToken",
+        }),
+      ]),
+    );
+  });
+
   it("resolves sandbox ssh secret refs for active ssh backends", async () => {
     const snapshot = await prepareSecretsRuntimeSnapshot({
       config: asConfig({

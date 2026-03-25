@@ -110,7 +110,7 @@ export type InternalHooksConfig = {
 export type HooksConfig = {
   enabled?: boolean;
   path?: string;
-  token?: string;
+  token?: SecretInput;
   /**
    * Default session key used for hook agent runs when no request/mapping session key is used.
    * If omitted, OpenClaw generates `hook:<uuid>` per request.
@@ -140,3 +140,4 @@ export type HooksConfig = {
   internal?: InternalHooksConfig;
 };
 import type { InstallRecordBase } from "./types.installs.js";
+import type { SecretInput } from "./types.secrets.js";

@@ -5,6 +5,7 @@ import {
   type HooksGmailTailscaleMode,
   resolveGatewayPort,
 } from "../config/config.js";
+import { normalizeResolvedSecretInputString } from "../config/types.secrets.js";
 
 export const DEFAULT_GMAIL_LABEL = "INBOX";
 export const DEFAULT_GMAIL_TOPIC = "gog-gmail-watch";
@@ -103,7 +104,14 @@ export function resolveGmailHookRuntimeConfig(
 ): { ok: true; value: GmailHookRuntimeConfig } | { ok: false; error: string } {
   const hooks = cfg.hooks;
   const gmail = hooks?.gmail;
-  const hookToken = overrides.hookToken ?? hooks?.token ?? "";
+  const hookToken =
+    overrides.hookToken ??
+    normalizeResolvedSecretInputString({
+      value: hooks?.token,
+      defaults: cfg.secrets?.defaults,
+      path: "hooks.token",
+    }) ??
+    "";
   if (!hookToken) {
     return { ok: false, error: "hooks.token missing (needed for gmail hook)" };
   }

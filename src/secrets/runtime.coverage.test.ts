@@ -1,11 +1,15 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthProfileStore } from "../agents/auth-profiles.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { BUNDLED_PLUGIN_METADATA } from "../plugins/bundled-plugin-metadata.js";
 import type { PluginWebSearchProviderEntry } from "../plugins/types.js";
 import { getPath, setPathCreateStrict } from "./path-utils.js";
 import { listSecretTargetRegistryEntries } from "./target-registry.js";
 
 type SecretRegistryEntry = ReturnType<typeof listSecretTargetRegistryEntries>[number];
+const BUNDLED_PLUGIN_KIND_BY_ID = new Map(
+  BUNDLED_PLUGIN_METADATA.map((plugin) => [plugin.manifest.id, plugin.manifest.kind]),
+);
 
 const { resolveBundledPluginWebSearchProvidersMock, resolvePluginWebSearchProvidersMock } =
   vi.hoisted(() => ({
@@ -122,6 +126,18 @@ function buildConfigForOpenClawTarget(entry: SecretRegistryEntry, envId: string)
     provider: "default",
     id: envId,
   });
+  if (entry.id === "hooks.token") {
+    setPathCreateStrict(config, ["hooks", "enabled"], true);
+  }
+  if (entry.id.startsWith("plugins.entries.")) {
+    const pluginId = entry.id.split(".")[2];
+    if (pluginId) {
+      setPathCreateStrict(config, ["plugins", "entries", pluginId, "enabled"], true);
+      if (BUNDLED_PLUGIN_KIND_BY_ID.get(pluginId) === "memory") {
+        setPathCreateStrict(config, ["plugins", "slots", "memory"], pluginId);
+      }
+    }
+  }
   if (entry.id === "gateway.auth.password") {
     setPathCreateStrict(config, ["gateway", "auth", "mode"], "password");
   }
