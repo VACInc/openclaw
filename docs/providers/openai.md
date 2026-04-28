@@ -192,9 +192,8 @@ Choose your preferred auth method and follow the setup steps.
     OpenClaw normalizes incompatible OpenAI text-verbosity overrides for this
     model.
 
-    <Warning>
-    OpenClaw does **not** expose `openai/gpt-5.3-codex-spark`. Live OpenAI API requests reject that model, and the current Codex catalog does not expose it either.
-    </Warning>
+    `openai/gpt-5.3-codex-spark` is available as a direct OpenAI model route.
+    Azure OpenAI routes still suppress that model unless Azure exposes it.
 
   </Tab>
 

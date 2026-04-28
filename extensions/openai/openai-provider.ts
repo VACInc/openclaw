@@ -30,11 +30,13 @@ const OPENAI_GPT_54_MODEL_ID = "gpt-5.4";
 const OPENAI_GPT_54_PRO_MODEL_ID = "gpt-5.4-pro";
 const OPENAI_GPT_54_MINI_MODEL_ID = "gpt-5.4-mini";
 const OPENAI_GPT_54_NANO_MODEL_ID = "gpt-5.4-nano";
+const OPENAI_GPT_53_CODEX_SPARK_MODEL_ID = "gpt-5.3-codex-spark";
 const OPENAI_GPT_55_PRO_CONTEXT_TOKENS = 1_000_000;
 const OPENAI_GPT_54_CONTEXT_TOKENS = 1_050_000;
 const OPENAI_GPT_54_PRO_CONTEXT_TOKENS = 1_050_000;
 const OPENAI_GPT_54_MINI_CONTEXT_TOKENS = 400_000;
 const OPENAI_GPT_54_NANO_CONTEXT_TOKENS = 400_000;
+const OPENAI_GPT_53_CODEX_SPARK_CONTEXT_TOKENS = 128_000;
 const OPENAI_GPT_54_MAX_TOKENS = 128_000;
 const OPENAI_CHAT_LATEST_COST = { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 } as const;
 const OPENAI_GPT_55_PRO_COST = { input: 30, output: 180, cacheRead: 0, cacheWrite: 0 } as const;
@@ -62,6 +64,7 @@ const OPENAI_GPT_54_TEMPLATE_MODEL_IDS = ["gpt-5.2"] as const;
 const OPENAI_GPT_54_PRO_TEMPLATE_MODEL_IDS = ["gpt-5.2-pro", "gpt-5.2"] as const;
 const OPENAI_GPT_54_MINI_TEMPLATE_MODEL_IDS = ["gpt-5-mini"] as const;
 const OPENAI_GPT_54_NANO_TEMPLATE_MODEL_IDS = ["gpt-5-nano", "gpt-5-mini"] as const;
+const OPENAI_GPT_53_CODEX_SPARK_TEMPLATE_MODEL_IDS = [OPENAI_GPT_54_MODEL_ID, "gpt-5.2"] as const;
 const OPENAI_CHAT_LATEST_TEMPLATE_MODEL_IDS = [
   OPENAI_GPT_55_MODEL_ID,
   OPENAI_GPT_54_MODEL_ID,
@@ -76,6 +79,7 @@ const OPENAI_MODERN_MODEL_IDS = [
   OPENAI_GPT_54_MINI_MODEL_ID,
   OPENAI_GPT_54_NANO_MODEL_ID,
   "gpt-5.2",
+  OPENAI_GPT_53_CODEX_SPARK_MODEL_ID,
 ] as const;
 
 function shouldUseOpenAIResponsesTransport(params: {
@@ -187,6 +191,18 @@ function resolveOpenAIGptForwardCompatModel(ctx: ProviderResolveDynamicModelCont
       contextWindow: OPENAI_GPT_54_NANO_CONTEXT_TOKENS,
       maxTokens: OPENAI_GPT_54_MAX_TOKENS,
     };
+  } else if (lower === OPENAI_GPT_53_CODEX_SPARK_MODEL_ID) {
+    templateIds = OPENAI_GPT_53_CODEX_SPARK_TEMPLATE_MODEL_IDS;
+    patch = {
+      api: "openai-responses",
+      provider: PROVIDER_ID,
+      baseUrl: "https://api.openai.com/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: OPENAI_GPT_53_CODEX_SPARK_CONTEXT_TOKENS,
+      maxTokens: OPENAI_GPT_54_MAX_TOKENS,
+    };
   } else {
     return undefined;
   }
@@ -288,6 +304,11 @@ export function buildOpenAIProvider(): ProviderPlugin {
         providerId: PROVIDER_ID,
         templateIds: OPENAI_GPT_54_NANO_TEMPLATE_MODEL_IDS,
       });
+      const openAiGpt53CodexSparkTemplate = findCatalogTemplate({
+        entries: ctx.entries,
+        providerId: PROVIDER_ID,
+        templateIds: OPENAI_GPT_53_CODEX_SPARK_TEMPLATE_MODEL_IDS,
+      });
       return [
         buildOpenAISyntheticCatalogEntry(openAiGpt55ProTemplate, {
           id: OPENAI_GPT_55_PRO_MODEL_ID,
@@ -318,6 +339,12 @@ export function buildOpenAIProvider(): ProviderPlugin {
           reasoning: true,
           input: ["text", "image"],
           contextWindow: OPENAI_GPT_54_NANO_CONTEXT_TOKENS,
+        }),
+        buildOpenAISyntheticCatalogEntry(openAiGpt53CodexSparkTemplate, {
+          id: OPENAI_GPT_53_CODEX_SPARK_MODEL_ID,
+          reasoning: true,
+          input: ["text"],
+          contextWindow: OPENAI_GPT_53_CODEX_SPARK_CONTEXT_TOKENS,
         }),
       ].filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
     },

@@ -21,20 +21,15 @@ vi.mock("../../plugins/provider-runtime.js", async () => {
 
 vi.mock("../model-suppression.js", () => ({
   shouldSuppressBuiltInModel: ({ provider, id }: { provider?: string; id?: string }) =>
-    (provider === "openai" ||
-      provider === "azure-openai-responses" ||
-      provider === "openai-codex") &&
-    id?.trim().toLowerCase() === "gpt-5.3-codex-spark",
+    provider === "azure-openai-responses" && id?.trim().toLowerCase() === "gpt-5.3-codex-spark",
   buildSuppressedBuiltInModelError: ({ provider, id }: { provider?: string; id?: string }) => {
     if (
-      (provider !== "openai" &&
-        provider !== "azure-openai-responses" &&
-        provider !== "openai-codex") ||
+      provider !== "azure-openai-responses" ||
       id?.trim().toLowerCase() !== "gpt-5.3-codex-spark"
     ) {
       return undefined;
     }
-    return `Unknown model: ${provider}/gpt-5.3-codex-spark. gpt-5.3-codex-spark is no longer exposed by the OpenAI or Codex catalogs. Use openai/gpt-5.5.`;
+    return `Unknown model: ${provider}/gpt-5.3-codex-spark. gpt-5.3-codex-spark is not exposed on Azure OpenAI responses routes. Use openai/gpt-5.3-codex-spark or openai/gpt-5.5.`;
   },
 }));
 
@@ -62,7 +57,14 @@ beforeEach(() => {
 
 function createRuntimeHooks() {
   return createProviderRuntimeTestMock({
-    handledDynamicProviders: ["anthropic", "google-antigravity", "zai", "openai-codex"],
+    handledDynamicProviders: [
+      "anthropic",
+      "google-antigravity",
+      "kimi",
+      "zai",
+      "openai",
+      "openai-codex",
+    ],
   });
 }
 
@@ -138,16 +140,24 @@ describe("resolveModel forward-compat errors and overrides", () => {
     );
   });
 
-  it("rejects direct openai gpt-5.3-codex-spark with a codex-only hint", () => {
+  it("resolves direct openai gpt-5.3-codex-spark", () => {
     const result = resolveModelForTest("openai", "gpt-5.3-codex-spark", "/tmp/agent");
 
-    expect(result.model).toBeUndefined();
-    expect(result.error).toBe(
-      "Unknown model: openai/gpt-5.3-codex-spark. gpt-5.3-codex-spark is no longer exposed by the OpenAI or Codex catalogs. Use openai/gpt-5.5.",
-    );
+    expectResolvedForwardCompatFallbackResult({
+      result,
+      expectedModel: {
+        api: "openai-responses",
+        baseUrl: "https://api.openai.com/v1",
+        id: "gpt-5.3-codex-spark",
+        provider: "openai",
+        input: ["text"],
+        contextWindow: 128_000,
+        maxTokens: 128_000,
+      },
+    });
   });
 
-  it("keeps suppressed openai gpt-5.3-codex-spark from falling through provider fallback", () => {
+  it("keeps direct openai gpt-5.3-codex-spark above generic provider fallback", () => {
     const cfg = {
       models: {
         providers: {
@@ -162,13 +172,21 @@ describe("resolveModel forward-compat errors and overrides", () => {
 
     const result = resolveModelForTest("openai", "gpt-5.3-codex-spark", "/tmp/agent", cfg);
 
-    expect(result.model).toBeUndefined();
-    expect(result.error).toBe(
-      "Unknown model: openai/gpt-5.3-codex-spark. gpt-5.3-codex-spark is no longer exposed by the OpenAI or Codex catalogs. Use openai/gpt-5.5.",
-    );
+    expectResolvedForwardCompatFallbackResult({
+      result,
+      expectedModel: {
+        api: "openai-responses",
+        baseUrl: "https://api.openai.com/v1",
+        id: "gpt-5.3-codex-spark",
+        provider: "openai",
+        input: ["text"],
+        contextWindow: 128_000,
+        maxTokens: 128_000,
+      },
+    });
   });
 
-  it("rejects azure openai gpt-5.3-codex-spark with a codex-only hint", () => {
+  it("rejects azure openai gpt-5.3-codex-spark with a direct OpenAI hint", () => {
     const result = resolveModelForTest(
       "azure-openai-responses",
       "gpt-5.3-codex-spark",
@@ -177,8 +195,25 @@ describe("resolveModel forward-compat errors and overrides", () => {
 
     expect(result.model).toBeUndefined();
     expect(result.error).toBe(
-      "Unknown model: azure-openai-responses/gpt-5.3-codex-spark. gpt-5.3-codex-spark is no longer exposed by the OpenAI or Codex catalogs. Use openai/gpt-5.5.",
+      "Unknown model: azure-openai-responses/gpt-5.3-codex-spark. gpt-5.3-codex-spark is not exposed on Azure OpenAI responses routes. Use openai/gpt-5.3-codex-spark or openai/gpt-5.5.",
     );
+  });
+
+  it("keeps Codex OAuth gpt-5.3-codex-spark available", () => {
+    mockOpenAICodexTemplateModel(discoverModels);
+
+    expectResolvedForwardCompatFallbackResult({
+      result: resolveModelForTest("openai-codex", "gpt-5.3-codex-spark", "/tmp/agent"),
+      expectedModel: {
+        api: "openai-codex-responses",
+        id: "gpt-5.3-codex-spark",
+        provider: "openai-codex",
+        input: ["text"],
+        contextWindow: 128_000,
+        contextTokens: 128_000,
+        maxTokens: 128_000,
+      },
+    });
   });
 
   it("uses codex fallback even when openai-codex provider is configured", () => {

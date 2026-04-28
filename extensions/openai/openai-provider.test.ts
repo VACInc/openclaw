@@ -223,10 +223,19 @@ describe("buildOpenAIProvider", () => {
         } as never)
         ?.levels.map((level) => level.id),
     ).toContain("xhigh");
+    expect(
+      provider
+        .resolveThinkingProfile?.({
+          provider: "openai",
+          modelId: "gpt-5.3-codex-spark",
+        } as never)
+        ?.levels.map((level) => level.id),
+    ).toContain("xhigh");
 
     const entries = provider.augmentModelCatalog?.({
       env: process.env,
       entries: [
+        { provider: "openai", id: "gpt-5.2", name: "GPT-5.2" },
         { provider: "openai", id: "gpt-5-mini", name: "GPT-5 mini" },
         { provider: "openai", id: "gpt-5-nano", name: "GPT-5 nano" },
       ],
@@ -247,6 +256,14 @@ describe("buildOpenAIProvider", () => {
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 400_000,
+    });
+    expectCatalogEntry(entries, "gpt-5.3-codex-spark", {
+      provider: "openai",
+      id: "gpt-5.3-codex-spark",
+      name: "gpt-5.3-codex-spark",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 128_000,
     });
   });
 
@@ -353,6 +370,44 @@ describe("buildOpenAIProvider", () => {
       contextWindow: 400_000,
       maxTokens: 128_000,
       cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 },
+    });
+  });
+
+  it("resolves gpt-5.3-codex-spark through the direct OpenAI route", () => {
+    const provider = buildOpenAIProvider();
+
+    const model = provider.resolveDynamicModel?.({
+      provider: "openai",
+      modelId: "gpt-5.3-codex-spark",
+      modelRegistry: {
+        find: (_provider: string, id: string) =>
+          id === "gpt-5.4"
+            ? {
+                id,
+                name: "GPT-5.4",
+                provider: "openai",
+                api: "openai-responses",
+                baseUrl: "https://api.openai.com/v1",
+                reasoning: true,
+                input: ["text", "image"],
+                cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 0 },
+                contextWindow: 1_050_000,
+                maxTokens: 128_000,
+              }
+            : null,
+      } as never,
+    });
+
+    expectFields(model, {
+      provider: "openai",
+      id: "gpt-5.3-codex-spark",
+      api: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 128_000,
+      maxTokens: 128_000,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     });
   });
 
