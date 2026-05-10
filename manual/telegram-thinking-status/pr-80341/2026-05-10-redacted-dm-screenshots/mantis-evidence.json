@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "pr-80341-telegram-thinking-status-redacted-dm-screenshots",
+  "title": "Telegram Thinking Status Screenshots",
+  "scenario": "telegram-dm-/think-default-/status",
+  "summary": "User-uploaded real Telegram DM screenshots with session ID and auth/email redacted. Baseline shows /think default followed by /status reporting Think: off; updated local build shows /think default followed by /status reporting Think: medium. These screenshots cover the default-thinking status behavior, not a new live xhigh rerun.",
+  "comparison": {
+    "baseline": {
+      "status": "observed-bug",
+      "sha": "83390ad",
+      "expected": "/think default should report the configured provider default, not off"
+    },
+    "candidate": {
+      "status": "observed-default",
+      "sha": "20479bf",
+      "expected": "/think default reports Think: medium in Telegram status"
+    },
+    "pass": true
+  },
+  "artifacts": [
+    {
+      "path": "telegram-status-before-redacted.png",
+      "targetPath": "telegram-status-before-redacted.png",
+      "kind": "timeline",
+      "lane": "baseline",
+      "label": "Before: default reported off",
+      "alt": "Redacted Telegram DM screenshot showing /think default followed by /status with Think: off",
+      "width": 420,
+      "sourceWidth": 1182,
+      "sourceHeight": 1084
+    },
+    {
+      "path": "telegram-status-after-redacted.png",
+      "targetPath": "telegram-status-after-redacted.png",
+      "kind": "timeline",
+      "lane": "candidate",
+      "label": "After: default reported medium",
+      "alt": "Redacted Telegram DM screenshot showing /think default followed by /status with Think: medium",
+      "width": 420,
+      "sourceWidth": 881,
+      "sourceHeight": 1280
+    }
+  ]
+}
