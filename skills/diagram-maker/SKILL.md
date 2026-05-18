@@ -20,6 +20,14 @@ Routing
 - Science, product, process, concept map, physical object: choose clean SVG.
 - Unsure: ask one short question only if output format matters; otherwise choose clean SVG.
 
+Default visual style
+
+- Default to dark mode for every new diagram unless the user explicitly asks for light mode or print-first output.
+- Use a real dark background, not transparent SVGs that render white in viewers.
+- Use high-contrast text: near-white titles, slate body text, and readable labels.
+- Use semantic accent colors on dark fills: blue for input/external, green for inventory/state, amber for processing/attention, red for risk/urgent.
+- Avoid neon, glows, gradients, and decorative effects. Dark mode should look operational, not arcade.
+
 Workflow
 
 1. Extract nodes, groups, labels, and directed relationships.
