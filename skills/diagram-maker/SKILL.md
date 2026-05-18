@@ -27,6 +27,8 @@ Default visual style
 - Use high-contrast text: near-white titles, slate body text, and readable labels.
 - Use semantic accent colors on dark fills: blue for input/external, green for inventory/state, amber for processing/attention, red for risk/urgent.
 - Avoid neon, glows, gradients, and decorative effects. Dark mode should look operational, not arcade.
+- Before claiming a diagram is dark, verify the rendered artifact or exported pixels. Source CSS is not proof.
+- For Forgejo/Gitea Markdown embeds, prefer dark PNG exports or SVGs with inline colors; do not rely on SVG class CSS rendering correctly in the web UI.
 
 Workflow
 
