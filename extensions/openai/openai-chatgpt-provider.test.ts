@@ -119,6 +119,27 @@ describe("OpenAI provider Codex transport hooks", () => {
     });
   });
 
+  it("resolves legacy gpt-5.3-codex-spark through the Codex OAuth route", () => {
+    const provider = buildOpenAIProvider();
+
+    const model = provider.resolveDynamicModel?.({
+      provider: "openai-codex",
+      modelId: "gpt-5.3-codex-spark",
+      modelRegistry: { find: () => null },
+    } as never);
+
+    expect(model).toMatchObject({
+      provider: "openai",
+      id: "gpt-5.3-codex-spark",
+      api: "openai-chatgpt-responses",
+      baseUrl: "https://chatgpt.com/backend-api/codex",
+      contextWindow: 128_000,
+      contextTokens: 128_000,
+      maxTokens: 128_000,
+      input: ["text"],
+    });
+  });
+
   it("keeps cloned Codex-backed OpenAI models on the Codex Responses transport", () => {
     const provider = buildOpenAIProvider();
 

@@ -32,7 +32,7 @@ function isSuppressedModel(provider?: string, id?: string): boolean {
     return false;
   }
   return (
-    (provider === "openai" || provider === "azure-openai-responses" || provider === "openai") &&
+    (provider === "openai" || provider === "azure-openai-responses") &&
     modelId === "gpt-5.3-codex-spark"
   );
 }
@@ -922,11 +922,11 @@ describe("loadModelCatalog", () => {
     expect(augmentCatalogMock).not.toHaveBeenCalled();
   });
 
-  it("does not synthesize stale openai/gpt-5.3-codex-spark entries from gpt-5.4", async () => {
+  it("does not synthesize plugin-owned Codex OAuth Spark rows in the generic catalog layer", async () => {
     mockAgentDiscoveryModels([
       {
         id: "gpt-5.4",
-        provider: "openai",
+        provider: "openai-codex",
         name: "GPT-5.3 Codex",
         reasoning: true,
         contextWindow: 200000,
@@ -934,18 +934,18 @@ describe("loadModelCatalog", () => {
       },
       {
         id: "gpt-5.2-codex",
-        provider: "openai",
+        provider: "openai-codex",
         name: "GPT-5.2 Codex",
       },
     ]);
 
     const result = await loadModelCatalog({ config: {} as OpenClawConfig });
-    expectNoCatalogEntry(result, "openai", "gpt-5.3-codex-spark");
-    const entry = requireCatalogEntry(result, "openai", "gpt-5.4");
+    expectNoCatalogEntry(result, "openai-codex", "gpt-5.3-codex-spark");
+    const entry = requireCatalogEntry(result, "openai-codex", "gpt-5.4");
     expect(entry.name).toBe("GPT-5.3 Codex");
   });
 
-  it("filters stale gpt-5.3-codex-spark built-ins from the catalog", async () => {
+  it("keeps Codex OAuth Spark while filtering direct OpenAI and stale Azure rows", async () => {
     mockAgentDiscoveryModels([
       {
         id: "gpt-5.3-codex-spark",
@@ -965,7 +965,7 @@ describe("loadModelCatalog", () => {
       },
       {
         id: "gpt-5.3-codex-spark",
-        provider: "openai",
+        provider: "openai-codex",
         name: "GPT-5.3 Codex Spark",
         reasoning: true,
         contextWindow: 128000,
@@ -976,7 +976,10 @@ describe("loadModelCatalog", () => {
     const result = await loadModelCatalog({ config: {} as OpenClawConfig });
     expectNoCatalogEntry(result, "openai", "gpt-5.3-codex-spark");
     expectNoCatalogEntry(result, "azure-openai-responses", "gpt-5.3-codex-spark");
-    expectNoCatalogEntry(result, "openai", "gpt-5.3-codex-spark");
+    expect(requireCatalogEntry(result, "openai-codex", "gpt-5.3-codex-spark")).toMatchObject({
+      input: ["text"],
+      contextWindow: 128000,
+    });
   });
 
   it("keeps available openai 5.1/5.2/5.3 built-ins in the catalog", async () => {
