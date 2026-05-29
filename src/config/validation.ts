@@ -3,8 +3,18 @@ import { collectConfiguredModelRefs } from "@openclaw/model-catalog-core/configu
 import { isCanonicalDottedDecimalIPv4, isLoopbackIpAddress } from "@openclaw/net-policy/ip";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
+import { resolveModelRuntimePolicy } from "../agents/model-runtime-policy.js";
+import {
+  OPENAI_CODEX_PROVIDER_ID,
+  OPENAI_PROVIDER_ID,
+  openAIProviderUsesCodexRuntimeByDefault,
+  resolveContextConfigProviderForRuntime,
+} from "../agents/openai-codex-routing.js";
 import { isPathInside } from "../infra/path-guards.js";
-import { planManifestModelCatalogSuppressions } from "../model-catalog/index.js";
+import {
+  planManifestModelCatalogRows,
+  planManifestModelCatalogSuppressions,
+} from "../model-catalog/index.js";
 import {
   normalizePluginsConfig,
   normalizePluginId,
@@ -1396,6 +1406,64 @@ function validateConfigObjectWithPluginsBase(
     return provider && model ? { provider, model } : null;
   };
 
+  const resolveConfiguredModelRefAgentId = (path: string): string | undefined => {
+    const match = /^agents\.list\.(\d+)(?:\.|$)/.exec(path);
+    if (!match?.[1]) {
+      return undefined;
+    }
+    const index = Number(match[1]);
+    const agent = Number.isInteger(index) ? config.agents?.list?.[index] : undefined;
+    return typeof agent?.id === "string" && agent.id.trim() ? agent.id.trim() : String(index);
+  };
+
+  const suppressedRefResolvesThroughCatalogRuntimeProvider = (params: {
+    refPath: string;
+    provider: string;
+    model: string;
+    catalogRefs: ReadonlySet<string>;
+  }): boolean => {
+    const runtimePolicy = resolveModelRuntimePolicy({
+      config,
+      provider: params.provider,
+      modelId: params.model,
+      agentId: resolveConfiguredModelRefAgentId(params.refPath),
+    }).policy?.id;
+    const normalizedRuntime = normalizeLowercaseStringOrEmpty(runtimePolicy);
+    const explicitRuntime =
+      normalizedRuntime === "auto" || normalizedRuntime === "default" ? "" : normalizedRuntime;
+    const usesCodexRuntime =
+      explicitRuntime === "codex" ||
+      (!explicitRuntime &&
+        openAIProviderUsesCodexRuntimeByDefault({
+          provider: params.provider,
+          config,
+        }));
+    if (!usesCodexRuntime) {
+      return false;
+    }
+    const runtimeProviders = new Set([
+      normalizeLowercaseStringOrEmpty(
+        resolveContextConfigProviderForRuntime({
+          provider: params.provider,
+          runtimeId: "codex",
+        }),
+      ),
+    ]);
+    if (params.provider === OPENAI_PROVIDER_ID) {
+      runtimeProviders.add(OPENAI_CODEX_PROVIDER_ID);
+    }
+    for (const runtimeProvider of runtimeProviders) {
+      if (
+        runtimeProvider &&
+        runtimeProvider !== params.provider &&
+        params.catalogRefs.has(`${runtimeProvider}/${params.model}`)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   const validateConfiguredModelRefs = () => {
     const configuredRefs = collectConfiguredModelRefs(config);
     if (configuredRefs.length === 0) {
@@ -1422,6 +1490,9 @@ function validateConfigObjectWithPluginsBase(
     if (suppressedModels.size === 0) {
       return;
     }
+    const catalogRefs = new Set(
+      planManifestModelCatalogRows({ registry }).rows.map((row) => `${row.provider}/${row.id}`),
+    );
     const seen = new Set<string>();
     for (const ref of configuredRefs) {
       const parsed = parseProviderModelRef(ref.value);
@@ -1437,6 +1508,16 @@ function validateConfigObjectWithPluginsBase(
         continue;
       }
       seen.add(issueKey);
+      if (
+        suppressedRefResolvesThroughCatalogRuntimeProvider({
+          refPath: ref.path,
+          provider: parsed.provider,
+          model: parsed.model,
+          catalogRefs,
+        })
+      ) {
+        continue;
+      }
       const modelRef = `${suppression.provider}/${suppression.model}`;
       issues.push({
         path: ref.path,

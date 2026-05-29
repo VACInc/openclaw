@@ -126,7 +126,11 @@ describe("buildOpenAIProvider", () => {
     const provider = buildOpenAIProvider();
     const apiKey = provider.auth.find((method) => method.id === "api-key");
 
-    expect(provider.hookAliases).toEqual(["azure-openai", "azure-openai-responses"]);
+    expect(provider.hookAliases).toEqual([
+      "openai-codex",
+      "azure-openai",
+      "azure-openai-responses",
+    ]);
     expect(provider.catalog).toBeUndefined();
     expectFields(apiKey?.wizard, {
       choiceLabel: "OpenAI API Key",
@@ -142,7 +146,11 @@ describe("buildOpenAIProvider", () => {
     const provider = buildOpenAICodexProviderPlugin();
 
     expect(provider.id).toBe("openai");
-    expect(provider.hookAliases).toEqual(["azure-openai", "azure-openai-responses"]);
+    expect(provider.hookAliases).toEqual([
+      "openai-codex",
+      "azure-openai",
+      "azure-openai-responses",
+    ]);
   });
 
   it("prefers auth-aware Codex runtime metadata over static OpenAI catalog rows", () => {
@@ -551,7 +559,7 @@ describe("buildOpenAIProvider", () => {
           modelId: "gpt-5.3",
         } as never)
         ?.levels.map((level) => level.id),
-    ).not.toContain("xhigh");
+    ).toContain("xhigh");
   });
 
   it("keeps chat-latest and gpt-5.5 out of synthetic catalog metadata", () => {
