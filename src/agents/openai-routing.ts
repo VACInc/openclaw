@@ -3,6 +3,32 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 
 export const OPENAI_PROVIDER_ID = "openai";
 export const OPENAI_CODEX_PROVIDER_ID = OPENAI_PROVIDER_ID;
+export const LEGACY_CHATGPT_PROVIDER_ID = "openai-codex";
+export const OPENAI_CODEX_SPARK_MODEL_ID = "gpt-5.3-codex-spark";
+
+export function isOpenAICodexSparkModelRef(params: {
+  provider: string | undefined;
+  model: string | undefined;
+}): boolean {
+  const provider = normalizeProviderId(params.provider ?? "");
+  const model = params.model?.trim().toLowerCase();
+  return (
+    model === OPENAI_CODEX_SPARK_MODEL_ID &&
+    (provider === OPENAI_PROVIDER_ID || provider === LEGACY_CHATGPT_PROVIDER_ID)
+  );
+}
+
+export function listOpenAICodexSparkEquivalentModelRefs(params: {
+  provider: string | undefined;
+  model: string | undefined;
+}): Array<{ provider: string; model: string }> {
+  if (!isOpenAICodexSparkModelRef(params)) {
+    return [];
+  }
+  return [OPENAI_PROVIDER_ID, LEGACY_CHATGPT_PROVIDER_ID]
+    .filter((provider) => provider !== normalizeProviderId(params.provider ?? ""))
+    .map((provider) => ({ provider, model: OPENAI_CODEX_SPARK_MODEL_ID }));
+}
 
 function isOfficialOpenAIBaseUrl(baseUrl: unknown): boolean {
   if (typeof baseUrl !== "string" || !baseUrl.trim()) {

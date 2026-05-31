@@ -122,6 +122,52 @@ describe("runCronIsolatedAgentTurn model overrides", () => {
     });
   });
 
+  it.each([
+    {
+      allowlisted: "openai-codex/gpt-5.3-codex-spark",
+      payloadModel: "openai/gpt-5.3-codex-spark",
+      expectedProvider: "openai",
+    },
+    {
+      allowlisted: "openai/gpt-5.3-codex-spark",
+      payloadModel: "openai-codex/gpt-5.3-codex-spark",
+      expectedProvider: "openai-codex",
+    },
+  ])(
+    "accepts Codex Spark cron payload $payloadModel when the allowlist uses $allowlisted",
+    async ({ allowlisted, payloadModel, expectedProvider }) => {
+      await withTempHome(async (home) => {
+        const res = (
+          await runCronTurn(home, {
+            cfgOverrides: {
+              agents: {
+                defaults: {
+                  model: { primary: allowlisted },
+                  models: {
+                    [allowlisted]: {},
+                  },
+                  workspace: path.join(home, "openclaw"),
+                },
+              },
+            },
+            jobPayload: {
+              kind: "agentTurn",
+              message: DEFAULT_MESSAGE,
+              model: payloadModel,
+            },
+          })
+        ).res;
+
+        expect(res.status).toBe("ok");
+        const directModel = expectEmbeddedProviderModel({
+          provider: expectedProvider,
+          model: "gpt-5.3-codex-spark",
+        });
+        directModel.assert();
+      });
+    },
+  );
+
   it("uses stored model overrides when cron payload omits a model", async () => {
     await withTempHome(async (home) => {
       mockDeterministicModelCatalog();

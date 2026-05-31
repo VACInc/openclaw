@@ -27,6 +27,7 @@ import {
   normalizeProviderId,
   parseModelRef,
 } from "./model-selection-normalize.js";
+import { listOpenAICodexSparkEquivalentModelRefs } from "./openai-routing.js";
 
 let log: ReturnType<typeof createSubsystemLogger> | null = null;
 
@@ -503,17 +504,24 @@ export function buildConfiguredAllowlistKeys(
 
   const keys = new Set<string>();
   for (const raw of visibility.exactModelRefs) {
-    const key = resolveAllowlistModelKey({
+    const parsed = parseModelRefWithCompatAlias({
       cfg: params.cfg,
       raw,
       defaultProvider: params.defaultProvider,
       manifestPlugins: params.manifestPlugins,
     });
-    if (key) {
-      keys.add(key);
+    if (parsed) {
+      addEquivalentAllowedModelKeys(keys, parsed);
     }
   }
   return keys.size > 0 ? keys : null;
+}
+
+function addEquivalentAllowedModelKeys(keys: Set<string>, ref: ModelRef): void {
+  keys.add(modelKey(ref.provider, ref.model));
+  for (const equivalent of listOpenAICodexSparkEquivalentModelRefs(ref)) {
+    keys.add(modelKey(equivalent.provider, equivalent.model));
+  }
 }
 
 type BuildModelAliasIndexParams = {
@@ -987,7 +995,7 @@ export function buildAllowedModelSetWithFallbacks(
       return;
     }
     const key = modelKey(parsed.provider, parsed.model);
-    allowedKeys.add(key);
+    addEquivalentAllowedModelKeys(allowedKeys, parsed);
     addAllowedCatalogRef(parsed);
 
     if (

@@ -90,3 +90,43 @@ describe("model-selection-resolve OpenRouter compat aliases", () => {
     });
   });
 });
+
+describe("model-selection-resolve Codex Spark route aliases", () => {
+  it.each([
+    {
+      allowlisted: "openai-codex/gpt-5.3-codex-spark",
+      requested: "openai/gpt-5.3-codex-spark",
+      expected: { provider: "openai", model: "gpt-5.3-codex-spark" },
+    },
+    {
+      allowlisted: "openai/gpt-5.3-codex-spark",
+      requested: "openai-codex/gpt-5.3-codex-spark",
+      expected: { provider: "openai-codex", model: "gpt-5.3-codex-spark" },
+    },
+  ])(
+    "accepts $requested when the allowlist uses $allowlisted",
+    ({ allowlisted, requested, expected }) => {
+      const cfg = {
+        agents: {
+          defaults: {
+            models: {
+              [allowlisted]: {},
+            },
+          },
+        },
+      } as OpenClawConfig;
+
+      expect(
+        resolveAllowedModelRef({
+          cfg,
+          catalog: [],
+          raw: requested,
+          defaultProvider: "anthropic",
+        }),
+      ).toEqual({
+        ref: expected,
+        key: requested,
+      });
+    },
+  );
+});
