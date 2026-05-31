@@ -5,11 +5,9 @@ import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/st
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { resolveModelRuntimePolicy } from "../agents/model-runtime-policy.js";
 import {
-  OPENAI_CODEX_PROVIDER_ID,
-  OPENAI_PROVIDER_ID,
   openAIProviderUsesCodexRuntimeByDefault,
   resolveContextConfigProviderForRuntime,
-} from "../agents/openai-codex-routing.js";
+} from "../agents/openai-routing.js";
 import { isPathInside } from "../infra/path-guards.js";
 import {
   planManifestModelCatalogRows,
@@ -1450,7 +1448,7 @@ function validateConfigObjectWithPluginsBase(
       ),
     ]);
     if (params.provider === OPENAI_PROVIDER_ID) {
-      runtimeProviders.add(OPENAI_CODEX_PROVIDER_ID);
+      runtimeProviders.add(LEGACY_CHATGPT_PROVIDER_ID);
     }
     for (const runtimeProvider of runtimeProviders) {
       if (

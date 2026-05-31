@@ -541,13 +541,13 @@ describe("buildOpenAIProvider", () => {
     });
   });
 
-  it("keeps Codex-family OpenAI models on the Codex thinking policy", () => {
+  it("keeps Spark on xhigh thinking for native Codex routes", () => {
     const provider = buildOpenAIProvider();
 
     expect(
       provider
         .resolveThinkingProfile?.({
-          provider: "openai",
+          provider: "openai-codex",
           modelId: "gpt-5.3-codex-spark",
         } as never)
         ?.levels.map((level) => level.id),
@@ -556,7 +556,7 @@ describe("buildOpenAIProvider", () => {
       provider
         .resolveThinkingProfile?.({
           provider: "openai",
-          modelId: "gpt-5.3",
+          modelId: "gpt-5.3-codex-spark",
         } as never)
         ?.levels.map((level) => level.id),
     ).toContain("xhigh");

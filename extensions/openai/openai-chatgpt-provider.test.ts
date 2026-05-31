@@ -28,7 +28,11 @@ describe("OpenAI provider Codex transport hooks", () => {
 
     expect(provider.id).toBe("openai");
     expect(provider.aliases).toBeUndefined();
-    expect(provider.hookAliases).toEqual(["azure-openai", "azure-openai-responses"]);
+    expect(provider.hookAliases).toEqual([
+      "openai-codex",
+      "azure-openai",
+      "azure-openai-responses",
+    ]);
     expect(provider.auth?.map((method) => method.id)).toEqual(["oauth", "device-code", "api-key"]);
     expect(provider.auth?.map((method) => method.wizard?.choiceId)).toEqual([
       "openai",

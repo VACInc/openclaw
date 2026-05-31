@@ -196,7 +196,7 @@ function createRuntimeHooks() {
       "openrouter",
       "github-copilot",
       "openai",
-      "openai",
+      "openai-codex",
       "anthropic",
       "zai",
     ],
@@ -3113,8 +3113,9 @@ describe("resolveModel", () => {
     expectRecordFields(result.model, {
       provider: "openai",
       id: "gpt-5.4-mini",
-      contextWindow: 400_000,
-      contextTokens: 272_000,
+      name: "GPT-5.4 Mini",
+      contextWindow: 64_000,
+      input: ["text"],
     });
   });
 
