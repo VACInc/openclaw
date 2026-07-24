@@ -237,7 +237,25 @@ describe("Codex agent harness supports()", () => {
 });
 
 describe("Codex agent harness reset()", () => {
-  it("retires the physical session generation", async () => {
+  it("is idempotent before the retained session has a binding", async () => {
+    const harness = createCodexAppServerAgentHarness({
+      bindingStore: createCodexTestBindingStore(),
+    });
+    if (!harness.reset) {
+      throw new Error("expected Codex harness reset hook");
+    }
+
+    await expect(
+      harness.reset({
+        agentId: "worker",
+        sessionId: "session-1",
+        sessionKey: "agent:worker:main",
+        reason: "reset",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("clears a retired physical generation so the retained session can bind again", async () => {
     const bindingStore = createCodexTestBindingStore();
     const identity = sessionBindingIdentity({
       agentId: "worker",
@@ -248,6 +266,7 @@ describe("Codex agent harness reset()", () => {
       kind: "set",
       binding: { threadId: "thread-1", cwd: "/repo" },
     });
+    await bindingStore.retireSessionGeneration(identity);
     const harness = createCodexAppServerAgentHarness({ bindingStore });
     if (!harness.reset) {
       throw new Error("expected Codex harness reset hook");
@@ -258,9 +277,25 @@ describe("Codex agent harness reset()", () => {
       sessionId: "session-1",
       sessionKey: "agent:worker:main",
       reason: "reset",
+      resetToken: "reset-session-1",
     });
 
-    await expect(bindingStore.read(identity)).resolves.toBeUndefined();
+    await expect(bindingStore.consumeSessionGenerationReset(identity, "wrong-reset")).resolves.toBe(
+      false,
+    );
+    await expect(
+      bindingStore.consumeSessionGenerationReset(identity, "reset-session-1"),
+    ).resolves.toBe(true);
+    await expect(
+      bindingStore.consumeSessionGenerationReset(identity, "reset-session-1"),
+    ).resolves.toBe(false);
+    await expect(
+      bindingStore.mutate(identity, {
+        kind: "set",
+        binding: { threadId: "thread-2", cwd: "/repo" },
+      }),
+    ).resolves.toBe(true);
+    await expect(bindingStore.read(identity)).resolves.toMatchObject({ threadId: "thread-2" });
   });
 });
 

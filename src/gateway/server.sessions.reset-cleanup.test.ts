@@ -350,6 +350,7 @@ test("sessions.reset forwards the retired generation to registered agent harness
       sessionKey: "agent:main:main",
       sessionFile: expect.stringMatching(/^sqlite:main:sess-main:/),
       reason: "reset",
+      resetToken: expect.stringMatching(/\S/),
     });
   } finally {
     restoreRegisteredAgentHarnesses(registeredHarnesses);

@@ -218,21 +218,25 @@ export function createCodexAppServerAgentHarness(options: {
           sessionId: params.sessionId,
           sessionKey: params.sessionKey,
         });
-        let retired = await options.bindingStore.retireSessionGeneration(identity);
-        if (retired === "conflict") {
+        let reset = await options.bindingStore.mutate(identity, { kind: "reset-generation" });
+        if (!reset) {
           const reclaimed = await reclaimCurrentCodexSessionGeneration({
             bindingStore: options.bindingStore,
             identity,
             config: options.resolveConfig?.(),
           });
           if (reclaimed) {
-            retired = await options.bindingStore.retireSessionGeneration(identity);
+            reset = await options.bindingStore.mutate(identity, { kind: "reset-generation" });
           }
         }
-        if (retired === "conflict") {
+        if (!reset) {
           throw new Error(
             `Codex binding generation changed before session ${params.sessionId} could reset`,
           );
+        }
+        const resetToken = params.resetToken?.trim();
+        if (resetToken) {
+          await options.bindingStore.recordSessionGenerationReset(identity, resetToken);
         }
       }
     },
