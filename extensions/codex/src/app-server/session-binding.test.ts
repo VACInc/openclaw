@@ -7,7 +7,18 @@ import {
   createPluginStateSyncKeyedStoreForTests,
   resetPluginStateStoreForTests,
 } from "openclaw/plugin-sdk/plugin-state-test-runtime";
+import type { getSessionEntry as getSessionEntryType } from "openclaw/plugin-sdk/session-store-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+const sessionStoreMocks = vi.hoisted(() => ({
+  getSessionEntry: vi.fn<typeof getSessionEntryType>(),
+}));
+vi.mock("openclaw/plugin-sdk/session-store-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/session-store-runtime")>();
+  return {
+    ...actual,
+    getSessionEntry: sessionStoreMocks.getSessionEntry,
+  };
+});
 import {
   bindingStoreKey,
   CODEX_APP_SERVER_BINDING_MAX_ENTRIES,
@@ -15,6 +26,7 @@ import {
   createStoredCodexAppServerBinding,
   hashCodexAppServerBindingFingerprint,
   readCodexAppServerThreadBinding,
+  reclaimCurrentCodexSessionGeneration,
   type StoredCodexAppServerBinding,
 } from "./session-binding.js";
 
@@ -54,10 +66,50 @@ function createStateStore() {
 
 afterEach(() => {
   vi.useRealTimers();
+  sessionStoreMocks.getSessionEntry.mockReset();
   resetPluginStateStoreForTests();
 });
 
 describe("Codex app-server binding store", () => {
+  it("rechecks session authority after planning before reclaiming a binding generation", async () => {
+    sessionStoreMocks.getSessionEntry
+      .mockReturnValueOnce({
+        sessionId: "retained-session",
+        lifecycleRevision: "revision-1",
+        updatedAt: 1,
+      })
+      .mockReturnValueOnce({
+        sessionId: "retained-session",
+        lifecycleRevision: "revision-2",
+        updatedAt: 2,
+      });
+    const mutate = vi.fn().mockResolvedValue(true);
+    const bindingStore = {
+      prepareSessionGenerationReclaim: vi.fn().mockResolvedValue({
+        kind: "verify" as const,
+        expectedPreviousSessionId: "retained-session",
+        expectedPreviousLifecycleRevision: "revision-2",
+      }),
+      mutate,
+    };
+
+    await expect(
+      reclaimCurrentCodexSessionGeneration({
+        bindingStore,
+        identity: {
+          kind: "session",
+          agentId: "main",
+          sessionId: "retained-session",
+          sessionKey: "agent:main:telegram:chat-1",
+          lifecycleRevision: "revision-1",
+        },
+      }),
+    ).resolves.toBe(false);
+
+    expect(sessionStoreMocks.getSessionEntry).toHaveBeenCalledTimes(2);
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
   it("normalizes the retired approval policy in persisted bindings", () => {
     expect(
       readCodexAppServerThreadBinding({

@@ -552,7 +552,7 @@ export type CodexAppServerBindingStore = {
 
 /** Lets the authoritative OpenClaw session generation claim a stale stable binding row. */
 export async function reclaimCurrentCodexSessionGeneration(params: {
-  bindingStore: CodexAppServerBindingStore;
+  bindingStore: Pick<CodexAppServerBindingStore, "prepareSessionGenerationReclaim" | "mutate">;
   identity: Extract<CodexAppServerBindingIdentity, { kind: "session" }>;
   config?: OpenClawConfig;
 }): Promise<boolean> {
@@ -565,17 +565,20 @@ export async function reclaimCurrentCodexSessionGeneration(params: {
   // Resolve it before binding mutation so same-id resets still fence by revision
   // and no session read runs inside the plugin-state transaction.
   let authoritativeIdentity: Extract<CodexAppServerBindingIdentity, { kind: "session" }>;
+  let readAuthoritativeEntry: () => ReturnType<typeof getSessionEntry>;
   try {
     const storePath = resolveStorePath(params.config?.session?.store, {
       agentId: params.identity.agentId,
     });
-    const entry = getSessionEntry({
-      agentId: params.identity.agentId,
-      hydrateSkillPromptRefs: false,
-      readConsistency: "latest",
-      sessionKey,
-      storePath,
-    });
+    readAuthoritativeEntry = () =>
+      getSessionEntry({
+        agentId: params.identity.agentId,
+        hydrateSkillPromptRefs: false,
+        readConsistency: "latest",
+        sessionKey,
+        storePath,
+      });
+    const entry = readAuthoritativeEntry();
     if (entry?.sessionId !== params.identity.sessionId) {
       return false;
     }
@@ -591,8 +594,24 @@ export async function reclaimCurrentCodexSessionGeneration(params: {
   }
 
   const plan = await params.bindingStore.prepareSessionGenerationReclaim(authoritativeIdentity);
+  if (plan.kind === "resolved" && !plan.result) {
+    return false;
+  }
+  try {
+    const currentEntry = readAuthoritativeEntry();
+    // Planning yields before the binding CAS. Recheck the session authority so
+    // a caller that observed R1 cannot use an R2 binding plan to relabel R2.
+    if (
+      currentEntry?.sessionId !== authoritativeIdentity.sessionId ||
+      currentEntry.lifecycleRevision !== authoritativeIdentity.lifecycleRevision
+    ) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
   if (plan.kind === "resolved") {
-    return plan.result;
+    return true;
   }
   return await params.bindingStore.mutate(authoritativeIdentity, {
     kind: "reclaim-generation",
