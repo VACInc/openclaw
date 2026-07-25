@@ -1147,11 +1147,11 @@ async function initSessionStateAttemptLocked(
     sessionStore,
   });
   const previousSessionTranscript = committed.previousSessionTranscript;
-  const resetToken =
-    previousSessionEntry?.sessionId &&
-    (previousSessionEndReason === "new" || previousSessionEndReason === "reset")
-      ? crypto.randomUUID()
-      : undefined;
+  const retainedSessionReset =
+    previousSessionEntry?.sessionId === sessionId &&
+    previousSessionEndReason !== undefined &&
+    previousSessionEndReason !== "unknown";
+  const resetToken = retainedSessionReset ? crypto.randomUUID() : undefined;
 
   if (previousSessionEntry?.sessionId) {
     await retireSessionMcpRuntime({
