@@ -83,6 +83,8 @@ type ClaudeLiveTurn = {
   timeoutTimer: NodeJS.Timeout | null;
   activeTools: Map<string, ClaudeLiveActiveTool>;
   observedStdout: boolean;
+  /** True after any output other than init or the exact synthetic queue placeholder. */
+  hasReplayUnsafeActivity: boolean;
   /**
    * Claude consumed queued session notifications before processing this turn.
    * The following empty result is provisional; the same process can emit the
@@ -820,14 +822,21 @@ function armNoOutputTimer(session: ClaudeLiveSession, turn: ClaudeLiveTurn, dela
         return;
       }
     }
+    const retryableResumeStall =
+      !turn.hasReplayUnsafeActivity &&
+      turn.toolEventCount === 0 &&
+      turn.activeTools.size === 0 &&
+      session.outstandingBackgroundTaskIds.size === 0;
     closeLiveSession(
       session,
       "abort",
       createTimeoutError(
         session,
         `CLI produced no output for ${Math.round((Date.now() - quietSinceMs) / 1000)}s and was terminated.`,
-        // Retryable only when the process never produced any output this turn.
-        turn.lastOutputAtMs === null ? "cli_no_output_timeout" : undefined,
+        // Claude can emit only init or a synthetic queue placeholder before a
+        // resumed stream wedges. No assistant/tool work has happened, so
+        // recovery can fork the cached session before transcript reseed.
+        turn.lastOutputAtMs === null || retryableResumeStall ? "cli_no_output_timeout" : undefined,
         {
           mode: "no-output",
           timeoutSeconds: Math.round((Date.now() - quietSinceMs) / 1000),
@@ -1208,6 +1217,9 @@ function handleClaudeLiveLine(session: ClaudeLiveSession, line: string): void {
     turn.observedStdout = true;
   }
   if (!parsed) {
+    if (turn) {
+      turn.hasReplayUnsafeActivity = true;
+    }
     return;
   }
   const parsedSessionId = parseSessionId(parsed);
@@ -1216,6 +1228,14 @@ function handleClaudeLiveLine(session: ClaudeLiveSession, line: string): void {
   }
   if (!turn) {
     return;
+  }
+  if (
+    !(
+      (parsed.type === "system" && parsed.subtype === "init") ||
+      isClaudeLiveProvisionalSyntheticPlaceholder(parsed)
+    )
+  ) {
+    turn.hasReplayUnsafeActivity = true;
   }
   noteClaudeLiveContinuationAfterSyntheticPlaceholder(session, turn);
   turn.rawChars += trimmed.length + 1;
@@ -1448,6 +1468,9 @@ async function createClaudeLiveSession(params: {
       onStderr: (chunk) => {
         if (session) {
           session.currentTurn?.onCliOutput?.(chunk, "stderr");
+          if (session.currentTurn && chunk.trim()) {
+            session.currentTurn.hasReplayUnsafeActivity = true;
+          }
           session.stderr += chunk;
           if (session.stderr.length > LIVE_SESSION_LIMITS.maxStderrChars) {
             closeLiveSession(
@@ -1543,6 +1566,7 @@ function createTurn(params: {
     timeoutTimer: null,
     activeTools: new Map(),
     observedStdout: false,
+    hasReplayUnsafeActivity: false,
     pendingSyntheticPlaceholder: false,
     allowSyntheticContinuationGrace: params.allowSyntheticContinuationGrace,
     deferredSyntheticOutput: null,

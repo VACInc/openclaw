@@ -714,16 +714,15 @@ export function runAgentAttempt(params: {
       activeCliSessionBinding = cliSessionBinding,
     ) => {
       const forkCliSessionOnResume = activeCliSessionBinding?.forkNextResume === true;
-      if (
-        forkCliSessionOnResume &&
-        !resolveCliBackendConfig(cliExecutionProvider, params.cfg, {
-          agentId: params.sessionAgentId,
-        })?.config.forkArg
-      ) {
+      const resolvedCliBackend = resolveCliBackendConfig(cliExecutionProvider, params.cfg, {
+        agentId: params.sessionAgentId,
+      });
+      const supportsCliSessionFork = Boolean(resolvedCliBackend?.config.forkArg);
+      if (forkCliSessionOnResume && !supportsCliSessionFork) {
         throw new Error(`CLI backend "${cliExecutionProvider}" does not support session forks`);
       }
       const forkStoreParams =
-        forkCliSessionOnResume && nextCliSessionId && mutableCliSessionStore
+        supportsCliSessionFork && nextCliSessionId && mutableCliSessionStore
           ? {
               provider: cliExecutionProvider,
               expectedCliSessionId: nextCliSessionId,
@@ -839,9 +838,9 @@ export function runAgentAttempt(params: {
             suppressNextUserMessagePersistence: params.suppressPromptPersistenceOnRetry === true,
             disableTools,
             allowEmptyAssistantReplyAsSilent: isSubagentAnnounceHandoff,
-            ...(mutableCliSessionStore && !forkCliSessionOnResume
+            ...(forkStoreParams && !forkCliSessionOnResume
               ? {
-                  onBeforeFreshCliSessionRetry: async (retry) => {
+                  onBeforeForkedCliSessionRetry: async (retry) => {
                     if (
                       hasNewGeneratedMediaTaskForSessionKey(
                         params.sessionKey,
@@ -853,14 +852,39 @@ export function runAgentAttempt(params: {
                     }
 
                     log.warn(
+                      `CLI session stalled, arming forked recovery: provider=${sanitizeForLog(cliExecutionProvider)} sessionKey=${forkStoreParams.sessionKey}`,
+                    );
+
+                    const armed = await restoreCliSessionForkInStore(forkStoreParams);
+                    if (armed) {
+                      params.sessionEntry = armed;
+                    }
+                    return Boolean(armed);
+                  },
+                }
+              : {}),
+            ...(mutableCliSessionStore
+              ? {
+                  onBeforeFreshCliSessionRetry: async (retry) => {
+                    if (
+                      hasNewGeneratedMediaTaskForSessionKey(params.sessionKey, mediaTaskIdsBefore)
+                    ) {
+                      return false;
+                    }
+
+                    log.warn(
                       `CLI session failed, clearing before fresh retry: provider=${sanitizeForLog(cliExecutionProvider)} sessionKey=${mutableCliSessionStore.sessionKey} reason=${sanitizeForLog(retry.reason)}`,
                     );
 
-                    params.sessionEntry =
-                      (await clearCliSessionInStore({
-                        provider: cliExecutionProvider,
-                        ...mutableCliSessionStore,
-                      })) ?? params.sessionEntry;
+                    const cleared = await clearCliSessionInStore({
+                      provider: cliExecutionProvider,
+                      expectedCliSessionId: retry.sessionId,
+                      ...mutableCliSessionStore,
+                    });
+                    if (!cleared) {
+                      return false;
+                    }
+                    params.sessionEntry = cleared;
                     return true;
                   },
                 }

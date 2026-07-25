@@ -136,6 +136,10 @@ function shouldRetryFreshCliSessionAfterFailover(params: {
   }
 }
 
+function shouldRetryForkedCliSessionAfterFailover(error: FailoverError): boolean {
+  return error.reason === "timeout" && error.code === "cli_no_output_timeout";
+}
+
 function formatCliEmptyOutputDiagnostics(output: CliOutput): string | undefined {
   const process = output.diagnostics?.process;
   if (!process) {
@@ -909,15 +913,36 @@ export async function runPreparedCliAgent(
     throw error;
   };
 
-  const executeCliAttempt = async (cliSessionIdToUse?: string, timeoutMs = params.timeoutMs) => {
+  const executeCliAttempt = async (
+    cliSessionIdToUse?: string,
+    options?: {
+      timeoutMs?: number;
+      forkCliSessionOnResume?: boolean;
+      onForkSuccessorPersisted?: (sessionId: string) => void;
+    },
+  ) => {
+    const timeoutMs = options?.timeoutMs ?? params.timeoutMs;
+    const forkCliSessionOnResume =
+      options?.forkCliSessionOnResume ?? context.params.forkCliSessionOnResume;
+    const persistCliSessionForkSuccessor =
+      options?.onForkSuccessorPersisted && context.params.persistCliSessionForkSuccessor
+        ? async (sessionId: string) => {
+            await context.params.persistCliSessionForkSuccessor?.(sessionId);
+            options.onForkSuccessorPersisted?.(sessionId);
+          }
+        : context.params.persistCliSessionForkSuccessor;
     const attemptContext =
-      timeoutMs === params.timeoutMs
+      timeoutMs === params.timeoutMs &&
+      forkCliSessionOnResume === context.params.forkCliSessionOnResume &&
+      persistCliSessionForkSuccessor === context.params.persistCliSessionForkSuccessor
         ? context
         : {
             ...context,
             params: {
               ...context.params,
               timeoutMs,
+              forkCliSessionOnResume,
+              persistCliSessionForkSuccessor,
             },
           };
     diagnosticLifecycle?.setPhase("send");
@@ -1340,9 +1365,19 @@ export async function runPreparedCliAgent(
       hookRunner,
     });
     const reusableCliSessionId = resolveReusableCliSessionId(context.reusableCliSession);
+    let retryableSessionId = reusableCliSessionId;
     try {
       return await finishCliAttempt(
-        await executeCliAttempt(reusableCliSessionId),
+        await executeCliAttempt(
+          reusableCliSessionId,
+          params.forkCliSessionOnResume
+            ? {
+                onForkSuccessorPersisted: (sessionId) => {
+                  retryableSessionId = sessionId;
+                },
+              }
+            : undefined,
+        ),
         reusableCliSessionId,
       );
     } catch (err) {
@@ -1350,11 +1385,53 @@ export async function runPreparedCliAgent(
       if (deliveredFailure) {
         return deliveredFailure;
       }
-      if (isFailoverError(err)) {
-        const retryableSessionId = reusableCliSessionId;
+      let recoveryError = err;
+      if (isFailoverError(recoveryError)) {
         if (
+          !params.forkCliSessionOnResume &&
+          shouldRetryForkedCliSessionAfterFailover(recoveryError) &&
+          retryableSessionId &&
+          params.sessionKey &&
+          context.preparedBackend.backend.forkArg &&
+          params.onBeforeForkedCliSessionRetry
+        ) {
+          try {
+            const retryTimeoutMs = params.timeoutMs - (Date.now() - context.started);
+            if (retryTimeoutMs <= 0) {
+              throw recoveryError;
+            }
+            const forkPrepared = await params.onBeforeForkedCliSessionRetry({
+              provider: params.provider,
+              reason: recoveryError.reason,
+              sessionId: retryableSessionId,
+            });
+            if (!forkPrepared) {
+              throw recoveryError;
+            }
+            cliBackendLog.warn(
+              `cli session recovery fork: provider=${params.provider} reason=${recoveryError.reason} sessionKey=${params.sessionKey}`,
+            );
+            return await finishCliAttempt(
+              await executeCliAttempt(retryableSessionId, {
+                timeoutMs: retryTimeoutMs,
+                forkCliSessionOnResume: true,
+                onForkSuccessorPersisted: (sessionId) => {
+                  retryableSessionId = sessionId;
+                },
+              }),
+            );
+          } catch (forkError) {
+            const deliveredForkFailure = await finishDeliveredFailure(forkError);
+            if (deliveredForkFailure) {
+              return deliveredForkFailure;
+            }
+            recoveryError = forkError;
+          }
+        }
+        if (
+          isFailoverError(recoveryError) &&
           shouldRetryFreshCliSessionAfterFailover({
-            error: err,
+            error: recoveryError,
             hasHistoryPrompt: Boolean(context.openClawHistoryPrompt),
           }) &&
           retryableSessionId &&
@@ -1363,22 +1440,24 @@ export async function runPreparedCliAgent(
           try {
             const retryTimeoutMs = params.timeoutMs - (Date.now() - context.started);
             if (retryTimeoutMs <= 0) {
-              throw err;
+              throw recoveryError;
             }
             if (params.onBeforeFreshCliSessionRetry) {
               const clearedStaleBinding = await params.onBeforeFreshCliSessionRetry({
                 provider: params.provider,
-                reason: err.reason,
+                reason: recoveryError.reason,
                 sessionId: retryableSessionId,
               });
               if (!clearedStaleBinding) {
-                throw err;
+                throw recoveryError;
               }
             }
             cliBackendLog.warn(
-              `cli session recovery retry: provider=${params.provider} reason=${err.reason} sessionKey=${params.sessionKey}`,
+              `cli session recovery retry: provider=${params.provider} reason=${recoveryError.reason} sessionKey=${params.sessionKey}`,
             );
-            return await finishCliAttempt(await executeCliAttempt(undefined, retryTimeoutMs));
+            return await finishCliAttempt(
+              await executeCliAttempt(undefined, { timeoutMs: retryTimeoutMs }),
+            );
           } catch (retryErr) {
             const deliveredRetryFailure = await finishDeliveredFailure(retryErr);
             if (deliveredRetryFailure) {
@@ -1393,20 +1472,22 @@ export async function runPreparedCliAgent(
             return toCliRunFailure(retryErr);
           }
         }
+      }
+      if (isFailoverError(recoveryError)) {
         await runCliAgentEndHook(params, {
-          event: buildFailedAgentEndEvent(formatErrorMessage(err)),
+          event: buildFailedAgentEndEvent(formatErrorMessage(recoveryError)),
           ctx: hookContext,
           hookRunner,
         });
-        throw err;
+        throw recoveryError;
       }
-      const message = formatErrorMessage(err);
+      const message = formatErrorMessage(recoveryError);
       await runCliAgentEndHook(params, {
         event: buildFailedAgentEndEvent(message),
         ctx: hookContext,
         hookRunner,
       });
-      return toCliRunFailure(err);
+      return toCliRunFailure(recoveryError);
     }
   };
 
