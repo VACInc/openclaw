@@ -217,6 +217,7 @@ export function createCodexAppServerAgentHarness(options: {
           agentId: params.agentId,
           sessionId: params.sessionId,
           sessionKey: params.sessionKey,
+          lifecycleRevision: params.lifecycleRevision,
         });
         let reset = await options.bindingStore.mutate(identity, { kind: "reset-generation" });
         if (!reset) {
@@ -233,10 +234,6 @@ export function createCodexAppServerAgentHarness(options: {
           throw new Error(
             `Codex binding generation changed before session ${params.sessionId} could reset`,
           );
-        }
-        const resetToken = params.resetToken?.trim();
-        if (resetToken) {
-          await options.bindingStore.recordSessionGenerationReset(identity, resetToken);
         }
       }
     },

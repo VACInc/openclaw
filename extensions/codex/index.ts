@@ -49,8 +49,13 @@ import {
 } from "./src/supervision-tools.js";
 import { createCodexWebSearchProvider } from "./src/web-search-provider.js";
 
-const RESET_SESSION_REASONS: ReadonlySet<string> = new Set(["new", "reset", "idle", "daily"]);
-const ENDED_SESSION_REASONS: ReadonlySet<string> = new Set([...RESET_SESSION_REASONS, "deleted"]);
+const ENDED_SESSION_REASONS: ReadonlySet<string> = new Set([
+  "new",
+  "reset",
+  "idle",
+  "daily",
+  "deleted",
+]);
 
 export default definePluginEntry({
   id: "codex",
@@ -334,10 +339,8 @@ export default definePluginEntry({
       // key; that child owns its own Codex thread binding (a Codex fork is a new
       // thread, not a transfer of the parent's). Retiring the parent's still-live
       // binding here would strand it, so skip when the successor provably lives
-      // under a different session key. Durable reset can also retain the same
-      // physical id, but equality alone is not proof that harness cleanup ran:
-      // consume the exact successful reset token before suppressing its delayed
-      // end. A missing or mismatched token remains fail-closed.
+      // under a different session key. Same-key resets are fenced by the
+      // persisted lifecycle revision because the physical id may be retained.
       // Unknown-current-key ends and true physical rollovers still retire. See
       // #106778.
       const endedSessionKey = sessionKey?.trim();
@@ -347,20 +350,11 @@ export default definePluginEntry({
       const identity = sessionBindingIdentity({
         sessionId: event.sessionId,
         ...(sessionKey ? { sessionKey } : {}),
+        ...(event.lifecycleRevision ? { lifecycleRevision: event.lifecycleRevision } : {}),
         ...(ctx.agentId ? { agentId: ctx.agentId } : {}),
         ...(config ? { config } : {}),
       });
-      const endedSessionId = event.sessionId.trim();
-      const nextSessionId = event.nextSessionId?.trim();
-      const resetToken = event.resetToken?.trim();
-      const matchedReset =
-        RESET_SESSION_REASONS.has(event.reason) &&
-        resetToken &&
-        (await bindingStore.consumeSessionGenerationReset(identity, resetToken));
       if (endedSessionKey && nextSessionKey && nextSessionKey !== endedSessionKey) {
-        return;
-      }
-      if (endedSessionId && nextSessionId === endedSessionId && matchedReset) {
         return;
       }
       await bindingStore.retireSessionGeneration(identity);

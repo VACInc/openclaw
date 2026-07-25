@@ -647,6 +647,126 @@ describe("Codex app-server binding store", () => {
     await expect(store.read(third)).resolves.toMatchObject({ threadId: "thread-1" });
   });
 
+  it("fences retained session ids by lifecycle revision across delayed reset and end work", async () => {
+    const { state } = createStateStore();
+    const store = createCodexAppServerBindingStore(state);
+    const previous = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "retained-session",
+      sessionKey: "agent:main:telegram:chat-1",
+      lifecycleRevision: "revision-1",
+    };
+    const current = { ...previous, lifecycleRevision: "revision-2" };
+    await store.mutate(previous, {
+      kind: "set",
+      binding: { threadId: "thread-old", cwd: "/old" },
+    });
+
+    await expect(store.mutate(previous, { kind: "reset-generation" })).resolves.toBe(true);
+    await expect(
+      store.mutate(current, {
+        kind: "reclaim-generation",
+        expectedPreviousSessionId: previous.sessionId,
+        expectedPreviousLifecycleRevision: previous.lifecycleRevision,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      store.mutate(current, {
+        kind: "set",
+        binding: { threadId: "thread-new", cwd: "/new" },
+      }),
+    ).resolves.toBe(true);
+
+    await expect(store.mutate(previous, { kind: "reset-generation" })).resolves.toBe(false);
+    await expect(store.retireSessionGeneration(previous)).resolves.toBe("conflict");
+    await expect(store.read(current)).resolves.toMatchObject({
+      threadId: "thread-new",
+      cwd: "/new",
+    });
+  });
+
+  it("upgrades an active legacy same-id binding to the authoritative revision in place", async () => {
+    const { state, values } = createStateStore();
+    const store = createCodexAppServerBindingStore(state);
+    const legacy = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "legacy-session",
+      sessionKey: "agent:main:telegram:chat-1",
+    };
+    const current = { ...legacy, lifecycleRevision: "revision-current" };
+    await store.mutate(legacy, {
+      kind: "set",
+      binding: { threadId: "thread-existing", cwd: "/repo" },
+    });
+
+    const plan = await store.prepareSessionGenerationReclaim(current);
+    expect(plan).toEqual({
+      kind: "verify",
+      expectedPreviousSessionId: legacy.sessionId,
+    });
+    if (plan.kind !== "verify") {
+      throw new Error("expected legacy generation verification");
+    }
+    await expect(
+      store.mutate(current, {
+        kind: "reclaim-generation",
+        expectedPreviousSessionId: plan.expectedPreviousSessionId,
+        expectedPreviousLifecycleRevision: plan.expectedPreviousLifecycleRevision,
+      }),
+    ).resolves.toBe(true);
+
+    expect(values.get(bindingStoreKey(current))).toMatchObject({
+      state: "active",
+      sessionId: current.sessionId,
+      lifecycleRevision: current.lifecycleRevision,
+      binding: { threadId: "thread-existing" },
+    });
+    await expect(store.read(current)).resolves.toMatchObject({ threadId: "thread-existing" });
+  });
+
+  it("recovers a retired legacy same-id row for the authoritative revision", async () => {
+    const { state, values } = createStateStore();
+    const store = createCodexAppServerBindingStore(state);
+    const legacy = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "legacy-session",
+      sessionKey: "agent:main:telegram:chat-1",
+    };
+    const current = { ...legacy, lifecycleRevision: "revision-current" };
+    await store.mutate(legacy, {
+      kind: "set",
+      binding: { threadId: "thread-retired", cwd: "/repo" },
+    });
+    await store.retireSessionGeneration(legacy);
+
+    const plan = await store.prepareSessionGenerationReclaim(current);
+    if (plan.kind !== "verify") {
+      throw new Error("expected legacy generation verification");
+    }
+    await expect(
+      store.mutate(current, {
+        kind: "reclaim-generation",
+        expectedPreviousSessionId: plan.expectedPreviousSessionId,
+        expectedPreviousLifecycleRevision: plan.expectedPreviousLifecycleRevision,
+      }),
+    ).resolves.toBe(true);
+    expect(values.get(bindingStoreKey(current))).toEqual({
+      version: 1,
+      state: "cleared",
+      sessionId: current.sessionId,
+      lifecycleRevision: current.lifecycleRevision,
+    });
+    await expect(
+      store.mutate(current, {
+        kind: "set",
+        binding: { threadId: "thread-recovered", cwd: "/repo" },
+      }),
+    ).resolves.toBe(true);
+  });
+
   it("falls back to physical session identity when no stable session key exists", () => {
     const first = { kind: "session" as const, agentId: "main", sessionId: "session-1" };
     const second = { ...first, sessionId: "session-2" };

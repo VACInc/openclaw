@@ -1080,14 +1080,17 @@ export async function createGatewaySession(params: {
           sessionFile: parentEntry?.sessionFile,
           agentId: parentSessionTarget.agentId,
           reason: "new",
+          lifecycleRevision: parentEntry?.lifecycleRevision,
           nextSessionId: created.entry.sessionId,
           nextSessionKey: target.canonicalKey,
+          nextLifecycleRevision: created.entry.lifecycleRevision,
         });
       }
       emitGatewaySessionStartPluginHook({
         cfg: params.cfg,
         sessionKey: target.canonicalKey,
         sessionId: created.entry.sessionId,
+        lifecycleRevision: created.entry.lifecycleRevision,
         resumedFrom: parentEntry?.sessionId,
         storePath: target.storePath,
         sessionFile: created.entry.sessionFile,

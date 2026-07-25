@@ -143,9 +143,10 @@ export function emitGatewaySessionEndPluginHook(params: {
     | "restart"
     | "unknown";
   archivedTranscripts?: ArchivedSessionTranscript[];
+  lifecycleRevision?: string;
   nextSessionId?: string;
   nextSessionKey?: string;
-  resetToken?: string;
+  nextLifecycleRevision?: string;
 }): void {
   if (!params.sessionId) {
     return;
@@ -172,9 +173,10 @@ export function emitGatewaySessionEndPluginHook(params: {
     reason: params.reason,
     sessionFile: transcript.sessionFile,
     transcriptArchived: transcript.transcriptArchived,
+    lifecycleRevision: params.lifecycleRevision,
     nextSessionId: params.nextSessionId,
     nextSessionKey: params.nextSessionKey,
-    resetToken: params.resetToken,
+    nextLifecycleRevision: params.nextLifecycleRevision,
   });
   void runWithGatewayIndependentRootWorkContinuation(async () => {
     await hookRunner.runSessionEnd(payload.event, payload.context);
@@ -187,6 +189,7 @@ export function emitGatewaySessionStartPluginHook(params: {
   cfg: OpenClawConfig;
   sessionKey: string;
   sessionId?: string;
+  lifecycleRevision?: string;
   resumedFrom?: string;
   storePath?: string;
   sessionFile?: string;
@@ -206,6 +209,7 @@ export function emitGatewaySessionStartPluginHook(params: {
       cfg: params.cfg,
       sessionKey: params.sessionKey,
       sessionId: params.sessionId,
+      lifecycleRevision: params.lifecycleRevision,
       storePath: params.storePath,
       sessionFile: params.sessionFile,
       agentId: params.agentId,
@@ -219,6 +223,7 @@ export function emitGatewaySessionStartPluginHook(params: {
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
     cfg: params.cfg,
+    lifecycleRevision: params.lifecycleRevision,
     resumedFrom: params.resumedFrom,
   });
   void runWithGatewayIndependentRootWorkContinuation(async () => {
@@ -286,6 +291,7 @@ export async function drainActiveSessionsForShutdown(params: {
           reason: params.reason,
           sessionFile: transcript.sessionFile,
           transcriptArchived: transcript.transcriptArchived,
+          lifecycleRevision: entry.lifecycleRevision,
         });
         await hookRunner.runSessionEnd(payload.event, payload.context);
       } catch (err) {
@@ -764,6 +770,7 @@ export async function cleanupSessionBeforeMutation(params: {
   key: string;
   target: ReturnType<typeof resolveGatewaySessionStoreTarget>;
   entry: SessionEntry | undefined;
+  lifecycleRevision?: string;
   legacyKey?: string;
   canonicalKey?: string;
   reason: "session-reset" | "session-delete";
@@ -824,6 +831,7 @@ export async function cleanupSessionBeforeMutation(params: {
       sessionId: params.entry.sessionId,
       sessionKey: params.target.canonicalKey ?? params.key,
       sessionFile: params.entry.sessionFile,
+      lifecycleRevision: params.lifecycleRevision ?? params.entry.lifecycleRevision,
       reason: params.reason === "session-reset" ? "reset" : "deleted",
     } satisfies Parameters<typeof resetRegisteredAgentHarnessSessions>[0];
     await resetRegisteredAgentHarnessSessions(resetParams);
@@ -1102,7 +1110,12 @@ export async function performGatewaySessionReset(params: {
         };
       }
       const hadExistingEntry = Boolean(entry);
-      const resetToken = entry?.sessionId ? randomUUID() : undefined;
+      // Older session rows may predate lifecycleRevision. Mint one fence for
+      // every old-generation cleanup surface so a delayed end cannot target the
+      // same-id successor merely because the legacy row had no revision.
+      const endedLifecycleRevision = entry?.sessionId
+        ? (entry.lifecycleRevision ?? randomUUID())
+        : undefined;
       const resetLifecycleRevision = entry?.lifecycleRevision;
       const agentId = normalizeAgentId(target.agentId ?? resolveDefaultAgentId(cfg));
       const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
@@ -1182,8 +1195,8 @@ export async function performGatewaySessionReset(params: {
           sessionId: entry.sessionId,
           sessionKey: target.canonicalKey ?? params.key,
           sessionFile: entry.sessionFile,
+          lifecycleRevision: endedLifecycleRevision,
           reason: "reset",
-          resetToken,
         });
       }
       const beforeResetMessages = getGlobalHookRunner()?.hasHooks("before_reset")
@@ -1248,7 +1261,7 @@ export async function performGatewaySessionReset(params: {
           agentId: target.agentId,
           reason: params.reason,
           archivedTranscripts: [],
-          resetToken,
+          lifecycleRevision: endedLifecycleRevision,
         });
         await emitSessionUnboundLifecycleEvent({
           targetSessionKey: target.canonicalKey,
@@ -1549,13 +1562,15 @@ export async function performGatewaySessionReset(params: {
           agentId: target.agentId,
           reason: params.reason,
           archivedTranscripts,
+          lifecycleRevision: lifecycle.previousEntry?.lifecycleRevision ?? endedLifecycleRevision,
           nextSessionId: next.sessionId,
-          resetToken,
+          nextLifecycleRevision: next.lifecycleRevision,
         });
         emitGatewaySessionStartPluginHook({
           cfg,
           sessionKey: target.canonicalKey ?? params.key,
           sessionId: next.sessionId,
+          lifecycleRevision: next.lifecycleRevision,
           resumedFrom: oldSessionId,
           storePath,
           sessionFile: next.sessionFile,

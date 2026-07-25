@@ -84,6 +84,7 @@ function emitCompactionSessionLifecycleHooks(params: {
       cfg: params.cfg,
       sessionKey: params.sessionKey,
       sessionId: params.nextEntry.sessionId,
+      lifecycleRevision: params.nextEntry.lifecycleRevision,
       storePath: params.storePath,
       sessionFile: params.nextEntry.sessionFile,
       agentId: resolveAgentIdFromSessionKey(params.sessionKey),
@@ -108,7 +109,9 @@ function emitCompactionSessionLifecycleHooks(params: {
       reason: "compaction",
       sessionFile: transcript.sessionFile,
       transcriptArchived: transcript.transcriptArchived,
+      lifecycleRevision: params.previousEntry.lifecycleRevision,
       nextSessionId: params.nextEntry.sessionId,
+      nextLifecycleRevision: params.nextEntry.lifecycleRevision,
     });
     void runWithGatewayIndependentRootWorkContinuation(async () => {
       await hookRunner.runSessionEnd(payload.event, payload.context);
@@ -122,6 +125,7 @@ function emitCompactionSessionLifecycleHooks(params: {
       sessionId: params.nextEntry.sessionId,
       sessionKey: params.sessionKey,
       cfg: params.cfg,
+      lifecycleRevision: params.nextEntry.lifecycleRevision,
       resumedFrom: params.previousEntry.sessionId,
     });
     void runWithGatewayIndependentRootWorkContinuation(async () => {

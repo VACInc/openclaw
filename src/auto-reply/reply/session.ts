@@ -1147,11 +1147,11 @@ async function initSessionStateAttemptLocked(
     sessionStore,
   });
   const previousSessionTranscript = committed.previousSessionTranscript;
-  const retainedSessionReset =
-    previousSessionEntry?.sessionId === sessionId &&
-    previousSessionEndReason !== undefined &&
-    previousSessionEndReason !== "unknown";
-  const resetToken = retainedSessionReset ? crypto.randomUUID() : undefined;
+  // Legacy rows can lack lifecycleRevision. Use one synthetic old-generation
+  // fence for both harness cleanup and session_end before exposing the successor.
+  const endedLifecycleRevision = previousSessionEntry?.sessionId
+    ? (previousSessionEntry.lifecycleRevision ?? crypto.randomUUID())
+    : undefined;
 
   if (previousSessionEntry?.sessionId) {
     await retireSessionMcpRuntime({
@@ -1168,8 +1168,8 @@ async function initSessionStateAttemptLocked(
       sessionId: previousSessionEntry.sessionId,
       sessionKey,
       sessionFile: previousSessionEntry.sessionFile,
+      lifecycleRevision: endedLifecycleRevision,
       reason: previousSessionEndReason ?? "unknown",
-      resetToken,
     });
     // Direct-message browser tabs use a peer-scoped runtime identity even when
     // their transcript aliases main; cleanup must carry both exact keys.
@@ -1214,8 +1214,9 @@ async function initSessionStateAttemptLocked(
           reason: previousSessionEndReason,
           sessionFile: previousSessionTranscript.sessionFile,
           transcriptArchived: previousSessionTranscript.transcriptArchived,
+          lifecycleRevision: endedLifecycleRevision,
           nextSessionId: effectiveSessionId,
-          resetToken,
+          nextLifecycleRevision: sessionEntry.lifecycleRevision,
         });
         void runWithGatewayIndependentRootWorkContinuation(async () => {
           await hookRunner.runSessionEnd(payload.event, payload.context);
@@ -1232,6 +1233,7 @@ async function initSessionStateAttemptLocked(
         cfg,
         sessionKey,
         sessionId: effectiveSessionId,
+        lifecycleRevision: sessionEntry.lifecycleRevision,
         storePath,
         sessionFile: sessionEntry?.sessionFile,
         agentId,
@@ -1242,6 +1244,7 @@ async function initSessionStateAttemptLocked(
         sessionId: effectiveSessionId,
         sessionKey,
         cfg,
+        lifecycleRevision: sessionEntry.lifecycleRevision,
         resumedFrom: previousSessionEntry?.sessionId,
       });
       void runWithGatewayIndependentRootWorkContinuation(async () => {

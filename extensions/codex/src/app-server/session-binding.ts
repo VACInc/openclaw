@@ -54,23 +54,32 @@ export type CodexAppServerAuthProfileLookup = {
 
 /** Stable owner of one Codex thread binding. */
 export type CodexAppServerBindingIdentity =
-  | { kind: "session"; agentId: string; sessionId: string; sessionKey?: string }
+  | {
+      kind: "session";
+      agentId: string;
+      sessionId: string;
+      sessionKey?: string;
+      lifecycleRevision?: string;
+    }
   | { kind: "conversation"; bindingId: string };
 
 /** Resolves the same agent scope OpenClaw uses for transcript/session ownership. */
 export function sessionBindingIdentity(params: {
   sessionId: string;
   sessionKey?: string;
+  lifecycleRevision?: string;
   agentId?: string;
   config?: OpenClawConfig;
 }): Extract<CodexAppServerBindingIdentity, { kind: "session" }> {
   const { sessionAgentId } = resolveSessionAgentIds(params);
   const sessionKey = params.sessionKey?.trim();
+  const lifecycleRevision = params.lifecycleRevision?.trim();
   return {
     kind: "session",
     agentId: sessionAgentId,
     sessionId: params.sessionId,
     ...(sessionKey ? { sessionKey } : {}),
+    ...(lifecycleRevision ? { lifecycleRevision } : {}),
   };
 }
 
@@ -346,7 +355,8 @@ type CodexAppServerBindingMutation =
     }
   | {
       kind: "reclaim-generation";
-      expectedPreviousSessionId: string;
+      expectedPreviousSessionId?: string;
+      expectedPreviousLifecycleRevision?: string;
     }
   | {
       /** Explicit reset may reopen the current physical generation after work has drained. */
@@ -365,7 +375,11 @@ export type CodexSessionGenerationRetirementResult = "applied" | "absent" | "con
 
 export type CodexSessionGenerationReclaimPlan =
   | { kind: "resolved"; result: boolean }
-  | { kind: "verify"; expectedPreviousSessionId: string };
+  | {
+      kind: "verify";
+      expectedPreviousSessionId?: string;
+      expectedPreviousLifecycleRevision?: string;
+    };
 
 const bindingLeaseSchema = z.object({
   token: z.string().refine((value) => Boolean(value.trim())),
@@ -383,12 +397,14 @@ const storedBindingSchema = z.discriminatedUnion("state", [
     state: z.literal("active"),
     binding: threadBindingSchema,
     sessionId: storedSessionIdSchema,
+    lifecycleRevision: storedSessionIdSchema,
     lease: bindingLeaseSchema.optional().catch(undefined),
   }),
   z.object({
     version: z.literal(1),
     state: z.literal("cleared"),
     sessionId: storedSessionIdSchema,
+    lifecycleRevision: storedSessionIdSchema,
     lease: bindingLeaseSchema.optional().catch(undefined),
     retired: z.literal(true).optional().catch(undefined),
   }),
@@ -527,16 +543,6 @@ export type CodexAppServerBindingStore = {
     identity: Extract<CodexAppServerBindingIdentity, { kind: "session" }>,
     expectedPreviousSessionId: string,
   ): Promise<CodexSessionGenerationAdoptionResult>;
-  /** Records one successful reset for exact matching with its delayed session_end event. */
-  recordSessionGenerationReset(
-    identity: Extract<CodexAppServerBindingIdentity, { kind: "session" }>,
-    resetToken: string,
-  ): Promise<void>;
-  /** Consumes only the successful reset paired with this exact runtime-local token. */
-  consumeSessionGenerationReset(
-    identity: Extract<CodexAppServerBindingIdentity, { kind: "session" }>,
-    resetToken: string,
-  ): Promise<boolean>;
   retireSessionGeneration(
     identity: Extract<CodexAppServerBindingIdentity, { kind: "session" }>,
   ): Promise<CodexSessionGenerationRetirementResult>;
@@ -554,13 +560,11 @@ export async function reclaimCurrentCodexSessionGeneration(params: {
   if (!sessionKey) {
     return true;
   }
-  const plan = await params.bindingStore.prepareSessionGenerationReclaim(params.identity);
-  if (plan.kind === "resolved") {
-    return plan.result;
-  }
 
-  // Only a stale stable-key owner needs session-store authority. Resolve it before
-  // the second mutation so the session read never runs inside the binding write transaction.
+  // Stable-key ownership comes from the authoritative OpenClaw session row.
+  // Resolve it before binding mutation so same-id resets still fence by revision
+  // and no session read runs inside the plugin-state transaction.
+  let authoritativeIdentity: Extract<CodexAppServerBindingIdentity, { kind: "session" }>;
   try {
     const storePath = resolveStorePath(params.config?.session?.store, {
       agentId: params.identity.agentId,
@@ -575,12 +579,25 @@ export async function reclaimCurrentCodexSessionGeneration(params: {
     if (entry?.sessionId !== params.identity.sessionId) {
       return false;
     }
+    authoritativeIdentity = sessionBindingIdentity({
+      agentId: params.identity.agentId,
+      sessionId: entry.sessionId,
+      sessionKey,
+      lifecycleRevision: entry.lifecycleRevision,
+      config: params.config,
+    });
   } catch {
     return false;
   }
-  return await params.bindingStore.mutate(params.identity, {
+
+  const plan = await params.bindingStore.prepareSessionGenerationReclaim(authoritativeIdentity);
+  if (plan.kind === "resolved") {
+    return plan.result;
+  }
+  return await params.bindingStore.mutate(authoritativeIdentity, {
     kind: "reclaim-generation",
     expectedPreviousSessionId: plan.expectedPreviousSessionId,
+    expectedPreviousLifecycleRevision: plan.expectedPreviousLifecycleRevision,
   });
 }
 
@@ -598,17 +615,6 @@ export function createCodexAppServerBindingStore(
   let pendingArchives = 0;
   let archiveTail = Promise.resolve();
   let bindingMutationsDrained: (() => void)[] = [];
-  // Gateway reset awaits the harness before emitting session_end in the same
-  // process. Keep exact transient tokens so duplicate or interleaved lifecycle
-  // events cannot consume a marker belonging to another logical reset. A marker
-  // lives until its matching end consumes it (or this runtime is disposed);
-  // evicting by insertion order could retire a valid reset whose end was delayed.
-  const pendingSessionGenerationEnds = new Set<string>();
-  const sessionGenerationEndKey = (
-    identity: Extract<CodexAppServerBindingIdentity, { kind: "session" }>,
-    resetToken: string,
-  ) => `${bindingStoreKey(identity)}\0${identity.sessionId.trim()}\0${resetToken.trim()}`;
-
   const waitForBindingMutations = async (): Promise<void> => {
     if (activeBindingMutations === 0) {
       return;
@@ -762,7 +768,10 @@ export function createCodexAppServerBindingStore(
           currentIdentity !== undefined &&
           key === currentKey &&
           (currentIdentity.kind === "conversation" ||
-            stored.sessionId === currentIdentity.sessionId.trim());
+            (stored.sessionId === currentIdentity.sessionId.trim() &&
+              (!currentIdentity.lifecycleRevision ||
+                !stored.lifecycleRevision ||
+                stored.lifecycleRevision === currentIdentity.lifecycleRevision)));
         if (stored.state !== "active" || stored.binding.threadId !== threadId || isCurrentOwner) {
           return false;
         }
@@ -780,14 +789,22 @@ export function createCodexAppServerBindingStore(
       if (!current) {
         return { kind: "resolved", result: true };
       }
-      const currentSessionId = current.sessionId;
-      if (!currentSessionId || currentSessionId === identity.sessionId) {
+      if (
+        ownsStoredSessionGeneration(identity, current) &&
+        (!identity.lifecycleRevision || current.lifecycleRevision)
+      ) {
         return {
           kind: "resolved",
           result: current.state !== "cleared" || current.retired !== true,
         };
       }
-      return { kind: "verify", expectedPreviousSessionId: currentSessionId };
+      return {
+        kind: "verify",
+        ...(current.sessionId ? { expectedPreviousSessionId: current.sessionId } : {}),
+        ...(current.lifecycleRevision
+          ? { expectedPreviousLifecycleRevision: current.lifecycleRevision }
+          : {}),
+      };
     },
 
     async mutate(identity, mutation) {
@@ -810,13 +827,30 @@ export function createCodexAppServerBindingStore(
               if (!current) {
                 return { result: true };
               }
-              if (ownsGeneration) {
+              if (
+                ownsGeneration &&
+                (!identity.lifecycleRevision || current.lifecycleRevision !== undefined)
+              ) {
                 return {
                   result: current.state !== "cleared" || current.retired !== true,
                 };
               }
-              if (current.sessionId !== mutation.expectedPreviousSessionId) {
+              if (
+                current.sessionId !== mutation.expectedPreviousSessionId ||
+                current.lifecycleRevision !== mutation.expectedPreviousLifecycleRevision
+              ) {
                 return { result: false };
+              }
+              const targetGeneration = storedSessionGeneration(identity, current);
+              const legacyGeneration =
+                current.sessionId === identity.sessionId &&
+                current.lifecycleRevision === undefined &&
+                identity.lifecycleRevision !== undefined;
+              if (legacyGeneration && current.state === "active") {
+                return {
+                  result: true,
+                  next: { ...current, ...targetGeneration },
+                };
               }
               // A stale physical generation must never turn private user-home ownership into
               // an ordinary empty binding. Supervision adoption has an explicit generation
@@ -829,7 +863,7 @@ export function createCodexAppServerBindingStore(
                 next: {
                   version: 1,
                   state: "cleared",
-                  sessionId: identity.sessionId,
+                  ...targetGeneration,
                   ...ownedLease,
                 },
               };
@@ -849,7 +883,7 @@ export function createCodexAppServerBindingStore(
                 next: {
                   version: 1,
                   state: "cleared",
-                  sessionId: identity.sessionId,
+                  ...storedSessionGeneration(identity, current),
                   ...ownedLease,
                 },
               };
@@ -966,37 +1000,34 @@ export function createCodexAppServerBindingStore(
           if (current?.state !== "active") {
             return { result: "absent" as const };
           }
-          if (current.sessionId === targetSessionId) {
+          if (
+            current.sessionId === targetSessionId &&
+            (!identity.lifecycleRevision ||
+              !current.lifecycleRevision ||
+              current.lifecycleRevision === identity.lifecycleRevision)
+          ) {
             return { result: "current" as const };
           }
           if (current.sessionId !== expectedSessionId) {
             return { result: "conflict" as const };
           }
+          const {
+            sessionId: _previousSessionId,
+            lifecycleRevision: _previousLifecycleRevision,
+            ...bindingOwner
+          } = current;
           return {
             result: "adopted" as const,
-            next: { ...current, sessionId: targetSessionId },
+            next: {
+              ...bindingOwner,
+              sessionId: targetSessionId,
+              ...(identity.lifecycleRevision
+                ? { lifecycleRevision: identity.lifecycleRevision }
+                : {}),
+            },
           };
         });
       });
-    },
-
-    async recordSessionGenerationReset(identity, resetToken) {
-      if (!resetToken.trim()) {
-        return;
-      }
-      pendingSessionGenerationEnds.add(sessionGenerationEndKey(identity, resetToken));
-    },
-
-    async consumeSessionGenerationReset(identity, resetToken) {
-      if (!resetToken.trim()) {
-        return false;
-      }
-      const key = sessionGenerationEndKey(identity, resetToken);
-      if (!pendingSessionGenerationEnds.has(key)) {
-        return false;
-      }
-      pendingSessionGenerationEnds.delete(key);
-      return true;
     },
 
     async retireSessionGeneration(identity) {
@@ -1245,19 +1276,32 @@ export function readStoredCodexAppServerBinding(
 function storedSessionGeneration(
   identity: CodexAppServerBindingIdentity,
   current: StoredCodexAppServerBinding | undefined,
-): { sessionId?: string } {
+): { sessionId?: string; lifecycleRevision?: string } {
   if (identity.kind === "session") {
-    return { sessionId: identity.sessionId };
+    return {
+      sessionId: identity.sessionId,
+      ...(identity.lifecycleRevision
+        ? { lifecycleRevision: identity.lifecycleRevision }
+        : current?.lifecycleRevision
+          ? { lifecycleRevision: current.lifecycleRevision }
+          : {}),
+    };
   }
-  return current?.sessionId ? { sessionId: current.sessionId } : {};
+  return {
+    ...(current?.sessionId ? { sessionId: current.sessionId } : {}),
+    ...(current?.lifecycleRevision ? { lifecycleRevision: current.lifecycleRevision } : {}),
+  };
 }
 
 function preservedSessionGeneration(
   identity: CodexAppServerBindingIdentity,
   current: StoredCodexAppServerBinding | undefined,
-): { sessionId?: string } {
+): { sessionId?: string; lifecycleRevision?: string } {
   if (current?.sessionId) {
-    return { sessionId: current.sessionId };
+    return {
+      sessionId: current.sessionId,
+      ...(current.lifecycleRevision ? { lifecycleRevision: current.lifecycleRevision } : {}),
+    };
   }
   return storedSessionGeneration(identity, current);
 }
@@ -1267,7 +1311,12 @@ function ownsStoredSessionGeneration(
   current: StoredCodexAppServerBinding | undefined,
 ): boolean {
   return (
-    identity.kind !== "session" || !current?.sessionId || current.sessionId === identity.sessionId
+    identity.kind !== "session" ||
+    !current?.sessionId ||
+    (current.sessionId === identity.sessionId &&
+      (!identity.lifecycleRevision ||
+        !current.lifecycleRevision ||
+        current.lifecycleRevision === identity.lifecycleRevision))
   );
 }
 

@@ -181,9 +181,11 @@ export function emitAgentSendSessionLifecycleTransition(
         sessionId: string;
         storePath: string;
         sessionFile?: string;
+        lifecycleRevision?: string;
         agentId?: string;
         previousSessionId?: string;
         previousSessionFile?: string;
+        previousLifecycleRevision?: string;
         previousEndReason?: PluginHookSessionEndReason;
       }
     | undefined,
@@ -200,14 +202,17 @@ export function emitAgentSendSessionLifecycleTransition(
       sessionFile: transition.previousSessionFile,
       agentId: transition.agentId,
       reason: transition.previousEndReason ?? "unknown",
+      lifecycleRevision: transition.previousLifecycleRevision,
       nextSessionId: transition.sessionId,
       nextSessionKey: transition.sessionKey,
+      nextLifecycleRevision: transition.lifecycleRevision,
     });
   }
   emitGatewaySessionStartPluginHook({
     cfg: transition.cfg,
     sessionKey: transition.sessionKey,
     sessionId: transition.sessionId,
+    lifecycleRevision: transition.lifecycleRevision,
     resumedFrom: transition.previousSessionId,
     storePath: transition.storePath,
     sessionFile: transition.sessionFile,

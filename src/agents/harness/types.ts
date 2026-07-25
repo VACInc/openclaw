@@ -181,9 +181,9 @@ export type AgentHarnessResetParams = {
   sessionId?: string;
   sessionKey?: string;
   sessionFile?: string;
+  /** Authoritative revision of the physical session generation being reset. */
+  lifecycleRevision?: string;
   reason?: "new" | "reset" | "idle" | "daily" | "compaction" | "deleted" | "unknown";
-  /** Correlates a successful harness reset with its matching delayed session_end hook. */
-  resetToken?: string;
 };
 
 export type AgentHarnessSessionForkFailureCode =

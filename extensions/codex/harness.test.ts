@@ -261,6 +261,13 @@ describe("Codex agent harness reset()", () => {
       agentId: "worker",
       sessionId: "session-1",
       sessionKey: "agent:worker:main",
+      lifecycleRevision: "revision-old",
+    });
+    const successor = sessionBindingIdentity({
+      agentId: "worker",
+      sessionId: "session-1",
+      sessionKey: "agent:worker:main",
+      lifecycleRevision: "revision-next",
     });
     await bindingStore.mutate(identity, {
       kind: "set",
@@ -276,26 +283,25 @@ describe("Codex agent harness reset()", () => {
       agentId: "worker",
       sessionId: "session-1",
       sessionKey: "agent:worker:main",
+      lifecycleRevision: "revision-old",
       reason: "reset",
-      resetToken: "reset-session-1",
     });
 
-    await expect(bindingStore.consumeSessionGenerationReset(identity, "wrong-reset")).resolves.toBe(
-      false,
-    );
     await expect(
-      bindingStore.consumeSessionGenerationReset(identity, "reset-session-1"),
+      bindingStore.mutate(successor, {
+        kind: "reclaim-generation",
+        expectedPreviousSessionId: identity.sessionId,
+        expectedPreviousLifecycleRevision: identity.lifecycleRevision,
+      }),
     ).resolves.toBe(true);
     await expect(
-      bindingStore.consumeSessionGenerationReset(identity, "reset-session-1"),
-    ).resolves.toBe(false);
-    await expect(
-      bindingStore.mutate(identity, {
+      bindingStore.mutate(successor, {
         kind: "set",
         binding: { threadId: "thread-2", cwd: "/repo" },
       }),
     ).resolves.toBe(true);
-    await expect(bindingStore.read(identity)).resolves.toMatchObject({ threadId: "thread-2" });
+    await expect(bindingStore.read(identity)).resolves.toBeUndefined();
+    await expect(bindingStore.read(successor)).resolves.toMatchObject({ threadId: "thread-2" });
   });
 });
 

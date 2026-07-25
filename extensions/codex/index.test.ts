@@ -465,9 +465,10 @@ describe("codex plugin", () => {
             sessionId: string;
             sessionKey?: string;
             reason?: string;
+            lifecycleRevision?: string;
             nextSessionId?: string;
             nextSessionKey?: string;
-            resetToken?: string;
+            nextLifecycleRevision?: string;
           },
           ctx: { agentId?: string; sessionId: string; sessionKey?: string },
         ) => Promise<void>)
@@ -509,13 +510,21 @@ describe("codex plugin", () => {
       await expect(bindingStore.read(identity)).resolves.toBeUndefined();
     }
 
-    // Same-id equality alone is not proof that the harness reset succeeded.
-    const failedReset = sessionBindingIdentity({
+    // A reset hook failure still retires only the old lifecycle revision. The
+    // authoritative same-id successor can reclaim that row and bind normally.
+    const failedResetOld = sessionBindingIdentity({
       agentId: "worker",
       sessionId: "failed-reset-1",
       sessionKey: "agent:worker:failed-reset-1",
+      lifecycleRevision: "failed-reset-old",
     });
-    await bindingStore.mutate(failedReset, {
+    const failedResetNext = sessionBindingIdentity({
+      agentId: "worker",
+      sessionId: "failed-reset-1",
+      sessionKey: "agent:worker:failed-reset-1",
+      lifecycleRevision: "failed-reset-next",
+    });
+    await bindingStore.mutate(failedResetOld, {
       kind: "set",
       binding: { threadId: "thread-stale", cwd: "/repo" },
     });
@@ -524,25 +533,48 @@ describe("codex plugin", () => {
         sessionId: "failed-reset-1",
         sessionKey: "agent:worker:failed-reset-1",
         reason: "new",
+        lifecycleRevision: "failed-reset-old",
         nextSessionId: "failed-reset-1",
-        resetToken: "failed-reset-token",
+        nextLifecycleRevision: "failed-reset-next",
       },
       { agentId: "worker", sessionId: "failed-reset-1" },
     );
-    await expect(bindingStore.read(failedReset)).resolves.toBeUndefined();
+    await expect(bindingStore.read(failedResetOld)).resolves.toBeUndefined();
+    await expect(
+      bindingStore.mutate(failedResetNext, {
+        kind: "reclaim-generation",
+        expectedPreviousSessionId: failedResetOld.sessionId,
+        expectedPreviousLifecycleRevision: failedResetOld.lifecycleRevision,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      bindingStore.mutate(failedResetNext, {
+        kind: "set",
+        binding: { threadId: "thread-recovered", cwd: "/repo" },
+      }),
+    ).resolves.toBe(true);
+    await expect(bindingStore.read(failedResetNext)).resolves.toMatchObject({
+      threadId: "thread-recovered",
+    });
 
-    // A successful harness reset records the exact generation. Preserve the
-    // fresh binding even when any delayed same-id reset end arrives after rebinding.
+    // A successful reset clears the exact old revision. A new same-id revision
+    // may bind before the delayed session_end arrives without being retired.
     for (const reason of ["new", "reset", "idle", "daily"] as const) {
       const sessionId = `retained-${reason}`;
       const sessionKey = `agent:worker:${sessionId}`;
-      const resetToken = `${sessionId}-reset-token`;
+      const previous = sessionBindingIdentity({
+        agentId: "worker",
+        sessionId,
+        sessionKey,
+        lifecycleRevision: `${sessionId}-old`,
+      });
       const retained = sessionBindingIdentity({
         agentId: "worker",
         sessionId,
         sessionKey,
+        lifecycleRevision: `${sessionId}-next`,
       });
-      await bindingStore.mutate(retained, {
+      await bindingStore.mutate(previous, {
         kind: "set",
         binding: { threadId: `thread-before-${reason}`, cwd: "/repo" },
       });
@@ -550,23 +582,28 @@ describe("codex plugin", () => {
         agentId: "worker",
         sessionId,
         sessionKey,
+        lifecycleRevision: previous.lifecycleRevision,
         reason,
-        resetToken,
       });
+      await expect(
+        bindingStore.mutate(retained, {
+          kind: "reclaim-generation",
+          expectedPreviousSessionId: previous.sessionId,
+          expectedPreviousLifecycleRevision: previous.lifecycleRevision,
+        }),
+      ).resolves.toBe(true);
       await bindingStore.mutate(retained, {
         kind: "set",
         binding: { threadId: `thread-after-${reason}`, cwd: "/repo" },
       });
-      await expect(
-        bindingStore.consumeSessionGenerationReset(retained, "unrelated-reset-token"),
-      ).resolves.toBe(false);
       await sessionEnd(
         {
           sessionId,
           sessionKey,
           reason,
+          lifecycleRevision: previous.lifecycleRevision,
           nextSessionId: sessionId,
-          resetToken,
+          nextLifecycleRevision: retained.lifecycleRevision,
         },
         { agentId: "worker", sessionId },
       );
@@ -574,42 +611,6 @@ describe("codex plugin", () => {
         threadId: `thread-after-${reason}`,
       });
     }
-
-    // Repeated delivery of the same reset token remains one logical marker,
-    // while a different reset token cannot steal it.
-    const interleaved = sessionBindingIdentity({
-      agentId: "worker",
-      sessionId: "interleaved-1",
-      sessionKey: "agent:worker:interleaved-1",
-    });
-    await bindingStore.recordSessionGenerationReset(interleaved, "exact-reset-token");
-    await bindingStore.recordSessionGenerationReset(interleaved, "exact-reset-token");
-    await expect(
-      bindingStore.consumeSessionGenerationReset(interleaved, "other-reset-token"),
-    ).resolves.toBe(false);
-    await expect(
-      bindingStore.consumeSessionGenerationReset(interleaved, "exact-reset-token"),
-    ).resolves.toBe(true);
-    await expect(
-      bindingStore.consumeSessionGenerationReset(interleaved, "exact-reset-token"),
-    ).resolves.toBe(false);
-
-    // A delayed lifecycle end must remain correlated even when many newer
-    // resets complete first; insertion pressure cannot evict a valid marker.
-    const delayed = sessionBindingIdentity({
-      agentId: "worker",
-      sessionId: "delayed-1",
-      sessionKey: "agent:worker:delayed-1",
-    });
-    await bindingStore.recordSessionGenerationReset(delayed, "oldest-reset-token");
-    await Promise.all(
-      Array.from({ length: 1_024 }, (_, index) =>
-        bindingStore.recordSessionGenerationReset(delayed, `newer-reset-token-${index}`),
-      ),
-    );
-    await expect(
-      bindingStore.consumeSessionGenerationReset(delayed, "oldest-reset-token"),
-    ).resolves.toBe(true);
 
     // Cross-key handoff (e.g. dashboard "New Chat"/fork): the parent's still-live
     // binding must survive because the successor lives under a different key and
@@ -619,46 +620,35 @@ describe("codex plugin", () => {
       agentId: "worker",
       sessionId: "parent-1",
       sessionKey: "agent:worker:parent-1",
+      lifecycleRevision: "parent-revision",
     });
     await bindingStore.mutate(parent, {
       kind: "set",
       binding: { threadId: "thread-parent", cwd: "/repo" },
     });
-    await harness.reset({
-      agentId: "worker",
-      sessionId: "parent-1",
-      sessionKey: "agent:worker:parent-1",
-      reason: "reset",
-      resetToken: "cross-key-reset-token",
-    });
-    await bindingStore.mutate(parent, {
-      kind: "set",
-      binding: { threadId: "thread-parent-after-reset", cwd: "/repo" },
-    });
     await sessionEnd(
       {
         sessionId: "parent-1",
         sessionKey: "agent:worker:parent-1",
         reason: "new",
+        lifecycleRevision: "parent-revision",
         nextSessionId: "child-1",
-        resetToken: "cross-key-reset-token",
         nextSessionKey: "agent:worker:dashboard:child-1",
       },
       { agentId: "worker", sessionId: "parent-1" },
     );
     await expect(bindingStore.read(parent)).resolves.toMatchObject({
-      threadId: "thread-parent-after-reset",
+      threadId: "thread-parent",
     });
 
-    // The cross-key end consumed its token even though it preserved the parent.
-    // A duplicate same-id end therefore cannot reuse that token to skip cleanup.
+    // A same-key end for that exact revision still retires the parent.
     await sessionEnd(
       {
         sessionId: "parent-1",
         sessionKey: "agent:worker:parent-1",
         reason: "new",
+        lifecycleRevision: "parent-revision",
         nextSessionId: "parent-1",
-        resetToken: "cross-key-reset-token",
       },
       { agentId: "worker", sessionId: "parent-1" },
     );

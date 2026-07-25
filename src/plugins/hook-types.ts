@@ -724,11 +724,14 @@ export type PluginHookSessionContext = {
   agentId?: string;
   sessionId: string;
   sessionKey?: string;
+  lifecycleRevision?: string;
 };
 
 export type PluginHookSessionStartEvent = {
   sessionId: string;
   sessionKey?: string;
+  /** Authoritative revision of this physical session generation. */
+  lifecycleRevision?: string;
   resumedFrom?: string;
 };
 
@@ -746,6 +749,8 @@ export type PluginHookSessionEndReason =
 export type PluginHookSessionEndEvent = {
   sessionId: string;
   sessionKey?: string;
+  /** Authoritative revision of the physical session generation that ended. */
+  lifecycleRevision?: string;
   messageCount: number;
   durationMs?: number;
   reason?: PluginHookSessionEndReason;
@@ -753,8 +758,8 @@ export type PluginHookSessionEndEvent = {
   transcriptArchived?: boolean;
   nextSessionId?: string;
   nextSessionKey?: string;
-  /** Runtime-local token matching the harness reset that preceded this lifecycle event. */
-  resetToken?: string;
+  /** Authoritative revision of the successor generation, when one exists. */
+  nextLifecycleRevision?: string;
 };
 
 export type PluginHookSubagentContext = {

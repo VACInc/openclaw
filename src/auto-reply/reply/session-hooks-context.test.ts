@@ -258,9 +258,8 @@ describe("session hook context wiring", () => {
       transcriptArchived: false,
     });
     const resetParams = sessionCleanupMocks.resetRegisteredAgentHarnessSessions.mock.calls[0]?.[0];
-    expect(event?.resetToken).toBeTypeOf("string");
-    expect(event?.resetToken).not.toBe("");
-    expect(resetParams?.resetToken).toBe(event?.resetToken);
+    expect(event?.lifecycleRevision).toBeTypeOf("string");
+    expect(resetParams?.lifecycleRevision).toBe(event?.lifecycleRevision);
     expectFields(context, { sessionKey, agentId: "main", sessionId: event?.sessionId });
 
     const [startEvent, startContext] = requireHookCall(
@@ -270,6 +269,8 @@ describe("session hook context wiring", () => {
     expectFields(startEvent, { resumedFrom: "old-session" });
     expect(event?.nextSessionId).toBe("old-session");
     expect(startEvent?.sessionId).toBe("old-session");
+    expect(event?.nextLifecycleRevision).toBe(startEvent?.lifecycleRevision);
+    expect(event?.nextLifecycleRevision).not.toBe(event?.lifecycleRevision);
     expectFields(startContext, { sessionId: startEvent?.sessionId });
   });
 
@@ -419,8 +420,8 @@ describe("session hook context wiring", () => {
       });
       const resetParams =
         sessionCleanupMocks.resetRegisteredAgentHarnessSessions.mock.calls[0]?.[0];
-      expect(event?.resetToken).toBeTypeOf("string");
-      expect(resetParams?.resetToken).toBe(event?.resetToken);
+      expect(event?.lifecycleRevision).toBeTypeOf("string");
+      expect(resetParams?.lifecycleRevision).toBe(event?.lifecycleRevision);
       expect(event?.nextSessionId).toBe(startEvent?.sessionId);
       expect(startEvent?.sessionId).toBe("daily-session");
     } finally {
@@ -449,8 +450,8 @@ describe("session hook context wiring", () => {
       expectFields(event, { reason: "idle" });
       const resetParams =
         sessionCleanupMocks.resetRegisteredAgentHarnessSessions.mock.calls[0]?.[0];
-      expect(event?.resetToken).toBeTypeOf("string");
-      expect(resetParams?.resetToken).toBe(event?.resetToken);
+      expect(event?.lifecycleRevision).toBeTypeOf("string");
+      expect(resetParams?.lifecycleRevision).toBe(event?.lifecycleRevision);
     } finally {
       vi.useRealTimers();
     }

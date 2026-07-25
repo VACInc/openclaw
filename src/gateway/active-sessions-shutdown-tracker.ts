@@ -19,6 +19,7 @@ type ActiveSessionForShutdown = {
   cfg: OpenClawConfig;
   sessionKey: string;
   sessionId: string;
+  lifecycleRevision?: string;
   storePath: string;
   sessionFile?: string;
   agentId?: string;
