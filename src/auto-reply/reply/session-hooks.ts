@@ -1,5 +1,6 @@
 // Emits session lifecycle hooks for channel plugins and agent runtimes.
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
+import { resolveEndedSessionLifecycleRevision } from "../../config/sessions/lifecycle.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type {
   PluginHookSessionEndEvent,
@@ -71,7 +72,7 @@ export function buildSessionEndHookPayload(params: {
     event: {
       sessionId: params.sessionId,
       sessionKey: params.sessionKey,
-      lifecycleRevision: params.lifecycleRevision,
+      lifecycleRevision: resolveEndedSessionLifecycleRevision(params),
       messageCount: params.messageCount ?? 0,
       durationMs: params.durationMs,
       reason: params.reason,

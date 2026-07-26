@@ -108,6 +108,7 @@ describe("session-updates lifecycle hooks", () => {
     expect(endEvent?.sessionId).toBe("s1");
     expect(endEvent?.sessionKey).toBe(sessionKey);
     expect(endEvent?.reason).toBe("compaction");
+    expect(endEvent?.lifecycleRevision).toBe("legacy:s1");
     expect(endEvent?.transcriptArchived).toBe(false);
     expect(endEvent?.sessionFile).toBe(await fs.realpath(transcriptPath));
     expect(endContext?.sessionId).toBe("s1");
