@@ -1,9 +1,6 @@
 // Codex tests cover harness plugin behavior.
 import { describe, expect, it, vi } from "vitest";
-import {
-  createCodexAppServerAgentHarness,
-  resetCodexSessionBindingGeneration,
-} from "./harness.js";
+import { createCodexAppServerAgentHarness, resetCodexSessionBindingGeneration } from "./harness.js";
 import {
   createCodexTestBindingStore,
   sessionBindingIdentity,

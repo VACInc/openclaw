@@ -1148,8 +1148,7 @@ async function initSessionStateAttemptLocked(
     sessionStore,
   });
   const previousSessionTranscript = committed.previousSessionTranscript;
-  const endedLifecycleRevision =
-    resolveEndedSessionLifecycleRevision(previousSessionEntry);
+  const endedLifecycleRevision = resolveEndedSessionLifecycleRevision(previousSessionEntry);
 
   if (previousSessionEntry?.sessionId) {
     await retireSessionMcpRuntime({

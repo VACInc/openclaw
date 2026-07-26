@@ -808,9 +808,7 @@ export function createCodexAppServerBindingStore(
       if (!current) {
         // Stamp the authoritative revision before a revisionless runtime identity
         // creates its first binding, or a delayed end can retire the successor.
-        return identity.lifecycleRevision
-          ? { kind: "verify" }
-          : { kind: "resolved", result: true };
+        return identity.lifecycleRevision ? { kind: "verify" } : { kind: "resolved", result: true };
       }
       if (
         ownsStoredSessionGeneration(identity, current) &&
