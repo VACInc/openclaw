@@ -25,6 +25,8 @@ type SessionWorkStartOptions = {
   expectedSessionId?: string;
 };
 
+type EndedSessionLifecycleEntry = Pick<SessionEntry, "lifecycleRevision" | "sessionId">;
+
 /** Stable Gateway error detail for stale session lifecycle requests. */
 export const SESSION_LIFECYCLE_CHANGED_ERROR_REASON = "session-changed";
 const SESSION_WORK_START_INVALIDATED_ERROR_CODE = "SESSION_WORK_START_INVALIDATED";
@@ -48,6 +50,20 @@ export function isSessionWorkStartInvalidatedError(
       "code" in error &&
       error.code === SESSION_WORK_START_INVALIDATED_ERROR_CODE)
   );
+}
+
+/**
+ * Returns one retry-stable owner revision for cleanup of a physical session generation.
+ * Legacy rows predate lifecycleRevision, so their immutable session id is the cleanup fence.
+ */
+export function resolveEndedSessionLifecycleRevision(
+  entry: EndedSessionLifecycleEntry | null | undefined,
+): string | undefined {
+  const sessionId = entry?.sessionId.trim();
+  if (!sessionId) {
+    return undefined;
+  }
+  return entry.lifecycleRevision?.trim() || `legacy:${sessionId}`;
 }
 
 /** Lifecycle-owned initializing and archived sessions reject new work. */

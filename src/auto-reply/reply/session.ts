@@ -15,6 +15,7 @@ import { normalizeChatType } from "../../channels/chat-type.js";
 import { resolveGroupSessionKey } from "../../config/sessions/group.js";
 import {
   hasTerminalMainSessionTranscriptNewerThanRegistry,
+  resolveEndedSessionLifecycleRevision,
   resolveSessionLifecycleTimestamps,
   resolveSessionWorkStartError,
 } from "../../config/sessions/lifecycle.js";
@@ -1147,11 +1148,8 @@ async function initSessionStateAttemptLocked(
     sessionStore,
   });
   const previousSessionTranscript = committed.previousSessionTranscript;
-  // Legacy rows can lack lifecycleRevision. Use one synthetic old-generation
-  // fence for both harness cleanup and session_end before exposing the successor.
-  const endedLifecycleRevision = previousSessionEntry?.sessionId
-    ? (previousSessionEntry.lifecycleRevision ?? crypto.randomUUID())
-    : undefined;
+  const endedLifecycleRevision =
+    resolveEndedSessionLifecycleRevision(previousSessionEntry);
 
   if (previousSessionEntry?.sessionId) {
     await retireSessionMcpRuntime({

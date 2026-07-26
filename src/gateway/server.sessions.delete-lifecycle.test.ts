@@ -920,6 +920,9 @@ test("sessions.delete emits session_end with deleted reason and no replacement",
     "agent:main:discord:group:delete",
   );
   expect((event as { reason?: string } | undefined)?.reason).toBe("deleted");
+  expect((event as { lifecycleRevision?: string } | undefined)?.lifecycleRevision).toBe(
+    "legacy:sess-delete",
+  );
   expect(
     (event as { transcriptArchived?: boolean } | undefined)?.transcriptArchived,
   ).toBeUndefined();

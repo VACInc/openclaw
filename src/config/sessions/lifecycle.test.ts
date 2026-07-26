@@ -10,9 +10,27 @@ import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db
 import {
   hasTerminalMainSessionTranscriptNewerThanRegistry,
   hasTerminalMainSessionTranscriptNewerThanRegistrySync,
+  resolveEndedSessionLifecycleRevision,
 } from "./lifecycle.js";
 import { appendTranscriptEvent, loadSessionEntry, upsertSessionEntry } from "./session-accessor.js";
 import type { SessionEntry } from "./types.js";
+
+describe("ended session lifecycle revision", () => {
+  it("reuses the stored revision and derives a retry-stable legacy fence", () => {
+    expect(
+      resolveEndedSessionLifecycleRevision({
+        sessionId: "session-current",
+        lifecycleRevision: "revision-current",
+      }),
+    ).toBe("revision-current");
+    expect(resolveEndedSessionLifecycleRevision({ sessionId: "session-legacy" })).toBe(
+      "legacy:session-legacy",
+    );
+    expect(resolveEndedSessionLifecycleRevision({ sessionId: "session-legacy" })).toBe(
+      "legacy:session-legacy",
+    );
+  });
+});
 
 describe("terminal main session transcript freshness", () => {
   let stateDir: string;

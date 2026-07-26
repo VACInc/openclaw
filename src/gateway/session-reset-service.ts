@@ -31,10 +31,11 @@ import { clearSessionResetRuntimeState } from "../auto-reply/reply/session-reset
 import { cleanupBrowserSessionsForLifecycleEnd } from "../browser-lifecycle-cleanup.js";
 import { getRuntimeConfig } from "../config/io.js";
 import {
+  deleteSessionEntryLifecycle,
+  resolveEndedSessionLifecycleRevision,
+  resetSessionEntryLifecycle,
   resolveSessionWorkStartError,
   type SessionEntry,
-  deleteSessionEntryLifecycle,
-  resetSessionEntryLifecycle,
 } from "../config/sessions.js";
 import { rebindCliSessionReseedReceiptsForReset } from "../config/sessions/cli-session-binding.js";
 import { resolveResetPreservedSelection } from "../config/sessions/reset-preserved-selection.js";
@@ -1107,12 +1108,7 @@ export async function performGatewaySessionReset(params: {
         };
       }
       const hadExistingEntry = Boolean(entry);
-      // Older session rows may predate lifecycleRevision. Mint one fence for
-      // every old-generation cleanup surface so a delayed end cannot target the
-      // same-id successor merely because the legacy row had no revision.
-      const endedLifecycleRevision = entry?.sessionId
-        ? (entry.lifecycleRevision ?? randomUUID())
-        : undefined;
+      const endedLifecycleRevision = resolveEndedSessionLifecycleRevision(entry);
       const resetLifecycleRevision = entry?.lifecycleRevision;
       const agentId = normalizeAgentId(target.agentId ?? resolveDefaultAgentId(cfg));
       const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);

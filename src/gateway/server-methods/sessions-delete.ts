@@ -1,5 +1,4 @@
 // Destructive session deletion and lifecycle cleanup.
-import { randomUUID } from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
   ErrorCodes,
@@ -10,6 +9,7 @@ import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { managedWorktrees } from "../../agents/worktrees/service.js";
 import {
   deleteSessionEntryLifecycle,
+  resolveEndedSessionLifecycleRevision,
   resolveMainSessionKey,
   SESSION_LIFECYCLE_CHANGED_ERROR_REASON,
   type SessionEntry,
@@ -314,9 +314,7 @@ export const sessionDeleteHandlers: GatewayRequestHandlers = {
         ) {
           return undefined;
         }
-        const endedLifecycleRevision = entry?.sessionId
-          ? (entry.lifecycleRevision ?? randomUUID())
-          : undefined;
+        const endedLifecycleRevision = resolveEndedSessionLifecycleRevision(entry);
         const mutationCleanupError = await cleanupSessionBeforeMutation({
           cfg,
           key,

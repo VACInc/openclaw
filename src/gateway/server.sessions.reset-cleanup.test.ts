@@ -349,9 +349,67 @@ test("sessions.reset forwards the retired generation to registered agent harness
       sessionId: "sess-main",
       sessionKey: "agent:main:main",
       sessionFile: expect.stringMatching(/^sqlite:main:sess-main:/),
-      lifecycleRevision: expect.stringMatching(/\S/),
+      lifecycleRevision: "legacy:sess-main",
       reason: "reset",
     });
+  } finally {
+    restoreRegisteredAgentHarnesses(registeredHarnesses);
+  }
+});
+
+test("sessions.reset reuses a legacy cleanup revision after a partial failure", async () => {
+  const registeredHarnesses = listRegisteredAgentHarnesses();
+  const lifecycleRevisions: Array<string | undefined> = [];
+  let cleanupObserved = false;
+  registerAgentHarness({
+    id: "reset-retry-observer",
+    label: "Reset retry observer",
+    supports: () => ({ supported: false }),
+    runAttempt: async () => {
+      throw new Error("not used");
+    },
+    reset: async (params) => {
+      lifecycleRevisions.push(params.lifecycleRevision);
+      cleanupObserved = true;
+    },
+  });
+  try {
+    await seedWaitingActiveMainSession();
+    const { performGatewaySessionReset } = await import("./session-reset-service.js");
+
+    await expect(
+      performGatewaySessionReset({
+        key: "main",
+        reason: "reset",
+        commandSource: "gateway:agent",
+        assertAuthorizedInstance: () => {
+          if (cleanupObserved) {
+            cleanupObserved = false;
+            throw new Error("partial reset after harness cleanup");
+          }
+        },
+      }),
+    ).rejects.toThrow("partial reset after harness cleanup");
+    const storePath = testState.sessionStorePath;
+    if (!storePath) {
+      throw new Error("expected session store path");
+    }
+    expect(
+      loadSessionEntry({
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        storePath,
+      })?.lifecycleRevision,
+    ).toBeUndefined();
+
+    const retry = await performGatewaySessionReset({
+      key: "main",
+      reason: "reset",
+      commandSource: "gateway:agent",
+    });
+
+    expect(retry.ok).toBe(true);
+    expect(lifecycleRevisions).toEqual(["legacy:sess-main", "legacy:sess-main"]);
   } finally {
     restoreRegisteredAgentHarnesses(registeredHarnesses);
   }
