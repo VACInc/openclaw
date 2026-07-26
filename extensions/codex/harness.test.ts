@@ -1,6 +1,9 @@
 // Codex tests cover harness plugin behavior.
 import { describe, expect, it, vi } from "vitest";
-import { createCodexAppServerAgentHarness } from "./harness.js";
+import {
+  createCodexAppServerAgentHarness,
+  resetCodexSessionBindingGeneration,
+} from "./harness.js";
 import {
   createCodexTestBindingStore,
   sessionBindingIdentity,
@@ -237,6 +240,27 @@ describe("Codex agent harness supports()", () => {
 });
 
 describe("Codex agent harness reset()", () => {
+  it("accepts a stale reset after the authoritative successor claimed the binding", async () => {
+    const mutate = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+    const reclaimCurrent = vi.fn().mockResolvedValue(true);
+
+    await expect(
+      resetCodexSessionBindingGeneration({
+        bindingStore: { mutate },
+        identity: sessionBindingIdentity({
+          agentId: "worker",
+          sessionId: "session-1",
+          sessionKey: "agent:worker:main",
+          lifecycleRevision: "revision-old",
+        }),
+        reclaimCurrent,
+      }),
+    ).resolves.toBe(true);
+
+    expect(reclaimCurrent).toHaveBeenCalledOnce();
+    expect(mutate).toHaveBeenCalledTimes(2);
+  });
+
   it("is idempotent before the retained session has a binding", async () => {
     const harness = createCodexAppServerAgentHarness({
       bindingStore: createCodexTestBindingStore(),

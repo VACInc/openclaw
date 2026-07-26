@@ -9,7 +9,10 @@ import type {
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
-import type { CodexAppServerBindingStore } from "./src/app-server/session-binding.js";
+import type {
+  CodexAppServerBindingIdentity,
+  CodexAppServerBindingStore,
+} from "./src/app-server/session-binding.js";
 import type { CodexSessionCatalogControl } from "./src/session-catalog-types.js";
 
 // `codex` is legacy input only until Part 2 doctor migration rewrites stored refs.
@@ -39,6 +42,24 @@ async function disposeSharedCodexAppServerClients(): Promise<void> {
     }
   )[SHARED_CODEX_APP_SERVER_CLIENT_DISPOSER];
   await dispose?.();
+}
+
+export async function resetCodexSessionBindingGeneration(params: {
+  bindingStore: Pick<CodexAppServerBindingStore, "mutate">;
+  identity: Extract<CodexAppServerBindingIdentity, { kind: "session" }>;
+  reclaimCurrent: () => Promise<boolean>;
+}): Promise<boolean> {
+  if (await params.bindingStore.mutate(params.identity, { kind: "reset-generation" })) {
+    return true;
+  }
+  if (!(await params.reclaimCurrent())) {
+    return false;
+  }
+  // Reclaim either cleared/adopted the authoritative generation or made this
+  // generation current. A false retry means ownership advanced again, so the
+  // stale reset is already complete and must not fail the successor.
+  await params.bindingStore.mutate(params.identity, { kind: "reset-generation" });
+  return true;
 }
 
 /**
@@ -219,17 +240,16 @@ export function createCodexAppServerAgentHarness(options: {
           sessionKey: params.sessionKey,
           lifecycleRevision: params.lifecycleRevision,
         });
-        let reset = await options.bindingStore.mutate(identity, { kind: "reset-generation" });
-        if (!reset) {
-          const reclaimed = await reclaimCurrentCodexSessionGeneration({
-            bindingStore: options.bindingStore,
-            identity,
-            config: options.resolveConfig?.(),
-          });
-          if (reclaimed) {
-            reset = await options.bindingStore.mutate(identity, { kind: "reset-generation" });
-          }
-        }
+        const reset = await resetCodexSessionBindingGeneration({
+          bindingStore: options.bindingStore,
+          identity,
+          reclaimCurrent: async () =>
+            await reclaimCurrentCodexSessionGeneration({
+              bindingStore: options.bindingStore,
+              identity,
+              config: options.resolveConfig?.(),
+            }),
+        });
         if (!reset) {
           throw new Error(
             `Codex binding generation changed before session ${params.sessionId} could reset`,
