@@ -269,8 +269,6 @@ describe("session hook context wiring", () => {
     expectFields(startEvent, { resumedFrom: "old-session" });
     expect(event?.nextSessionId).toBe("old-session");
     expect(startEvent?.sessionId).toBe("old-session");
-    expect(event?.nextLifecycleRevision).toBe(startEvent?.lifecycleRevision);
-    expect(event?.nextLifecycleRevision).not.toBe(event?.lifecycleRevision);
     expectFields(startContext, { sessionId: startEvent?.sessionId });
   });
 

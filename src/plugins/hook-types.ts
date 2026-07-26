@@ -724,14 +724,11 @@ export type PluginHookSessionContext = {
   agentId?: string;
   sessionId: string;
   sessionKey?: string;
-  lifecycleRevision?: string;
 };
 
 export type PluginHookSessionStartEvent = {
   sessionId: string;
   sessionKey?: string;
-  /** Authoritative revision of this physical session generation. */
-  lifecycleRevision?: string;
   resumedFrom?: string;
 };
 
@@ -758,8 +755,6 @@ export type PluginHookSessionEndEvent = {
   transcriptArchived?: boolean;
   nextSessionId?: string;
   nextSessionKey?: string;
-  /** Authoritative revision of the successor generation, when one exists. */
-  nextLifecycleRevision?: string;
 };
 
 export type PluginHookSubagentContext = {

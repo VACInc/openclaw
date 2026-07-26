@@ -1216,7 +1216,6 @@ async function initSessionStateAttemptLocked(
           transcriptArchived: previousSessionTranscript.transcriptArchived,
           lifecycleRevision: endedLifecycleRevision,
           nextSessionId: effectiveSessionId,
-          nextLifecycleRevision: sessionEntry.lifecycleRevision,
         });
         void runWithGatewayIndependentRootWorkContinuation(async () => {
           await hookRunner.runSessionEnd(payload.event, payload.context);
@@ -1244,7 +1243,6 @@ async function initSessionStateAttemptLocked(
         sessionId: effectiveSessionId,
         sessionKey,
         cfg,
-        lifecycleRevision: sessionEntry.lifecycleRevision,
         resumedFrom: previousSessionEntry?.sessionId,
       });
       void runWithGatewayIndependentRootWorkContinuation(async () => {

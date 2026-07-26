@@ -12,20 +12,17 @@ type SessionHookContext = {
   sessionId: string;
   sessionKey: string;
   agentId: string;
-  lifecycleRevision?: string;
 };
 
 function buildSessionHookContext(params: {
   sessionId: string;
   sessionKey: string;
   cfg: OpenClawConfig;
-  lifecycleRevision?: string;
 }): SessionHookContext {
   return {
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
     agentId: resolveSessionAgentId({ sessionKey: params.sessionKey, config: params.cfg }),
-    lifecycleRevision: params.lifecycleRevision,
   };
 }
 
@@ -34,7 +31,6 @@ export function buildSessionStartHookPayload(params: {
   sessionId: string;
   sessionKey: string;
   cfg: OpenClawConfig;
-  lifecycleRevision?: string;
   resumedFrom?: string;
 }): {
   event: PluginHookSessionStartEvent;
@@ -44,14 +40,12 @@ export function buildSessionStartHookPayload(params: {
     event: {
       sessionId: params.sessionId,
       sessionKey: params.sessionKey,
-      lifecycleRevision: params.lifecycleRevision,
       resumedFrom: params.resumedFrom,
     },
     context: buildSessionHookContext({
       sessionId: params.sessionId,
       sessionKey: params.sessionKey,
       cfg: params.cfg,
-      lifecycleRevision: params.lifecycleRevision,
     }),
   };
 }
@@ -69,7 +63,6 @@ export function buildSessionEndHookPayload(params: {
   lifecycleRevision?: string;
   nextSessionId?: string;
   nextSessionKey?: string;
-  nextLifecycleRevision?: string;
 }): {
   event: PluginHookSessionEndEvent;
   context: SessionHookContext;
@@ -86,13 +79,11 @@ export function buildSessionEndHookPayload(params: {
       transcriptArchived: params.transcriptArchived,
       nextSessionId: params.nextSessionId,
       nextSessionKey: params.nextSessionKey,
-      nextLifecycleRevision: params.nextLifecycleRevision,
     },
     context: buildSessionHookContext({
       sessionId: params.sessionId,
       sessionKey: params.sessionKey,
       cfg: params.cfg,
-      lifecycleRevision: params.lifecycleRevision,
     }),
   };
 }

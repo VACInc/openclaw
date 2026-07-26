@@ -563,8 +563,6 @@ test("sessions.reset emits enriched session_end and session_start hooks", async 
   expect(endEvent.nextSessionId).toBe(startEvent.sessionId);
   expect(endEvent.nextSessionId).toBe("sess-main");
   expect(endEvent.lifecycleRevision).toBeTypeOf("string");
-  expect(endEvent.nextLifecycleRevision).toBe(startEvent.lifecycleRevision);
-  expect(endEvent.nextLifecycleRevision).not.toBe(endEvent.lifecycleRevision);
   expectMainHookContext(endContext, "sess-main");
   expect(startEvent.sessionKey).toBe("agent:main:main");
   expect(startEvent.sessionId).toBe("sess-main");

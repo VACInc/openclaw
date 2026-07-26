@@ -146,7 +146,6 @@ export function emitGatewaySessionEndPluginHook(params: {
   lifecycleRevision?: string;
   nextSessionId?: string;
   nextSessionKey?: string;
-  nextLifecycleRevision?: string;
 }): void {
   if (!params.sessionId) {
     return;
@@ -176,7 +175,6 @@ export function emitGatewaySessionEndPluginHook(params: {
     lifecycleRevision: params.lifecycleRevision,
     nextSessionId: params.nextSessionId,
     nextSessionKey: params.nextSessionKey,
-    nextLifecycleRevision: params.nextLifecycleRevision,
   });
   void runWithGatewayIndependentRootWorkContinuation(async () => {
     await hookRunner.runSessionEnd(payload.event, payload.context);
@@ -223,7 +221,6 @@ export function emitGatewaySessionStartPluginHook(params: {
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
     cfg: params.cfg,
-    lifecycleRevision: params.lifecycleRevision,
     resumedFrom: params.resumedFrom,
   });
   void runWithGatewayIndependentRootWorkContinuation(async () => {
@@ -1564,7 +1561,6 @@ export async function performGatewaySessionReset(params: {
           archivedTranscripts,
           lifecycleRevision: lifecycle.previousEntry?.lifecycleRevision ?? endedLifecycleRevision,
           nextSessionId: next.sessionId,
-          nextLifecycleRevision: next.lifecycleRevision,
         });
         emitGatewaySessionStartPluginHook({
           cfg,

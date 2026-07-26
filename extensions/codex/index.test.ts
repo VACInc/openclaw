@@ -468,7 +468,6 @@ describe("codex plugin", () => {
             lifecycleRevision?: string;
             nextSessionId?: string;
             nextSessionKey?: string;
-            nextLifecycleRevision?: string;
           },
           ctx: { agentId?: string; sessionId: string; sessionKey?: string },
         ) => Promise<void>)
@@ -535,7 +534,6 @@ describe("codex plugin", () => {
         reason: "new",
         lifecycleRevision: "failed-reset-old",
         nextSessionId: "failed-reset-1",
-        nextLifecycleRevision: "failed-reset-next",
       },
       { agentId: "worker", sessionId: "failed-reset-1" },
     );
@@ -603,7 +601,6 @@ describe("codex plugin", () => {
           reason,
           lifecycleRevision: previous.lifecycleRevision,
           nextSessionId: sessionId,
-          nextLifecycleRevision: retained.lifecycleRevision,
         },
         { agentId: "worker", sessionId },
       );

@@ -1083,7 +1083,6 @@ export async function createGatewaySession(params: {
           lifecycleRevision: parentEntry?.lifecycleRevision,
           nextSessionId: created.entry.sessionId,
           nextSessionKey: target.canonicalKey,
-          nextLifecycleRevision: created.entry.lifecycleRevision,
         });
       }
       emitGatewaySessionStartPluginHook({

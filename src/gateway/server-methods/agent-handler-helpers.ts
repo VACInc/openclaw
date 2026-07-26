@@ -205,7 +205,6 @@ export function emitAgentSendSessionLifecycleTransition(
       lifecycleRevision: transition.previousLifecycleRevision,
       nextSessionId: transition.sessionId,
       nextSessionKey: transition.sessionKey,
-      nextLifecycleRevision: transition.lifecycleRevision,
     });
   }
   emitGatewaySessionStartPluginHook({
