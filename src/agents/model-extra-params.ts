@@ -13,8 +13,10 @@ type ModelExtraParamSources = {
 const AGENT_RUNTIME_MODEL_PARAM_KEYS = new Set([
   "fastAutoOnSeconds",
   "fastMode",
+  "fastSeconds",
   "fast_auto_on_seconds",
   "fast_mode",
+  "fast_seconds",
   "thinking",
 ]);
 

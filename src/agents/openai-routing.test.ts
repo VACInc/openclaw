@@ -36,13 +36,21 @@ describe("OpenAI runtime routing policy", () => {
     ).toBe(true);
   });
 
-  it("keeps Codex for model-scoped thinking and fast-mode controls", () => {
+  it.each([
+    ["thinking", { thinking: "xhigh" }],
+    ["fastMode", { fastMode: true }],
+    ["fast_mode", { fast_mode: true }],
+    ["fastAutoOnSeconds", { fastMode: "auto", fastAutoOnSeconds: 30 }],
+    ["fast_auto_on_seconds", { fastMode: "auto", fast_auto_on_seconds: 30 }],
+    ["fastSeconds", { fastMode: "auto", fastSeconds: 30 }],
+    ["fast_seconds", { fastMode: "auto", fast_seconds: 30 }],
+  ])("keeps Codex for model-scoped %s controls", (_label, params) => {
     const config = {
       agents: {
         defaults: {
           models: {
             "openai/gpt-5.6-sol": {
-              params: { thinking: "xhigh", fastMode: true, fastAutoOnSeconds: 30 },
+              params,
             },
           },
         },
