@@ -1,4 +1,3 @@
-import { parentPort, workerData } from "node:worker_threads";
 import { openNodeSqliteDatabase } from "../infra/node-sqlite.js";
 import {
   assertSqliteIntegrity,
@@ -89,7 +88,27 @@ export async function verifyOpenClawDatabases(
   return results;
 }
 
-if (parentPort) {
-  const targets = Array.isArray(workerData) ? workerData.filter(isVerifyTarget) : [];
-  parentPort.postMessage(await verifyOpenClawDatabases(targets), []);
+const sendToParent = process.send?.bind(process);
+if (sendToParent) {
+  process.once("message", (message: unknown) => {
+    void (async () => {
+      try {
+        const targets = Array.isArray(message) ? message.filter(isVerifyTarget) : [];
+        const results = await verifyOpenClawDatabases(targets);
+        await new Promise<void>((resolve, reject) => {
+          sendToParent(results, (error) => {
+            if (error) {
+              reject(error);
+            } else {
+              resolve();
+            }
+          });
+        });
+      } catch {
+        process.exitCode = 1;
+      } finally {
+        process.disconnect?.();
+      }
+    })();
+  });
 }
