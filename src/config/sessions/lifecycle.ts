@@ -63,7 +63,7 @@ export function resolveEndedSessionLifecycleRevision(
   if (!sessionId) {
     return undefined;
   }
-  return entry.lifecycleRevision?.trim() || `legacy:${sessionId}`;
+  return entry?.lifecycleRevision?.trim() || `legacy:${sessionId}`;
 }
 
 /** Lifecycle-owned initializing and archived sessions reject new work. */
