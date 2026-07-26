@@ -18,6 +18,7 @@ const emptyPluginMetadataSnapshot = vi.hoisted(() => ({
     },
   ],
 }));
+const getCurrentPluginMetadataSnapshotMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./provider-model-normalization.runtime.js", () => ({
   normalizeProviderModelIdWithRuntime: (params: unknown) =>
@@ -25,7 +26,7 @@ vi.mock("./provider-model-normalization.runtime.js", () => ({
 }));
 
 vi.mock("../plugins/current-plugin-metadata-snapshot.js", () => ({
-  getCurrentPluginMetadataSnapshot: () => emptyPluginMetadataSnapshot,
+  getCurrentPluginMetadataSnapshot: getCurrentPluginMetadataSnapshotMock,
 }));
 
 let createModelSelectionStateForTest: typeof import("../auto-reply/reply/model-selection.js").createModelSelectionState;
@@ -38,6 +39,8 @@ describe("model-selection plugin runtime normalization", () => {
 
   beforeEach(() => {
     normalizeProviderModelIdWithPluginMock.mockReset();
+    getCurrentPluginMetadataSnapshotMock.mockReset();
+    getCurrentPluginMetadataSnapshotMock.mockReturnValue(emptyPluginMetadataSnapshot);
   });
 
   it("delegates provider-owned model id normalization to plugin runtime hooks", async () => {
@@ -229,6 +232,109 @@ describe("model-selection plugin runtime normalization", () => {
     expect(state.provider).toBe("custom-provider");
     expect(state.model).toBe("custom-modern-model");
     expect(state.resetModelOverride).toBe(false);
+  });
+
+  it("reuses one lifecycle metadata snapshot across auto-reply model normalization", async () => {
+    normalizeProviderModelIdWithPluginMock.mockReturnValue(undefined);
+    const configuredRefs = Object.fromEntries(
+      Array.from({ length: 20 }, (_, index) => [`custom-provider/model-${index}`, {}]),
+    );
+    const cfg = {
+      agents: {
+        defaults: {
+          modelPolicy: { allow: Object.keys(configuredRefs) },
+          models: configuredRefs,
+        },
+      },
+    };
+
+    const state = await createModelSelectionStateForTest({
+      cfg,
+      agentCfg: cfg.agents.defaults,
+      defaultProvider: "custom-provider",
+      defaultModel: "model-0",
+      provider: "custom-provider",
+      model: "model-0",
+      hasModelDirective: false,
+    });
+
+    expect(state.allowedModelCatalog).toHaveLength(20);
+    expect(getCurrentPluginMetadataSnapshotMock).toHaveBeenCalledTimes(1);
+    expect(getCurrentPluginMetadataSnapshotMock).toHaveBeenCalledWith({
+      config: cfg,
+      allowWorkspaceScopedSnapshot: true,
+    });
+  });
+
+  it("preserves runtime discovery fallback across configured, stored, and fallback refs", async () => {
+    getCurrentPluginMetadataSnapshotMock.mockReturnValue(undefined);
+    const aliases = new Map([
+      ["configured-legacy", "configured-modern"],
+      ["stored-legacy", "stored-modern"],
+      ["fallback-legacy", "fallback-modern"],
+    ]);
+    normalizeProviderModelIdWithPluginMock.mockImplementation(({ context, plugins }) => {
+      if (plugins) {
+        expect(plugins.length).toBeGreaterThan(0);
+      }
+      const modelId = (context as { modelId?: string }).modelId ?? "";
+      return aliases.get(modelId);
+    });
+    const cfg = {
+      agents: {
+        defaults: {
+          model: {
+            primary: "custom-provider/configured-legacy",
+            fallbacks: ["custom-provider/fallback-legacy"],
+          },
+          modelPolicy: {
+            allow: ["custom-provider/configured-legacy", "custom-provider/stored-legacy"],
+          },
+          models: {
+            "custom-provider/configured-legacy": {},
+            "custom-provider/stored-legacy": {},
+          },
+        },
+      },
+    };
+    const sessionKey = "agent:main:discord:channel:c1";
+    const sessionEntry = {
+      sessionId: sessionKey,
+      updatedAt: 1,
+      providerOverride: "custom-provider",
+      modelOverride: "stored-legacy",
+    };
+
+    const state = await createModelSelectionStateForTest({
+      cfg,
+      agentCfg: cfg.agents.defaults,
+      sessionEntry,
+      sessionStore: { [sessionKey]: sessionEntry },
+      sessionKey,
+      defaultProvider: "custom-provider",
+      defaultModel: "configured-legacy",
+      provider: "custom-provider",
+      model: "configured-legacy",
+      hasModelDirective: false,
+    });
+
+    expect(state.provider).toBe("custom-provider");
+    expect(state.model).toBe("stored-modern");
+    expect([...state.allowedModelKeys]).toEqual(
+      expect.arrayContaining([
+        "custom-provider/configured-modern",
+        "custom-provider/stored-modern",
+      ]),
+    );
+    expect(getCurrentPluginMetadataSnapshotMock).toHaveBeenCalledWith({
+      config: cfg,
+      allowWorkspaceScopedSnapshot: true,
+    });
+    expect(
+      normalizeProviderModelIdWithPluginMock.mock.calls.map(
+        ([call]) => (call as { context?: { modelId?: string } }).context?.modelId,
+      ),
+    ).toEqual(expect.arrayContaining(["configured-legacy", "stored-legacy", "fallback-legacy"]));
   });
 
   it("forwards manifestPlugins to the runtime normalization call so it can skip the slot-or-load disk walk", async () => {
