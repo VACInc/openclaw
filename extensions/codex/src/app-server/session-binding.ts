@@ -806,7 +806,11 @@ export function createCodexAppServerBindingStore(
         throw new Error(`Invalid Codex app-server binding row: ${key}`);
       }
       if (!current) {
-        return { kind: "resolved", result: true };
+        // Stamp the authoritative revision before a revisionless runtime identity
+        // creates its first binding, or a delayed end can retire the successor.
+        return identity.lifecycleRevision
+          ? { kind: "verify" }
+          : { kind: "resolved", result: true };
       }
       if (
         ownsStoredSessionGeneration(identity, current) &&
@@ -844,7 +848,14 @@ export function createCodexAppServerBindingStore(
                 return { result: false };
               }
               if (!current) {
-                return { result: true };
+                return {
+                  result: true,
+                  next: {
+                    version: 1,
+                    state: "cleared",
+                    ...storedSessionGeneration(identity, current),
+                  },
+                };
               }
               if (
                 ownsGeneration &&

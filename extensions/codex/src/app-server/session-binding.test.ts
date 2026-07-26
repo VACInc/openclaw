@@ -738,6 +738,54 @@ describe("Codex app-server binding store", () => {
     });
   });
 
+  it("stamps the successor revision when reset finds no Codex binding", async () => {
+    const { state, values } = createStateStore();
+    const store = createCodexAppServerBindingStore(state);
+    const previous = {
+      kind: "session" as const,
+      agentId: "main",
+      sessionId: "retained-session",
+      sessionKey: "agent:main:telegram:chat-1",
+      lifecycleRevision: "revision-1",
+    };
+    const current = { ...previous, lifecycleRevision: "revision-2" };
+    const revisionlessRuntimeIdentity = {
+      kind: "session" as const,
+      agentId: current.agentId,
+      sessionId: current.sessionId,
+      sessionKey: current.sessionKey,
+    };
+
+    await expect(store.mutate(previous, { kind: "reset-generation" })).resolves.toBe(true);
+    const plan = await store.prepareSessionGenerationReclaim(current);
+    expect(plan).toEqual({ kind: "verify" });
+    if (plan.kind !== "verify") {
+      throw new Error("expected absent generation verification");
+    }
+    await expect(
+      store.mutate(current, {
+        kind: "reclaim-generation",
+        expectedPreviousSessionId: plan.expectedPreviousSessionId,
+        expectedPreviousLifecycleRevision: plan.expectedPreviousLifecycleRevision,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      store.mutate(revisionlessRuntimeIdentity, {
+        kind: "set",
+        binding: { threadId: "thread-new", cwd: "/new" },
+      }),
+    ).resolves.toBe(true);
+
+    expect(values.get(bindingStoreKey(current))).toMatchObject({
+      state: "active",
+      sessionId: current.sessionId,
+      lifecycleRevision: current.lifecycleRevision,
+      binding: { threadId: "thread-new" },
+    });
+    await expect(store.retireSessionGeneration(previous)).resolves.toBe("conflict");
+    await expect(store.read(current)).resolves.toMatchObject({ threadId: "thread-new" });
+  });
+
   it("upgrades an active legacy same-id binding to the authoritative revision in place", async () => {
     const { state, values } = createStateStore();
     const store = createCodexAppServerBindingStore(state);
