@@ -19,6 +19,7 @@ const emptyPluginMetadataSnapshot = vi.hoisted(() => ({
   ],
 }));
 const getCurrentPluginMetadataSnapshotMock = vi.hoisted(() => vi.fn());
+const loadPreparedModelCatalogSnapshotMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./provider-model-normalization.runtime.js", () => ({
   normalizeProviderModelIdWithRuntime: (params: unknown) =>
@@ -27,6 +28,12 @@ vi.mock("./provider-model-normalization.runtime.js", () => ({
 
 vi.mock("../plugins/current-plugin-metadata-snapshot.js", () => ({
   getCurrentPluginMetadataSnapshot: getCurrentPluginMetadataSnapshotMock,
+}));
+
+vi.mock("./model-catalog.runtime.js", () => ({
+  loadManifestModelCatalog: () => [],
+  loadPreparedModelCatalog: async () => [],
+  loadPreparedModelCatalogSnapshot: loadPreparedModelCatalogSnapshotMock,
 }));
 
 let createModelSelectionStateForTest: typeof import("../auto-reply/reply/model-selection.js").createModelSelectionState;
@@ -41,6 +48,8 @@ describe("model-selection plugin runtime normalization", () => {
     normalizeProviderModelIdWithPluginMock.mockReset();
     getCurrentPluginMetadataSnapshotMock.mockReset();
     getCurrentPluginMetadataSnapshotMock.mockReturnValue(emptyPluginMetadataSnapshot);
+    loadPreparedModelCatalogSnapshotMock.mockReset();
+    loadPreparedModelCatalogSnapshotMock.mockResolvedValue({ entries: [], authoritative: true });
   });
 
   it("delegates provider-owned model id normalization to plugin runtime hooks", async () => {
@@ -264,6 +273,63 @@ describe("model-selection plugin runtime normalization", () => {
       config: cfg,
       allowWorkspaceScopedSnapshot: true,
     });
+  });
+
+  it("keeps concurrent model-policy runs isolated while sharing metadata", async () => {
+    normalizeProviderModelIdWithPluginMock.mockReturnValue(undefined);
+    let signalFirstCatalogLoad: (() => void) | undefined;
+    let releaseFirstCatalogLoad: (() => void) | undefined;
+    const firstCatalogLoadStarted = new Promise<void>((resolve) => {
+      signalFirstCatalogLoad = resolve;
+    });
+    const firstCatalogLoadRelease = new Promise<void>((resolve) => {
+      releaseFirstCatalogLoad = resolve;
+    });
+    loadPreparedModelCatalogSnapshotMock
+      .mockImplementationOnce(async () => {
+        signalFirstCatalogLoad?.();
+        await firstCatalogLoadRelease;
+        return { entries: [], authoritative: true };
+      })
+      .mockResolvedValue({ entries: [], authoritative: true });
+    const createConfig = (model: string) => ({
+      agents: {
+        defaults: {
+          modelPolicy: { allow: [`custom-provider/${model}`] },
+          models: { [`custom-provider/${model}`]: {} },
+        },
+      },
+    });
+    const firstConfig = createConfig("first");
+    const secondConfig = createConfig("second");
+
+    const select = (cfg: ReturnType<typeof createConfig>, model: string) =>
+      createModelSelectionStateForTest({
+        cfg,
+        agentCfg: cfg.agents.defaults,
+        defaultProvider: "custom-provider",
+        defaultModel: model,
+        provider: "custom-provider",
+        model,
+        hasModelDirective: true,
+      });
+
+    const firstPromise = select(firstConfig, "first");
+    await firstCatalogLoadStarted;
+    const secondPromise = select(secondConfig, "second");
+    await vi.waitFor(() => expect(loadPreparedModelCatalogSnapshotMock).toHaveBeenCalledTimes(2));
+    releaseFirstCatalogLoad?.();
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+
+    expect([...first.allowedModelKeys]).toContain("custom-provider/first");
+    expect([...first.allowedModelKeys]).not.toContain("custom-provider/second");
+    expect([...second.allowedModelKeys]).toContain("custom-provider/second");
+    expect([...second.allowedModelKeys]).not.toContain("custom-provider/first");
+    expect(getCurrentPluginMetadataSnapshotMock).toHaveBeenCalledTimes(2);
+    expect(getCurrentPluginMetadataSnapshotMock.mock.calls).toEqual([
+      [{ config: firstConfig, allowWorkspaceScopedSnapshot: true }],
+      [{ config: secondConfig, allowWorkspaceScopedSnapshot: true }],
+    ]);
   });
 
   it("preserves runtime discovery fallback across configured, stored, and fallback refs", async () => {
