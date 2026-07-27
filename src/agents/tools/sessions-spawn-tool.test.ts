@@ -1286,6 +1286,18 @@ describe("sessions_spawn tool", () => {
     expect(spawnArgs.lightContext).toBe(true);
   });
 
+  it("passes the tool abort signal to subagent preparation", async () => {
+    const tool = createSessionsSpawnTool({
+      agentSessionKey: "agent:main:main",
+    });
+    const abortController = new AbortController();
+
+    await tool.execute("call-abort", { task: "prepare safely" }, abortController.signal);
+
+    const spawnContext = mockCallArg(hoisted.spawnSubagentDirectMock, 0, 1, "spawnSubagentDirect");
+    expect(spawnContext.abortSignal).toBe(abortController.signal);
+  });
+
   it('rejects lightContext when runtime is not "subagent"', async () => {
     registerAcpBackendForTest();
     const tool = createSessionsSpawnTool({

@@ -796,6 +796,31 @@ describe("command queue", () => {
     await expect(first).resolves.toBe("first");
   });
 
+  it("removes an aborted lane waiter without consuming a slot", async () => {
+    const { task: first, release } = enqueueBlockedMainTask(async () => "first");
+    const abortController = new AbortController();
+    const abortError = new Error("cancel queued work");
+    let queuedTaskStarted = false;
+    const queued = enqueueCommandInLane(
+      CommandLane.Main,
+      async () => {
+        queuedTaskStarted = true;
+        return "queued";
+      },
+      { queueWaitAbortSignal: abortController.signal },
+    );
+
+    abortController.abort(abortError);
+
+    await expect(queued).rejects.toBe(abortError);
+    expect(queuedTaskStarted).toBe(false);
+    expectLaneSnapshotFields(CommandLane.Main, { activeCount: 1, queuedCount: 0 });
+
+    release();
+    await expect(first).resolves.toBe("first");
+    await expect(enqueueCommandInLane(CommandLane.Main, async () => "next")).resolves.toBe("next");
+  });
+
   it("keeps draining functional after synchronous onWait failure", async () => {
     const lane = `drain-sync-throw-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     setCommandLaneConcurrency(lane, 1);

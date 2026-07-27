@@ -5,6 +5,8 @@
 export type CommandQueueEnqueueOptions = {
   warnAfterMs?: number;
   onWait?: (waitMs: number, queuedAhead: number) => void;
+  /** Cancels this entry only while it is waiting for a lane slot. */
+  queueWaitAbortSignal?: AbortSignal;
   taskTimeoutMs?: number;
   taskTimeoutProgressAtMs?: () => number | undefined;
   taskTimeoutAbortSignal?: AbortSignal;

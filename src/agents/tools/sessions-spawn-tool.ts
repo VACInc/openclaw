@@ -285,7 +285,7 @@ export function createSessionsSpawnTool(
       threadAvailable,
       swarmEnabled: swarmConfig.enabled,
     }),
-    execute: async (_toolCallId, args) => {
+    execute: async (_toolCallId, args, signal) => {
       const params = args as Record<PropertyKey, unknown>;
       if (opts?.swarmCollector && params.collect !== true) {
         throw new ToolInputError(
@@ -537,6 +537,7 @@ export function createSessionsSpawnTool(
           inheritedToolAllowlist: opts?.inheritedToolAllowlist,
           inheritedToolDenylist: opts?.inheritedToolDenylist,
           requesterRunId: opts?.requesterRunId,
+          abortSignal: signal,
         },
       );
 

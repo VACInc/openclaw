@@ -6,5 +6,6 @@ export const enum CommandLane {
   CronNested = "cron-nested",
   SkillWorkshopReview = "skill-workshop-review",
   Subagent = "subagent",
+  SubagentSpawn = "subagent-spawn",
   Nested = "nested",
 }

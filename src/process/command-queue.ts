@@ -98,6 +98,7 @@ type QueueEntry = {
   taskTimeoutAbortGraceMs?: number;
   taskTimeoutReleaseSignal?: AbortSignal;
   onWait?: (waitMs: number, queuedAhead: number) => void;
+  removeQueueWaitAbortListener?: () => void;
 };
 
 type LaneState = {
@@ -473,6 +474,7 @@ function drainLane(lane: string) {
     try {
       while (state.activeTaskIds.size < state.maxConcurrent && state.queue.length > 0) {
         const entry = state.queue.shift() as QueueEntry;
+        entry.removeQueueWaitAbortListener?.();
         const waitedMs = Date.now() - entry.enqueuedAt;
         if (waitedMs >= entry.warnAfterMs) {
           try {
@@ -571,7 +573,7 @@ export function enqueueCommandInLane<T>(
   const warnAfterMs = opts?.warnAfterMs ?? 2_000;
   const state = getLaneState(cleaned);
   return new Promise<T>((resolve, reject) => {
-    enqueueLaneEntry(state, {
+    const entry: QueueEntry = {
       task: (marker) => task(marker),
       resolve: (value) => resolve(value as T),
       reject,
@@ -587,7 +589,32 @@ export function enqueueCommandInLane<T>(
       taskTimeoutAbortGraceMs: normalizeTaskTimeoutMs(opts?.taskTimeoutAbortGraceMs),
       taskTimeoutReleaseSignal: opts?.taskTimeoutReleaseSignal,
       onWait: opts?.onWait,
-    });
+    };
+    const queueWaitAbortSignal = opts?.queueWaitAbortSignal;
+    const abortQueuedEntry = () => {
+      const index = state.queue.indexOf(entry);
+      if (index < 0 || !queueWaitAbortSignal) {
+        return;
+      }
+      state.queue.splice(index, 1);
+      entry.removeQueueWaitAbortListener?.();
+      entry.reject(
+        queueWaitAbortSignal.reason instanceof Error
+          ? queueWaitAbortSignal.reason
+          : new Error("command lane wait aborted"),
+      );
+    };
+    if (queueWaitAbortSignal) {
+      const onAbort = () => abortQueuedEntry();
+      queueWaitAbortSignal.addEventListener("abort", onAbort, { once: true });
+      entry.removeQueueWaitAbortListener = () =>
+        queueWaitAbortSignal.removeEventListener("abort", onAbort);
+    }
+    enqueueLaneEntry(state, entry);
+    if (queueWaitAbortSignal?.aborted) {
+      abortQueuedEntry();
+      return;
+    }
     logLaneEnqueue(cleaned, getLaneDepth(state));
     drainLane(cleaned);
   });
@@ -653,6 +680,7 @@ export function clearCommandLane(lane: string = CommandLane.Main) {
   const removed = state.queue.length;
   const pending = state.queue.splice(0);
   for (const entry of pending) {
+    entry.removeQueueWaitAbortListener?.();
     entry.reject(new CommandLaneClearedError(cleaned));
   }
   return removed;

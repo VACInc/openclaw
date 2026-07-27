@@ -2,7 +2,11 @@
 // persistence, registry registration, and lifecycle event emission.
 import os from "node:os";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { setCommandLaneConcurrency } from "../process/command-queue.js";
+import { resetCommandQueueStateForTest } from "../process/command-queue.test-support.js";
+import { CommandLane } from "../process/lanes.js";
 import { resolveIncognitoOpenClawAgentSqlitePath } from "../state/openclaw-agent-db.paths.js";
+import { createDeferred } from "../test-utils/deferred.js";
 import {
   createSubagentSpawnTestConfig,
   expectPersistedRuntimeModel,
@@ -99,6 +103,8 @@ describe("spawnSubagentDirect seam flow", () => {
   });
 
   beforeEach(() => {
+    resetCommandQueueStateForTest();
+    setCommandLaneConcurrency(CommandLane.SubagentSpawn, 8);
     swarmSchedulerTesting.reset();
     resetSubagentRegistryForTests();
     hoisted.callGatewayMock.mockReset();
@@ -137,8 +143,144 @@ describe("spawnSubagentDirect seam flow", () => {
   });
 
   afterEach(() => {
+    resetCommandQueueStateForTest();
     swarmSchedulerTesting.reset();
     vi.unstubAllEnvs();
+  });
+
+  it("bounds concurrent non-collect spawn preparation", async () => {
+    setCommandLaneConcurrency(CommandLane.SubagentSpawn, 2);
+    const releaseLaunches = createDeferred();
+    let activeLaunches = 0;
+    let peakActiveLaunches = 0;
+    let launchCount = 0;
+    hoisted.callGatewayMock.mockImplementation(async (request: { method?: string }) => {
+      if (request.method !== "agent") {
+        return { ok: true };
+      }
+      const launchId = ++launchCount;
+      activeLaunches += 1;
+      peakActiveLaunches = Math.max(peakActiveLaunches, activeLaunches);
+      await releaseLaunches.promise;
+      activeLaunches -= 1;
+      return { runId: `run-${launchId}`, status: "accepted" };
+    });
+
+    const spawns = Array.from({ length: 5 }, (_, index) =>
+      spawnSubagentDirect(
+        { task: `bounded child ${index}` },
+        { agentSessionKey: "agent:main:main" },
+      ),
+    );
+    await vi.waitFor(() => expect(launchCount).toBe(2));
+
+    expect(peakActiveLaunches).toBe(2);
+    releaseLaunches.resolve();
+    const results = await Promise.all(spawns);
+    expect(results).toHaveLength(5);
+    expect(results.every((result) => result.status === "accepted")).toBe(true);
+    expect(launchCount).toBe(5);
+  });
+
+  it("releases preparation admission after an error", async () => {
+    setCommandLaneConcurrency(CommandLane.SubagentSpawn, 1);
+    let launchCount = 0;
+    hoisted.callGatewayMock.mockImplementation(async (request: { method?: string }) => {
+      if (request.method !== "agent") {
+        return { ok: true };
+      }
+      launchCount += 1;
+      if (launchCount === 1) {
+        throw new Error("dispatch failed");
+      }
+      return { runId: "run-after-error", status: "accepted" };
+    });
+
+    const [failed, accepted] = await Promise.all([
+      spawnSubagentDirect({ task: "failing child" }, { agentSessionKey: "agent:main:main" }),
+      spawnSubagentDirect({ task: "next child" }, { agentSessionKey: "agent:main:main" }),
+    ]);
+
+    expect(failed).toMatchObject({ status: "error", error: "dispatch failed" });
+    expect(accepted).toMatchObject({ status: "accepted", runId: "run-after-error" });
+    expect(launchCount).toBe(2);
+  });
+
+  it("removes an aborted queued preparation without leaking admission", async () => {
+    setCommandLaneConcurrency(CommandLane.SubagentSpawn, 1);
+    const releaseFirstLaunch = createDeferred();
+    let launchCount = 0;
+    hoisted.callGatewayMock.mockImplementation(async (request: { method?: string }) => {
+      if (request.method !== "agent") {
+        return { ok: true };
+      }
+      const launchId = ++launchCount;
+      if (launchId === 1) {
+        await releaseFirstLaunch.promise;
+      }
+      return { runId: `run-${launchId}`, status: "accepted" };
+    });
+
+    const first = spawnSubagentDirect(
+      { task: "first child" },
+      { agentSessionKey: "agent:main:main" },
+    );
+    await vi.waitFor(() => expect(launchCount).toBe(1));
+    const abortController = new AbortController();
+    const abortError = new Error("cancel queued spawn");
+    const aborted = spawnSubagentDirect(
+      { task: "cancelled child" },
+      { agentSessionKey: "agent:main:main", abortSignal: abortController.signal },
+    );
+    const next = spawnSubagentDirect(
+      { task: "next child" },
+      { agentSessionKey: "agent:main:main" },
+    );
+
+    abortController.abort(abortError);
+
+    await expect(aborted).rejects.toBe(abortError);
+    expect(launchCount).toBe(1);
+    releaseFirstLaunch.resolve();
+    await expect(Promise.all([first, next])).resolves.toEqual([
+      expect.objectContaining({ status: "accepted" }),
+      expect.objectContaining({ status: "accepted" }),
+    ]);
+    expect(launchCount).toBe(2);
+  });
+
+  it("leaves collect preparation on the swarm scheduler path", async () => {
+    setCommandLaneConcurrency(CommandLane.SubagentSpawn, 1);
+    hoisted.configOverride = createConfigOverride({
+      tools: { swarm: { enabled: true, maxConcurrent: 1 } },
+    });
+    const releaseFirstLaunch = createDeferred();
+    let launchCount = 0;
+    hoisted.callGatewayMock.mockImplementation(async (request: { method?: string }) => {
+      if (request.method !== "agent") {
+        return { ok: true };
+      }
+      const launchId = ++launchCount;
+      if (launchId === 1) {
+        await releaseFirstLaunch.promise;
+      }
+      return { runId: `run-${launchId}`, status: "accepted" };
+    });
+
+    const direct = spawnSubagentDirect(
+      { task: "blocked direct child" },
+      { agentSessionKey: "agent:main:main" },
+    );
+    await vi.waitFor(() => expect(launchCount).toBe(1));
+    const collector = await spawnSubagentDirect(
+      { task: "independent collector", collect: true, groupId: "admission-test" },
+      { agentSessionKey: "agent:main:main", requesterRunId: "parent-run" },
+    );
+
+    expect(collector.status).toBe("accepted");
+    releaseFirstLaunch.resolve();
+    await direct;
+    await vi.waitFor(() => expect(launchCount).toBe(2));
   });
 
   it("rejects direct swarm parameters while tools.swarm is disabled", async () => {

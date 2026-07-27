@@ -69,4 +69,5 @@ export function applyGatewayLaneConcurrency(
   if (!suspendedLaneIds.has(CommandLane.Subagent)) {
     setCommandLaneConcurrency(CommandLane.Subagent, concurrency.subagent);
   }
+  setCommandLaneConcurrency(CommandLane.SubagentSpawn, concurrency.subagent);
 }

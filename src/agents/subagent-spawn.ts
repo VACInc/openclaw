@@ -8,10 +8,12 @@ import { isAcpRuntimeSpawnAvailable } from "../acp/runtime/availability.js";
 import type { SubagentSpawnPreparation } from "../context-engine/types.js";
 import { isFastTestRuntimeEnv } from "../infra/env.js";
 import { listRegisteredPluginAgentPromptGuidance } from "../plugins/command-registry-state.js";
+import { enqueueCommandInLane } from "../process/command-queue.js";
 import {
   GatewayDrainingError,
   runWithGatewayIndependentRootWorkContinuation,
 } from "../process/gateway-work-admission.js";
+import { CommandLane } from "../process/lanes.js";
 import { recordSessionCreated, recordSubagentSpawned } from "../sessions/session-state-events.js";
 import {
   runSpawnPipeline,
@@ -70,6 +72,26 @@ export { SUBAGENT_SPAWN_CONTEXT_MODES, SUBAGENT_SPAWN_MODES } from "./subagent-s
 const SUBAGENT_CONTROL_GATEWAY_TIMEOUT_MS = 60_000;
 
 export async function spawnSubagentDirect(
+  params: SpawnSubagentParams,
+  ctx: SpawnSubagentContext,
+): Promise<SpawnSubagentResult> {
+  if (params.collect === true) {
+    // Collect runs retain the swarm scheduler's durable FIFO ownership.
+    return await spawnSubagentPrepared(params, ctx);
+  }
+  // Preparation needs a separate lane from child turns so one FIFO cannot
+  // make every burst item prepare before any dispatched child begins.
+  return await enqueueCommandInLane(
+    CommandLane.SubagentSpawn,
+    async () => {
+      ctx.abortSignal?.throwIfAborted();
+      return await spawnSubagentPrepared(params, ctx);
+    },
+    { queueWaitAbortSignal: ctx.abortSignal },
+  );
+}
+
+async function spawnSubagentPrepared(
   params: SpawnSubagentParams,
   ctx: SpawnSubagentContext,
 ): Promise<SpawnSubagentResult> {

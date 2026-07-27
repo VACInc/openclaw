@@ -4,7 +4,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CRON_MAX_CONCURRENT_RUNS } from "../config/cron-limits.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { enqueueCommandInLane, setCommandLaneConcurrency } from "../process/command-queue.js";
+import {
+  enqueueCommandInLane,
+  getCommandLaneSnapshot,
+  setCommandLaneConcurrency,
+} from "../process/command-queue.js";
 import { resetCommandQueueStateForTest } from "../process/command-queue.test-support.js";
 import { CommandLane } from "../process/lanes.js";
 import { createDeferred } from "../test-utils/deferred.js";
@@ -68,6 +72,15 @@ describe("applyGatewayLaneConcurrency", () => {
       releaseRuns.resolve();
       await Promise.all(runs);
     }
+  });
+
+  it("applies one subagent limit to preparation and child turns", () => {
+    applyConfigLaneConcurrency({
+      agents: { defaults: { subagents: { maxConcurrent: 3 } } },
+    } as OpenClawConfig);
+
+    expect(getCommandLaneSnapshot(CommandLane.Subagent).maxConcurrent).toBe(3);
+    expect(getCommandLaneSnapshot(CommandLane.SubagentSpawn).maxConcurrent).toBe(3);
   });
 
   it("keeps the shared nested lane at its default concurrency", async () => {
