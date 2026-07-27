@@ -878,7 +878,9 @@ export function createSubagentRunManager(params: {
         sourceId: runId,
         ownerKey: requesterSessionKey,
         scopeKind: "session",
-        requesterOrigin,
+        // Detached task runtimes are plugin-replaceable. Isolate their input so
+        // mutation cannot change the already-persisted registry record.
+        requesterOrigin: requesterOrigin ? structuredClone(requesterOrigin) : undefined,
         childSessionKey,
         runId,
         label: registerParams.label,
