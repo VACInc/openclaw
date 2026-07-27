@@ -624,6 +624,160 @@ describe("runCliAgent reliability", () => {
     expect(clearBeforeRetry).not.toHaveBeenCalled();
   });
 
+  it("keeps cold transcript reseed for stalled sessions without a checkpoint", async () => {
+    supervisorSpawnMock.mockClear();
+    supervisorSpawnMock
+      .mockResolvedValueOnce(
+        createManagedRun({
+          reason: "no-output-timeout",
+          exitCode: null,
+          exitSignal: "SIGKILL",
+          durationMs: 200,
+          stdout: "",
+          stderr: "",
+          timedOut: true,
+          noOutputTimedOut: true,
+        }),
+      )
+      .mockResolvedValueOnce(
+        createManagedRun({
+          reason: "exit",
+          exitCode: 0,
+          exitSignal: null,
+          durationMs: 50,
+          stdout: "fresh fallback",
+          stderr: "",
+          timedOut: false,
+          noOutputTimedOut: false,
+        }),
+      );
+    const prepareForkRetry = vi.fn(async () => true);
+    const clearBeforeRetry = vi.fn(async () => true);
+    const context = buildPreparedContext({
+      sessionKey: "agent:main:no-checkpoint",
+      runId: "run-no-checkpoint",
+      cliSessionId: "legacy-session",
+      provider: "claude-cli",
+      model: "opus",
+      openClawHistoryPrompt: CLI_RESEED_PROMPT,
+    });
+    context.preparedBackend.backend = {
+      ...context.preparedBackend.backend,
+      resumeArgs: ["--resume", "{sessionId}"],
+      forkArg: "--fork-session",
+      resumeAtArg: "--resume-session-at",
+    };
+
+    const result = await runPreparedCliAgent({
+      ...context,
+      params: {
+        ...context.params,
+        onBeforeForkedCliSessionRetry: prepareForkRetry,
+        onBeforeFreshCliSessionRetry: clearBeforeRetry,
+      },
+    });
+
+    expect(result.payloads).toEqual([{ text: "fresh fallback" }]);
+    expect(prepareForkRetry).not.toHaveBeenCalled();
+    expect(clearBeforeRetry).toHaveBeenCalledOnce();
+    expect(supervisorSpawnMock).toHaveBeenCalledTimes(2);
+    const freshArgv = requireArray(
+      requireRecord(
+        callArg(supervisorSpawnMock, 1, 0, "fresh fallback spawn"),
+        "fresh fallback spawn",
+      ).argv,
+      "fresh fallback argv",
+    );
+    expect(freshArgv).not.toContain("--fork-session");
+    expect(freshArgv).not.toContain("--resume-session-at");
+  });
+
+  it("falls back to cold reseed when Claude lacks the checkpoint flag", async () => {
+    supervisorSpawnMock.mockClear();
+    supervisorSpawnMock
+      .mockResolvedValueOnce(
+        createManagedRun({
+          reason: "no-output-timeout",
+          exitCode: null,
+          exitSignal: "SIGKILL",
+          durationMs: 200,
+          stdout: "",
+          stderr: "",
+          timedOut: true,
+          noOutputTimedOut: true,
+        }),
+      )
+      .mockResolvedValueOnce(
+        createManagedRun({
+          reason: "exit",
+          exitCode: 1,
+          exitSignal: null,
+          durationMs: 25,
+          stdout: "",
+          stderr: "error: unknown option '--resume-session-at'",
+          timedOut: false,
+          noOutputTimedOut: false,
+        }),
+      )
+      .mockResolvedValueOnce(
+        createManagedRun({
+          reason: "exit",
+          exitCode: 0,
+          exitSignal: null,
+          durationMs: 50,
+          stdout: "fresh fallback",
+          stderr: "",
+          timedOut: false,
+          noOutputTimedOut: false,
+        }),
+      );
+    const prepareForkRetry = vi.fn(async () => true);
+    const claimFork = vi.fn(async () => true);
+    const restoreFork = vi.fn(async () => {});
+    const clearBeforeRetry = vi.fn(async () => true);
+    const context = buildPreparedContext({
+      sessionKey: "agent:main:old-claude",
+      runId: "run-old-claude",
+      cliSessionId: "old-claude-session",
+      provider: "claude-cli",
+      model: "opus",
+      openClawHistoryPrompt: CLI_RESEED_PROMPT,
+    });
+    context.preparedBackend.backend = {
+      ...context.preparedBackend.backend,
+      resumeArgs: ["--resume", "{sessionId}"],
+      forkArg: "--fork-session",
+      resumeAtArg: "--resume-session-at",
+    };
+    context.params.cliSessionBinding = {
+      sessionId: "old-claude-session",
+      resumeCheckpointId: "assistant-before-stall",
+    };
+
+    const result = await runPreparedCliAgent({
+      ...context,
+      params: {
+        ...context.params,
+        onBeforeForkedCliSessionRetry: prepareForkRetry,
+        claimCliSessionFork: claimFork,
+        restoreCliSessionFork: restoreFork,
+        persistCliSessionForkSuccessor: vi.fn(async () => {}),
+        onBeforeFreshCliSessionRetry: clearBeforeRetry,
+      },
+    });
+
+    expect(result.payloads).toEqual([{ text: "fresh fallback" }]);
+    expect(prepareForkRetry).toHaveBeenCalledOnce();
+    expect(claimFork).toHaveBeenCalledOnce();
+    expect(restoreFork).toHaveBeenCalledOnce();
+    expect(clearBeforeRetry).toHaveBeenCalledWith({
+      provider: "claude-cli",
+      reason: "timeout",
+      sessionId: "old-claude-session",
+    });
+    expect(supervisorSpawnMock).toHaveBeenCalledTimes(3);
+  });
+
   it("preserves fresh retry for direct CLI callers without a pre-clear hook", async () => {
     supervisorSpawnMock.mockClear();
     supervisorSpawnMock.mockResolvedValueOnce(
@@ -1870,6 +2024,16 @@ describe("runCliAgent reliability", () => {
             stdoutListener?.(
               [
                 JSON.stringify({ type: "system", subtype: "init", session_id: "forked-live" }),
+                JSON.stringify({
+                  type: "assistant",
+                  uuid: "assistant-after-recovery",
+                  session_id: "forked-live",
+                  message: {
+                    model: "claude-fable-5",
+                    role: "assistant",
+                    content: [{ type: "text", text: "fork ok" }],
+                  },
+                }),
                 JSON.stringify({ type: "result", session_id: "forked-live", result: "fork ok" }),
               ].join("\n") + "\n",
             );
@@ -1905,6 +2069,7 @@ describe("runCliAgent reliability", () => {
         skillsDir,
       ],
       forkArg: "--fork-session",
+      resumeAtArg: "--resume-session-at",
       output: "jsonl" as const,
       input: "stdin" as const,
       modelArg: "--model",
@@ -1938,6 +2103,10 @@ describe("runCliAgent reliability", () => {
     context.preparedBackend.backend = liveBackend;
     context.preparedBackend.cleanup = cleanup;
     context.backendResolved.config = liveBackend;
+    context.params.cliSessionBinding = {
+      sessionId: "stale-live",
+      resumeCheckpointId: "assistant-before-stall",
+    };
 
     const resultPromise = runPreparedCliAgent({
       ...context,
@@ -1958,11 +2127,20 @@ describe("runCliAgent reliability", () => {
     expect(result.payloads).toEqual([{ text: "fork ok" }]);
     expect(result.meta.finalPromptText).not.toContain("User: earlier context");
     expect(result.meta.agentMeta?.cliSessionBinding?.sessionId).toBe("forked-live");
+    expect(result.meta.agentMeta?.cliSessionBinding?.resumeCheckpointId).toBe(
+      "assistant-after-recovery",
+    );
     expect(transcriptProbe).not.toHaveBeenCalled();
     expect(supervisorSpawnMock).toHaveBeenCalledTimes(2);
     expect(spawnedArgv[0]).not.toContain("--fork-session");
     expect(spawnedArgv[1]).toEqual(
-      expect.arrayContaining(["--resume", "stale-live", "--fork-session"]),
+      expect.arrayContaining([
+        "--resume",
+        "stale-live",
+        "--fork-session",
+        "--resume-session-at",
+        "assistant-before-stall",
+      ]),
     );
     expect(prepareForkRetry).toHaveBeenCalledWith({
       provider: "claude-cli",
@@ -2066,6 +2244,7 @@ describe("runCliAgent reliability", () => {
       args: ["-p", "--output-format", "stream-json"],
       resumeArgs: ["-p", "--resume", "{sessionId}", "--output-format", "stream-json"],
       forkArg: "--fork-session",
+      resumeAtArg: "--resume-session-at",
       output: "jsonl" as const,
       input: "stdin" as const,
       modelArg: "--model",
@@ -2090,6 +2269,10 @@ describe("runCliAgent reliability", () => {
     });
     context.preparedBackend.backend = backend;
     context.backendResolved.config = backend;
+    context.params.cliSessionBinding = {
+      sessionId: "stalled-source",
+      resumeCheckpointId: "assistant-before-stall",
+    };
     const prepareForkRetry = vi.fn(async () => true);
     const claimFork = vi.fn(async () => true);
     const persistForkSuccessor = vi.fn(async () => {});
@@ -2118,7 +2301,13 @@ describe("runCliAgent reliability", () => {
     expect(result.meta.finalPromptText).toContain("User: earlier context");
     expect(spawnedArgv).toHaveLength(3);
     expect(spawnedArgv[1]).toEqual(
-      expect.arrayContaining(["--resume", "stalled-source", "--fork-session"]),
+      expect.arrayContaining([
+        "--resume",
+        "stalled-source",
+        "--fork-session",
+        "--resume-session-at",
+        "assistant-before-stall",
+      ]),
     );
     expect(spawnedArgv[2]).not.toContain("--resume");
     expect(spawnedArgv[2]).not.toContain("--fork-session");

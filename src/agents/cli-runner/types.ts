@@ -127,6 +127,8 @@ export type RunCliAgentParams = {
   cliSessionBinding?: CliSessionBinding;
   /** Consume the backend fork argument on this resume invocation only. */
   forkCliSessionOnResume?: boolean;
+  /** Bound a resumed fork at this previously observed assistant checkpoint. */
+  cliSessionResumeAt?: string;
   /** Atomically claim the persisted one-shot marker after the CLI queue admits this turn. */
   claimCliSessionFork?: () => Promise<boolean>;
   /** Re-arm a claimed marker when the CLI turn fails before producing a successor session. */

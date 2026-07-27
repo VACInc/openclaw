@@ -140,6 +140,16 @@ function shouldRetryForkedCliSessionAfterFailover(error: FailoverError): boolean
   return error.reason === "timeout" && error.code === "cli_no_output_timeout";
 }
 
+function isUnsupportedCliResumeAtError(error: unknown, resumeAtArg: string): boolean {
+  const message = formatErrorMessage(error).toLowerCase();
+  return (
+    message.includes(resumeAtArg.toLowerCase()) &&
+    ["unknown", "unexpected", "unrecognized", "not recognized"].some((token) =>
+      message.includes(token),
+    )
+  );
+}
+
 function formatCliEmptyOutputDiagnostics(output: CliOutput): string | undefined {
   const process = output.diagnostics?.process;
   if (!process) {
@@ -918,12 +928,14 @@ export async function runPreparedCliAgent(
     options?: {
       timeoutMs?: number;
       forkCliSessionOnResume?: boolean;
+      resumeAt?: string;
       onForkSuccessorPersisted?: (sessionId: string) => void;
     },
   ) => {
     const timeoutMs = options?.timeoutMs ?? params.timeoutMs;
     const forkCliSessionOnResume =
       options?.forkCliSessionOnResume ?? context.params.forkCliSessionOnResume;
+    const cliSessionResumeAt = options?.resumeAt ?? context.params.cliSessionResumeAt;
     const persistCliSessionForkSuccessor =
       options?.onForkSuccessorPersisted && context.params.persistCliSessionForkSuccessor
         ? async (sessionId: string) => {
@@ -934,6 +946,7 @@ export async function runPreparedCliAgent(
     const attemptContext =
       timeoutMs === params.timeoutMs &&
       forkCliSessionOnResume === context.params.forkCliSessionOnResume &&
+      cliSessionResumeAt === context.params.cliSessionResumeAt &&
       persistCliSessionForkSuccessor === context.params.persistCliSessionForkSuccessor
         ? context
         : {
@@ -942,6 +955,7 @@ export async function runPreparedCliAgent(
               ...context.params,
               timeoutMs,
               forkCliSessionOnResume,
+              cliSessionResumeAt,
               persistCliSessionForkSuccessor,
             },
           };
@@ -1164,6 +1178,9 @@ export async function runPreparedCliAgent(
                   ...(context.effectiveAuthProfileId
                     ? { authProfileId: context.effectiveAuthProfileId }
                     : {}),
+                  ...(resultParams.output.resumeCheckpointId
+                    ? { resumeCheckpointId: resultParams.output.resumeCheckpointId }
+                    : {}),
                   ...(context.authEpoch ? { authEpoch: context.authEpoch } : {}),
                   authEpochVersion: context.authEpochVersion,
                   ...(context.extraSystemPromptHash
@@ -1365,6 +1382,7 @@ export async function runPreparedCliAgent(
       hookRunner,
     });
     const reusableCliSessionId = resolveReusableCliSessionId(context.reusableCliSession);
+    const resumeCheckpointId = params.cliSessionBinding?.resumeCheckpointId;
     let retryableSessionId = reusableCliSessionId;
     try {
       return await finishCliAttempt(
@@ -1391,8 +1409,10 @@ export async function runPreparedCliAgent(
           !params.forkCliSessionOnResume &&
           shouldRetryForkedCliSessionAfterFailover(recoveryError) &&
           retryableSessionId &&
+          resumeCheckpointId &&
           params.sessionKey &&
           context.preparedBackend.backend.forkArg &&
+          context.preparedBackend.backend.resumeAtArg &&
           params.onBeforeForkedCliSessionRetry
         ) {
           try {
@@ -1415,6 +1435,7 @@ export async function runPreparedCliAgent(
               await executeCliAttempt(retryableSessionId, {
                 timeoutMs: retryTimeoutMs,
                 forkCliSessionOnResume: true,
+                resumeAt: resumeCheckpointId,
                 onForkSuccessorPersisted: (sessionId) => {
                   retryableSessionId = sessionId;
                 },
@@ -1425,7 +1446,12 @@ export async function runPreparedCliAgent(
             if (deliveredForkFailure) {
               return deliveredForkFailure;
             }
-            recoveryError = forkError;
+            recoveryError = isUnsupportedCliResumeAtError(
+              forkError,
+              context.preparedBackend.backend.resumeAtArg,
+            )
+              ? err
+              : forkError;
           }
         }
         if (
