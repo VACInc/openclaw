@@ -10,7 +10,6 @@ type ModelExtraParamSources = {
   agentParams?: Record<string, unknown>;
 };
 
-const FAST_MODE_MODEL_PARAM_KEYS = new Set(["fastMode", "fast_mode"]);
 const FAST_MODE_CUTOFF_MODEL_PARAM_KEYS = new Set([
   "fastAutoOnSeconds",
   "fastSeconds",
@@ -29,7 +28,7 @@ function isAgentRuntimeModelParam(key: string, value: unknown): boolean {
       (typeof value === "string" && normalizeThinkLevel(value) !== undefined)
     );
   }
-  if (FAST_MODE_MODEL_PARAM_KEYS.has(key)) {
+  if (key === "fastMode" || key === "fast_mode") {
     return normalizeFastMode(value) !== undefined;
   }
   return (
