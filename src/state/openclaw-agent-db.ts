@@ -339,6 +339,7 @@ export function openOpenClawAgentDatabase(
         return maintenance;
       } catch (err) {
         maintenance?.close();
+        clearNodeSqliteKyselyCacheForDatabase(db);
         db.close();
         if (
           err instanceof Error &&

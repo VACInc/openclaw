@@ -1,5 +1,5 @@
 // Adapts node:sqlite sync database calls for Kysely-style query execution.
-import type { DatabaseSync, SQLInputValue } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import type { Compilable, CompiledQuery, Kysely, QueryResult } from "kysely";
 import { InsertQueryNode, Kysely as KyselyInstance, SqliteDialect } from "kysely";
 
@@ -7,6 +7,25 @@ import { InsertQueryNode, Kysely as KyselyInstance, SqliteDialect } from "kysely
 // going through Kysely's async driver path.
 
 const kyselyByDatabase = new WeakMap<DatabaseSync, Kysely<unknown>>();
+const statementCacheSymbol = Symbol("openclaw.kyselySyncStatementCache");
+const statementInvalidationSymbol = Symbol("openclaw.kyselySyncStatementInvalidation");
+// Keep native retention small while covering the stable SQL working set of
+// synchronous state stores; second-use admission protects this bound from churn.
+const statementCacheCapacity = 32;
+
+type SqliteAuthorizer = Parameters<DatabaseSync["setAuthorizer"]>[0];
+
+type StatementCache = {
+  statements: Map<string, StatementSync>;
+  candidates: Set<string>;
+  active: WeakSet<StatementSync>;
+};
+
+type StatementCacheOwner = DatabaseSync & {
+  [statementCacheSymbol]?: StatementCache;
+  [statementInvalidationSymbol]?: true;
+};
+
 const compileOnlySqliteDialect = new SqliteDialect({
   // The lazy database factory leaves compilation usable while direct execution fails fast.
   database: async () => {
@@ -28,30 +47,128 @@ export function getNodeSqliteKysely<Database>(db: DatabaseSync): Kysely<Database
   return kysely;
 }
 
+function installStatementInvalidation(owner: StatementCacheOwner): void {
+  if (owner[statementInvalidationSymbol]) {
+    return;
+  }
+  if (typeof owner.setAuthorizer === "function") {
+    const setAuthorizer = owner.setAuthorizer.bind(owner);
+    Object.defineProperty(owner, "setAuthorizer", {
+      configurable: true,
+      writable: true,
+      value(this: StatementCacheOwner, callback: SqliteAuthorizer): void {
+        setAuthorizer(callback);
+        // Authorization is decided while compiling SQL. Drop all statements
+        // after every successful transition, including removing an authorizer.
+        delete this[statementCacheSymbol];
+      },
+    });
+  }
+  if (typeof owner.deserialize === "function") {
+    const deserialize = owner.deserialize.bind(owner);
+    Object.defineProperty(owner, "deserialize", {
+      configurable: true,
+      writable: true,
+      value(this: StatementCacheOwner, ...args: Parameters<DatabaseSync["deserialize"]>): void {
+        try {
+          deserialize(...args);
+        } finally {
+          // Node finalizes all statements before attempting deserialization,
+          // including failed attempts, so no cached object remains usable.
+          delete this[statementCacheSymbol];
+        }
+      },
+    });
+  }
+  Object.defineProperty(owner, statementInvalidationSymbol, {
+    configurable: true,
+    value: true,
+  });
+}
+
+function executeWithCachedStatement<Result>(
+  db: DatabaseSync,
+  sql: string,
+  execute: (statement: StatementSync) => Result,
+): Result {
+  const owner = db as StatementCacheOwner;
+  installStatementInvalidation(owner);
+  let cache = owner[statementCacheSymbol];
+  if (!cache) {
+    cache = {
+      statements: new Map(),
+      candidates: new Set(),
+      active: new WeakSet(),
+    };
+    Object.defineProperty(owner, statementCacheSymbol, {
+      configurable: true,
+      value: cache,
+    });
+  }
+
+  const cached = cache.statements.get(sql);
+  let statement: StatementSync;
+  if (cached && !cache.active.has(cached)) {
+    cache.statements.delete(sql);
+    cache.statements.set(sql, cached);
+    statement = cached;
+  } else {
+    // A user-defined SQLite callback can re-enter this helper synchronously.
+    // Prepare a temporary statement rather than reset the active outer query.
+    statement = db.prepare(sql);
+    if (!cached && cache.candidates.delete(sql)) {
+      cache.statements.set(sql, statement);
+      if (cache.statements.size > statementCacheCapacity) {
+        const oldestSql = cache.statements.keys().next().value;
+        if (oldestSql !== undefined) {
+          cache.statements.delete(oldestSql);
+        }
+      }
+    } else if (!cached) {
+      // Admit only on second use so variable placeholder counts cannot fill
+      // the native statement cache with one-shot SQL strings.
+      cache.candidates.add(sql);
+      if (cache.candidates.size > statementCacheCapacity) {
+        const oldestCandidate = cache.candidates.values().next().value;
+        if (oldestCandidate !== undefined) {
+          cache.candidates.delete(oldestCandidate);
+        }
+      }
+    }
+  }
+
+  cache.active.add(statement);
+  try {
+    return execute(statement);
+  } finally {
+    cache.active.delete(statement);
+  }
+}
+
 /** Execute a compiled Kysely query synchronously against node:sqlite. */
 function executeCompiledSqliteQuerySync<Row>(
   db: DatabaseSync,
   compiledQuery: CompiledQuery<Row>,
 ): QueryResult<Row> {
-  const statement = db.prepare(compiledQuery.sql);
   const parameters = compiledQuery.parameters as SQLInputValue[];
+  return executeWithCachedStatement(db, compiledQuery.sql, (statement) => {
+    if (statement.columns().length > 0) {
+      return { rows: statement.all(...parameters) as Row[] };
+    }
 
-  if (statement.columns().length > 0) {
-    return { rows: statement.all(...parameters) as Row[] };
-  }
-
-  const { changes, lastInsertRowid } = statement.run(...parameters);
-  const result: QueryResult<Row> = {
-    numAffectedRows: BigInt(changes),
-    rows: [],
-  };
-  if (InsertQueryNode.is(compiledQuery.query) && changes > 0) {
-    return {
-      ...result,
-      insertId: BigInt(lastInsertRowid),
+    const { changes, lastInsertRowid } = statement.run(...parameters);
+    const result: QueryResult<Row> = {
+      numAffectedRows: BigInt(changes),
+      rows: [],
     };
-  }
-  return result;
+    if (InsertQueryNode.is(compiledQuery.query) && changes > 0) {
+      return {
+        ...result,
+        insertId: BigInt(lastInsertRowid),
+      };
+    }
+    return result;
+  });
 }
 
 /** Compile and execute a Kysely query synchronously. */
@@ -68,6 +185,8 @@ export function* iterateSqliteQuerySync<Row>(
   query: Compilable<Row>,
 ): IterableIterator<Row> {
   const compiledQuery = query.compile();
+  // Iterators keep statement state across yields. A private statement prevents
+  // nested iteration of identical SQL from resetting an earlier iterator.
   const statement = db.prepare(compiledQuery.sql);
   if (statement.columns().length === 0) {
     return;
@@ -84,7 +203,10 @@ export function executeSqliteQueryTakeFirstSync<Row>(
   return executeSqliteQuerySync<Row>(db, query).rows[0];
 }
 
-/** Drop the cached Kysely facade for a DatabaseSync after close/test reset. */
+/** Drop cached Kysely state for a DatabaseSync before close/test reset. */
 export function clearNodeSqliteKyselyCacheForDatabase(db: DatabaseSync): void {
+  // Delete the database-owned cache before close so statements release their
+  // native database backreferences instead of recreating the WeakMap leak.
+  delete (db as StatementCacheOwner)[statementCacheSymbol];
   kyselyByDatabase.delete(db);
 }

@@ -281,6 +281,7 @@ export function repairOpenClawStateDatabaseSchema(options: OpenClawStateDatabase
     if (db.isOpen) {
       db.exec("PRAGMA foreign_keys = ON;");
     }
+    clearNodeSqliteKyselyCacheForDatabase(db);
     db.close();
     ensureOpenClawStatePermissions(pathname, env);
   }
@@ -402,6 +403,7 @@ export async function openExistingOpenClawStateDatabaseReadOnly(
     }
   } catch (error) {
     try {
+      clearNodeSqliteKyselyCacheForDatabase(db);
       db.close();
     } catch {
       // Preserve the verification failure that explains why the database was refused.
@@ -424,6 +426,7 @@ export async function openExistingOpenClawStateDatabaseReadOnly(
         }
         try {
           if (wasOpen) {
+            clearNodeSqliteKyselyCacheForDatabase(db);
             db.close();
           }
         } finally {
@@ -540,6 +543,7 @@ export function openOpenClawStateDatabase(
       return maintenance;
     } catch (err) {
       maintenance?.close();
+      clearNodeSqliteKyselyCacheForDatabase(db);
       db.close();
       if (
         err instanceof Error &&
