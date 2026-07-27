@@ -102,6 +102,18 @@ function quarantineStorePath(stateDir: string): string {
   return path.join(stateDir, "state", "openclaw-quarantine.sqlite");
 }
 
+function readLinuxPosixLocksForPath(pathname: string): string[] {
+  if (process.platform !== "linux") {
+    return [];
+  }
+  const inode = fs.statSync(pathname, { bigint: true }).ino;
+  const lockInode = new RegExp(`\\b[0-9a-f]+:[0-9a-f]+:${inode}\\b`, "u");
+  return fs
+    .readFileSync("/proc/locks", "utf8")
+    .split("\n")
+    .filter((line) => line.includes(" POSIX ") && lockInode.test(line));
+}
+
 describe("OpenClaw database integrity verifier", () => {
   it.skipIf(process.platform === "win32")(
     "preserves live WAL ownership while snapshotting an open database",
@@ -116,6 +128,10 @@ describe("OpenClaw database integrity verifier", () => {
         .run("verifier-lock-owner", JSON.stringify({ preserved: true }), 1);
       const walBefore = fs.statSync(`${agent.path}-wal`);
       const shmBefore = fs.statSync(`${agent.path}-shm`);
+      const baseLocksBefore = readLinuxPosixLocksForPath(agent.path);
+      if (process.platform === "linux") {
+        expect(baseLocksBefore.length).toBeGreaterThan(0);
+      }
       const targets: OpenClawDatabaseVerifyTarget[] = [
         { kind: "agent", label: "OpenClaw agent database worker-1", path: agent.path },
       ];
@@ -123,6 +139,11 @@ describe("OpenClaw database integrity verifier", () => {
       await expect(runDatabaseVerifyWorker(targets)).resolves.toEqual([
         { path: agent.path, ok: true },
       ]);
+      if (process.platform === "linux") {
+        // SQLite 3.51 can preserve visible WAL files after a lock is lost, so
+        // assert the kernel lock itself rather than relying on that symptom.
+        expect(readLinuxPosixLocksForPath(agent.path).length).toBeGreaterThan(0);
+      }
       const reader = spawnSync(
         process.execPath,
         [
