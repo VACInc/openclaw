@@ -935,7 +935,12 @@ export async function runPreparedCliAgent(
     const timeoutMs = options?.timeoutMs ?? params.timeoutMs;
     const forkCliSessionOnResume =
       options?.forkCliSessionOnResume ?? context.params.forkCliSessionOnResume;
-    const cliSessionResumeAt = options?.resumeAt ?? context.params.cliSessionResumeAt;
+    const cliSessionResumeAt =
+      cliSessionIdToUse && forkCliSessionOnResume
+        ? (options?.resumeAt ??
+          context.params.cliSessionResumeAt ??
+          context.params.cliSessionBinding?.resumeCheckpointId)
+        : undefined;
     const persistCliSessionForkSuccessor =
       options?.onForkSuccessorPersisted && context.params.persistCliSessionForkSuccessor
         ? async (sessionId: string) => {
@@ -1482,7 +1487,10 @@ export async function runPreparedCliAgent(
               `cli session recovery retry: provider=${params.provider} reason=${recoveryError.reason} sessionKey=${params.sessionKey}`,
             );
             return await finishCliAttempt(
-              await executeCliAttempt(undefined, { timeoutMs: retryTimeoutMs }),
+              await executeCliAttempt(undefined, {
+                timeoutMs: retryTimeoutMs,
+                forkCliSessionOnResume: false,
+              }),
             );
           } catch (retryErr) {
             const deliveredRetryFailure = await finishDeliveredFailure(retryErr);

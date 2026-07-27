@@ -2391,6 +2391,7 @@ describe("runCliAgent reliability", () => {
       args: ["-p", "--output-format", "stream-json"],
       resumeArgs: ["-p", "--resume", "{sessionId}", "--output-format", "stream-json"],
       forkArg: "--fork-session",
+      resumeAtArg: "--resume-session-at",
       output: "jsonl" as const,
       input: "stdin" as const,
       modelArg: "--model",
@@ -2415,6 +2416,11 @@ describe("runCliAgent reliability", () => {
     });
     context.preparedBackend.backend = backend;
     context.backendResolved.config = backend;
+    context.params.cliSessionBinding = {
+      sessionId: "initial-fork-parent",
+      resumeCheckpointId: "assistant-before-initial-fork",
+      forkNextResume: true,
+    };
     const claimFork = vi.fn(async () => true);
     const persistForkSuccessor = vi.fn(async () => {});
     const restoreFork = vi.fn(async () => {});
@@ -2440,7 +2446,13 @@ describe("runCliAgent reliability", () => {
     expect(result.meta.finalPromptText).toContain("User: earlier context");
     expect(spawnedArgv).toHaveLength(2);
     expect(spawnedArgv[0]).toEqual(
-      expect.arrayContaining(["--resume", "initial-fork-parent", "--fork-session"]),
+      expect.arrayContaining([
+        "--resume",
+        "initial-fork-parent",
+        "--fork-session",
+        "--resume-session-at",
+        "assistant-before-initial-fork",
+      ]),
     );
     expect(spawnedArgv[1]).not.toContain("--resume");
     expect(spawnedArgv[1]).not.toContain("--fork-session");
