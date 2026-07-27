@@ -4471,6 +4471,24 @@ describe("subagent registry seam flow", () => {
     ).toBeUndefined();
   });
 
+  it.each([
+    { name: "running", queued: false },
+    { name: "queued", queued: true },
+  ])("persists a $name registration exactly once", ({ queued }) => {
+    mockGatewayMethods(mocks.callGateway, {
+      "agent.wait": { status: "pending" },
+    });
+
+    mod.registerSubagentRun({
+      runId: `run-single-persist-${queued ? "queued" : "running"}`,
+      task: "persist one registry snapshot",
+      queued,
+    });
+
+    expect(mocks.persistSubagentRunsToDiskOrThrow).toHaveBeenCalledOnce();
+    expect(mocks.persistSubagentRunsToDisk).not.toHaveBeenCalled();
+  });
+
   it("retains an already-running replacement when its durable write fails", () => {
     mocks.callGateway.mockImplementation(async (request: { method?: string }) =>
       request.method === "agent.wait" ? { status: "pending" } : {},

@@ -907,7 +907,6 @@ export function createSubagentRunManager(params: {
       });
     }
     params.ensureListener();
-    params.persist();
     // Always start sweeper — session-mode runs (no archiveAtMs) also need TTL cleanup.
     params.startSweeper();
     // Wait for subagent completion via gateway RPC (cross-process).
