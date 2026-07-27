@@ -23,6 +23,7 @@ export const OPENCLAW_DATABASE_VERIFY_INITIAL_DELAY_MS = 5 * 60_000;
 export const OPENCLAW_DATABASE_VERIFY_INTERVAL_MS = 24 * 60 * 60_000;
 
 const log = createSubsystemLogger("state/database-verify");
+const DATABASE_VERIFY_CHILD_ARG = "--openclaw-database-verify-child";
 
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
@@ -64,7 +65,7 @@ export function runDatabaseVerifyWorker(
   try {
     // Snapshot preparation opens and closes raw source descriptors. Isolate it
     // because POSIX close() can release the Gateway's process-owned SQLite locks.
-    worker = fork(fileURLToPath(workerUrl), [], {
+    worker = fork(fileURLToPath(workerUrl), [DATABASE_VERIFY_CHILD_ARG], {
       execArgv,
       stdio: ["ignore", "ignore", "ignore", "ipc"],
     });

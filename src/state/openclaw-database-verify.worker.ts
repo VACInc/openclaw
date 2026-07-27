@@ -6,6 +6,8 @@ import {
 import { prepareSqliteReadOnlyLocation } from "../infra/sqlite-readonly-location.js";
 import { OPENCLAW_SQLITE_BUSY_TIMEOUT_MS } from "./openclaw-state-db.js";
 
+const DATABASE_VERIFY_CHILD_ARG = "--openclaw-database-verify-child";
+
 export type OpenClawDatabaseVerifyTarget = {
   path: string;
   kind: "agent" | "state";
@@ -88,7 +90,10 @@ export async function verifyOpenClawDatabases(
   return results;
 }
 
-const sendToParent = process.send?.bind(process);
+// This module is also imported for its verifier function. Only the dedicated
+// child may consume and disconnect the process-wide IPC channel.
+const sendToParent =
+  process.argv[2] === DATABASE_VERIFY_CHILD_ARG ? process.send?.bind(process) : undefined;
 if (sendToParent) {
   process.once("message", (message: unknown) => {
     void (async () => {
