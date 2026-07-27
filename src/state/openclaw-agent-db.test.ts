@@ -53,6 +53,7 @@ import {
   closeOpenClawStateDatabaseForTest,
   OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
   openOpenClawStateDatabase,
+  repairOpenClawStateDatabaseSchema,
   runOpenClawStateWriteTransaction,
 } from "./openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "./openclaw-state-db.paths.js";
@@ -928,6 +929,92 @@ describe("openclaw agent database", () => {
         .prepare("SELECT updated_at FROM schema_meta WHERE meta_key = ?")
         .get("primary"),
     ).toEqual({ updated_at: 1 });
+  });
+
+  it("reuses schema detection until the SQLite schema generation changes", () => {
+    const stateDir = createTempStateDir();
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    const stateDatabase = openOpenClawStateDatabase({ env });
+    const prepareSpy = vi.spyOn(stateDatabase.db, "prepare");
+    const countSchemaShapeProbes = () =>
+      prepareSpy.mock.calls.filter(([sql]) => sql.startsWith("PRAGMA table_info(")).length;
+
+    expect(listOpenClawRegisteredAgentDatabases({ env })).toEqual([]);
+    const firstProbeCount = countSchemaShapeProbes();
+    expect(listOpenClawRegisteredAgentDatabases({ env })).toEqual([]);
+    expect(countSchemaShapeProbes()).toBe(firstProbeCount);
+
+    const { DatabaseSync } = requireNodeSqlite();
+    const drifted = new DatabaseSync(stateDatabase.path);
+    try {
+      drifted.exec(`
+        DROP TABLE agent_databases;
+        CREATE TABLE agent_databases (
+          agent_id TEXT NOT NULL PRIMARY KEY,
+          path TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          last_seen_at INTEGER NOT NULL,
+          size_bytes INTEGER
+        );
+      `);
+    } finally {
+      drifted.close();
+    }
+
+    expect(() => listOpenClawRegisteredAgentDatabases({ env })).toThrow(
+      /run openclaw doctor --fix/,
+    );
+    expect(countSchemaShapeProbes()).toBeGreaterThan(firstProbeCount);
+  });
+
+  it("does not reuse a schema verdict after repair or reopen", () => {
+    const stateDir = createTempStateDir();
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    const stateDatabase = openOpenClawStateDatabase({ env });
+    expect(listOpenClawRegisteredAgentDatabases({ env })).toEqual([]);
+
+    const { DatabaseSync } = requireNodeSqlite();
+    const legacyWatch = new DatabaseSync(stateDatabase.path);
+    try {
+      legacyWatch
+        .prepare(
+          `INSERT INTO session_watch_cursors (
+             watcher_session_key, target_session_key, updated_at
+           ) VALUES (?, ?, ?)`,
+        )
+        .run("ambient-group-watch:61", "agent:main:main", 1);
+    } finally {
+      legacyWatch.close();
+    }
+    expect(() => listOpenClawRegisteredAgentDatabases({ env })).toThrow(
+      /run openclaw doctor --fix/,
+    );
+    expect(repairOpenClawStateDatabaseSchema({ env }).warnings).toEqual([]);
+    expect(listOpenClawRegisteredAgentDatabases({ env })).toEqual([]);
+
+    closeOpenClawStateDatabaseForTest();
+    const replaceRegistryWithLegacySchema = () => {
+      const drifted = new DatabaseSync(stateDatabase.path);
+      try {
+        drifted.exec(`
+          DROP TABLE agent_databases;
+          CREATE TABLE agent_databases (
+            agent_id TEXT NOT NULL PRIMARY KEY,
+            path TEXT NOT NULL,
+            schema_version INTEGER NOT NULL,
+            last_seen_at INTEGER NOT NULL,
+            size_bytes INTEGER
+          );
+        `);
+      } finally {
+        drifted.close();
+      }
+    };
+
+    replaceRegistryWithLegacySchema();
+    expect(() => listOpenClawRegisteredAgentDatabases({ env })).toThrow(
+      /run openclaw doctor --fix/,
+    );
   });
 
   it("creates the per-agent schema and registers it globally", () => {

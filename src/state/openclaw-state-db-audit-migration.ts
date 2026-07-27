@@ -1,10 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { readSqliteUserVersion } from "../infra/sqlite-user-version.js";
-import {
-  tableExists,
-  tableHasColumn,
-  tablePrimaryKeyColumns,
-} from "./openclaw-state-db-schema-helpers.js";
+import { tableExists, tableHasColumn } from "./openclaw-state-db-schema-helpers.js";
 
 const AUDIT_EVENT_STATE_SCHEMA_VERSION = 2;
 
@@ -72,24 +68,6 @@ function tableColumnInfo(db: DatabaseSync, tableName: string): TableColumnInfo[]
   return db.prepare(`PRAGMA table_info(${tableName})`).all() as TableColumnInfo[];
 }
 
-function tableHasExactColumns(
-  db: DatabaseSync,
-  tableName: string,
-  expected: readonly string[],
-): boolean {
-  const names = tableColumnInfo(db, tableName).map((column) => column.name);
-  return names.length === expected.length && names.every((name, index) => name === expected[index]);
-}
-
-function tableHasRequiredColumns(
-  db: DatabaseSync,
-  tableName: string,
-  required: readonly string[],
-): boolean {
-  const columns = new Map(tableColumnInfo(db, tableName).map((column) => [column.name, column]));
-  return required.every((name) => Number(columns.get(name)?.notnull ?? 0) === 1);
-}
-
 function tableSql(db: DatabaseSync, tableName: string): string | undefined {
   const row = db
     .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
@@ -119,11 +97,18 @@ function hasCanonicalAuditEventTable(
   expectedColumns: readonly string[],
   requiredColumns: readonly string[],
 ): boolean {
+  const columnInfo = tableColumnInfo(db, "audit_events");
+  const columns = new Map(columnInfo.map((column) => [column.name, column]));
+  const names = columnInfo.map((column) => column.name);
+  const primaryKey = columnInfo
+    .filter((column) => Number(column.pk ?? 0) > 0)
+    .map((column) => column.name);
   const sql = tableSql(db, "audit_events")?.toLowerCase();
   return (
-    tableHasExactColumns(db, "audit_events", expectedColumns) &&
-    tablePrimaryKeyColumns(db, "audit_events").join(",") === "sequence" &&
-    tableHasRequiredColumns(db, "audit_events", requiredColumns) &&
+    names.length === expectedColumns.length &&
+    names.every((name, index) => name === expectedColumns[index]) &&
+    primaryKey.join(",") === "sequence" &&
+    requiredColumns.every((name) => Number(columns.get(name)?.notnull ?? 0) === 1) &&
     typeof sql === "string" &&
     /\bsequence\s+integer\s+primary\s+key\s+autoincrement\b/.test(sql) &&
     tableHasUniqueColumn(db, "audit_events", "event_id") &&
@@ -135,11 +120,19 @@ function hasCanonicalAuditIdentityKeyTable(db: DatabaseSync): boolean {
   if (!tableExists(db, "audit_identity_keys")) {
     return false;
   }
+  const columnInfo = tableColumnInfo(db, "audit_identity_keys");
+  const columns = new Map(columnInfo.map((column) => [column.name, column]));
+  const names = columnInfo.map((column) => column.name);
+  const primaryKey = columnInfo
+    .filter((column) => Number(column.pk ?? 0) > 0)
+    .map((column) => column.name);
+  const expectedColumns = ["id", "key_id", "key", "created_at"];
   const sql = tableSql(db, "audit_identity_keys")?.toLowerCase();
   return (
-    tableHasExactColumns(db, "audit_identity_keys", ["id", "key_id", "key", "created_at"]) &&
-    tablePrimaryKeyColumns(db, "audit_identity_keys").join(",") === "id" &&
-    tableHasRequiredColumns(db, "audit_identity_keys", ["id", "key_id", "key", "created_at"]) &&
+    names.length === expectedColumns.length &&
+    names.every((name, index) => name === expectedColumns[index]) &&
+    primaryKey.join(",") === "id" &&
+    expectedColumns.every((name) => Number(columns.get(name)?.notnull ?? 0) === 1) &&
     typeof sql === "string" &&
     /\bcheck\s*\(\s*id\s*=\s*1\s*\)/.test(sql)
   );

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { openNodeSqliteDatabase } from "../infra/node-sqlite.js";
 import { readSqliteUserVersion } from "../infra/sqlite-user-version.js";
 import {
@@ -20,6 +20,63 @@ import {
   tablePrimaryKeyColumns,
 } from "./openclaw-state-db-schema-helpers.js";
 import * as sessionWatchMigration from "./openclaw-state-db-session-watch-migration.js";
+
+type SchemaMigrationMemo = {
+  hasLegacySessionWatchProbe: boolean;
+  migrations: OpenClawStateDatabaseSchemaMigration[];
+  pathname: string;
+  signature: string;
+  stateStatement: StatementSync;
+};
+
+const schemaMigrationMemoByDatabase = new WeakMap<DatabaseSync, SchemaMigrationMemo>();
+
+function prepareSchemaMigrationMemoProbe(
+  db: DatabaseSync,
+): Pick<SchemaMigrationMemo, "hasLegacySessionWatchProbe" | "stateStatement"> {
+  const userVersion = readSqliteUserVersion(db);
+  const hasLegacySessionWatchProbe =
+    userVersion >= 4 &&
+    tableExists(db, "session_watch_cursors") &&
+    tableHasColumn(db, "session_watch_cursors", "provenance");
+  // The detector treats every retired marker row as legacy and repair deletes
+  // each one. Provenance does not participate in this migration predicate.
+  const legacySessionWatchSql = hasLegacySessionWatchProbe
+    ? `EXISTS (
+         SELECT 1
+         FROM session_watch_cursors
+         WHERE watcher_session_key LIKE ?
+         LIMIT 1
+       )`
+    : "0";
+  return {
+    stateStatement: db.prepare(`
+      SELECT
+        (SELECT schema_version FROM pragma_schema_version) AS schema_version,
+        (SELECT user_version FROM pragma_user_version) AS user_version,
+        ${legacySessionWatchSql} AS has_legacy_session_watch
+    `),
+    hasLegacySessionWatchProbe,
+  };
+}
+
+function readSchemaMigrationSignature(
+  probe: Pick<SchemaMigrationMemo, "hasLegacySessionWatchProbe" | "stateStatement">,
+): string {
+  const params = probe.hasLegacySessionWatchProbe
+    ? [`${sessionWatchMigration.LEGACY_AMBIENT_GROUP_WATCH_MARKER_PREFIX}%`]
+    : [];
+  const row = probe.stateStatement.get(...params) as
+    | {
+        has_legacy_session_watch?: unknown;
+        schema_version?: unknown;
+        user_version?: unknown;
+      }
+    | undefined;
+  return `${Number(row?.schema_version ?? 0)}:${Number(row?.user_version ?? 0)}:${Number(
+    row?.has_legacy_session_watch ?? 0,
+  )}`;
+}
 
 export function dropLegacyStateTables(db: DatabaseSync): void {
   // Unreleased transient history; drop, do not migrate.
@@ -187,6 +244,21 @@ export function detectOpenClawStateDatabaseSchemaMigrationsFromDatabase(
   db: DatabaseSync,
   pathname: string,
 ): OpenClawStateDatabaseSchemaMigration[] {
+  const memo = schemaMigrationMemoByDatabase.get(db);
+  if (memo) {
+    try {
+      if (memo.pathname === pathname && memo.signature === readSchemaMigrationSignature(memo)) {
+        return memo.migrations.map((migration) => Object.assign({}, migration));
+      }
+    } catch {
+      // A schema replacement can invalidate the prepared state probe. Rebuild
+      // from the live schema so the fail-closed detector remains authoritative.
+    }
+    schemaMigrationMemoByDatabase.delete(db);
+  }
+
+  const stateProbe = prepareSchemaMigrationMemoProbe(db);
+  const signatureBefore = readSchemaMigrationSignature(stateProbe);
   const migrations: OpenClawStateDatabaseSchemaMigration[] = [];
   const userVersion = readSqliteUserVersion(db);
   if (!hasCanonicalAgentDatabasesPrimaryKey(db)) {
@@ -202,5 +274,14 @@ export function detectOpenClawStateDatabaseSchemaMigrationsFromDatabase(
     migrations.push({ kind: "session-watch-cursor-provenance-v4", path: pathname });
   }
   migrations.push(...operatorApprovalMigration.detectOperatorApprovalSchemaMigration(db, pathname));
+  const signatureAfter = readSchemaMigrationSignature(stateProbe);
+  if (signatureBefore === signatureAfter) {
+    schemaMigrationMemoByDatabase.set(db, {
+      migrations: migrations.map((migration) => Object.assign({}, migration)),
+      pathname,
+      signature: signatureAfter,
+      ...stateProbe,
+    });
+  }
   return migrations;
 }
