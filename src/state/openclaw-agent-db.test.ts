@@ -967,6 +967,36 @@ describe("openclaw agent database", () => {
     expect(countSchemaShapeProbes()).toBeGreaterThan(firstProbeCount);
   });
 
+  it("rebuilds detection when the optional session watch probe table disappears", () => {
+    const stateDir = createTempStateDir();
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    const stateDatabase = openOpenClawStateDatabase({ env });
+
+    expect(listOpenClawRegisteredAgentDatabases({ env })).toEqual([]);
+
+    const { DatabaseSync } = requireNodeSqlite();
+    const drifted = new DatabaseSync(stateDatabase.path);
+    try {
+      drifted.exec(`
+        DROP TABLE session_watch_cursors;
+        DROP TABLE agent_databases;
+        CREATE TABLE agent_databases (
+          agent_id TEXT NOT NULL PRIMARY KEY,
+          path TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          last_seen_at INTEGER NOT NULL,
+          size_bytes INTEGER
+        );
+      `);
+    } finally {
+      drifted.close();
+    }
+
+    expect(() => listOpenClawRegisteredAgentDatabases({ env })).toThrow(
+      /run openclaw doctor --fix/,
+    );
+  });
+
   it("does not reuse a schema verdict after repair or reopen", () => {
     const stateDir = createTempStateDir();
     const env = { OPENCLAW_STATE_DIR: stateDir };

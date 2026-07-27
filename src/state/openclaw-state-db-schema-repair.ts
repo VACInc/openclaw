@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import type { DatabaseSync, StatementSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { openNodeSqliteDatabase } from "../infra/node-sqlite.js";
 import { readSqliteUserVersion } from "../infra/sqlite-user-version.js";
 import {
@@ -26,22 +26,26 @@ type SchemaMigrationMemo = {
   migrations: OpenClawStateDatabaseSchemaMigration[];
   pathname: string;
   signature: string;
-  stateStatement: StatementSync;
 };
 
 const schemaMigrationMemoByDatabase = new WeakMap<DatabaseSync, SchemaMigrationMemo>();
 
-function prepareSchemaMigrationMemoProbe(
-  db: DatabaseSync,
-): Pick<SchemaMigrationMemo, "hasLegacySessionWatchProbe" | "stateStatement"> {
+function hasLegacySessionWatchProbe(db: DatabaseSync): boolean {
   const userVersion = readSqliteUserVersion(db);
-  const hasLegacySessionWatchProbe =
+  return (
     userVersion >= 4 &&
     tableExists(db, "session_watch_cursors") &&
-    tableHasColumn(db, "session_watch_cursors", "provenance");
+    tableHasColumn(db, "session_watch_cursors", "provenance")
+  );
+}
+
+function readSchemaMigrationSignature(
+  db: DatabaseSync,
+  legacySessionWatchProbeEnabled: boolean,
+): string {
   // The detector treats every retired marker row as legacy and repair deletes
   // each one. Provenance does not participate in this migration predicate.
-  const legacySessionWatchSql = hasLegacySessionWatchProbe
+  const legacySessionWatchSql = legacySessionWatchProbeEnabled
     ? `EXISTS (
          SELECT 1
          FROM session_watch_cursors
@@ -49,24 +53,17 @@ function prepareSchemaMigrationMemoProbe(
          LIMIT 1
        )`
     : "0";
-  return {
-    stateStatement: db.prepare(`
+  const params = legacySessionWatchProbeEnabled
+    ? [`${sessionWatchMigration.LEGACY_AMBIENT_GROUP_WATCH_MARKER_PREFIX}%`]
+    : [];
+  const row = db
+    .prepare(`
       SELECT
         (SELECT schema_version FROM pragma_schema_version) AS schema_version,
         (SELECT user_version FROM pragma_user_version) AS user_version,
         ${legacySessionWatchSql} AS has_legacy_session_watch
-    `),
-    hasLegacySessionWatchProbe,
-  };
-}
-
-function readSchemaMigrationSignature(
-  probe: Pick<SchemaMigrationMemo, "hasLegacySessionWatchProbe" | "stateStatement">,
-): string {
-  const params = probe.hasLegacySessionWatchProbe
-    ? [`${sessionWatchMigration.LEGACY_AMBIENT_GROUP_WATCH_MARKER_PREFIX}%`]
-    : [];
-  const row = probe.stateStatement.get(...params) as
+    `)
+    .get(...params) as
     | {
         has_legacy_session_watch?: unknown;
         schema_version?: unknown;
@@ -247,18 +244,23 @@ export function detectOpenClawStateDatabaseSchemaMigrationsFromDatabase(
   const memo = schemaMigrationMemoByDatabase.get(db);
   if (memo) {
     try {
-      if (memo.pathname === pathname && memo.signature === readSchemaMigrationSignature(memo)) {
+      // Adding the optional table changes schema_version. Removing it makes
+      // this fresh probe fail, so both transitions rebuild the full verdict.
+      if (
+        memo.pathname === pathname &&
+        memo.signature === readSchemaMigrationSignature(db, memo.hasLegacySessionWatchProbe)
+      ) {
         return memo.migrations.map((migration) => Object.assign({}, migration));
       }
     } catch {
-      // A schema replacement can invalidate the prepared state probe. Rebuild
+      // A schema replacement can invalidate the fresh state probe. Rebuild
       // from the live schema so the fail-closed detector remains authoritative.
     }
     schemaMigrationMemoByDatabase.delete(db);
   }
 
-  const stateProbe = prepareSchemaMigrationMemoProbe(db);
-  const signatureBefore = readSchemaMigrationSignature(stateProbe);
+  const legacySessionWatchProbe = hasLegacySessionWatchProbe(db);
+  const signatureBefore = readSchemaMigrationSignature(db, legacySessionWatchProbe);
   const migrations: OpenClawStateDatabaseSchemaMigration[] = [];
   const userVersion = readSqliteUserVersion(db);
   if (!hasCanonicalAgentDatabasesPrimaryKey(db)) {
@@ -274,13 +276,13 @@ export function detectOpenClawStateDatabaseSchemaMigrationsFromDatabase(
     migrations.push({ kind: "session-watch-cursor-provenance-v4", path: pathname });
   }
   migrations.push(...operatorApprovalMigration.detectOperatorApprovalSchemaMigration(db, pathname));
-  const signatureAfter = readSchemaMigrationSignature(stateProbe);
+  const signatureAfter = readSchemaMigrationSignature(db, legacySessionWatchProbe);
   if (signatureBefore === signatureAfter) {
     schemaMigrationMemoByDatabase.set(db, {
+      hasLegacySessionWatchProbe: legacySessionWatchProbe,
       migrations: migrations.map((migration) => Object.assign({}, migration)),
       pathname,
       signature: signatureAfter,
-      ...stateProbe,
     });
   }
   return migrations;
