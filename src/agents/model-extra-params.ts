@@ -1,3 +1,5 @@
+import { normalizeFastMode } from "@openclaw/normalization-core/string-coerce";
+import { normalizeThinkLevel } from "../auto-reply/thinking.shared.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { modelKey } from "../shared/model-key.js";
 import { resolveAgentConfig } from "./agent-scope-config.js";
@@ -8,17 +10,35 @@ type ModelExtraParamSources = {
   agentParams?: Record<string, unknown>;
 };
 
-// These model-scoped values are promoted into the agent run contract before harness selection.
-// Native harnesses receive them as typed run controls rather than raw provider request fields.
-const AGENT_RUNTIME_MODEL_PARAM_KEYS = new Set([
+const FAST_MODE_MODEL_PARAM_KEYS = new Set(["fastMode", "fast_mode"]);
+const FAST_MODE_CUTOFF_MODEL_PARAM_KEYS = new Set([
   "fastAutoOnSeconds",
-  "fastMode",
   "fastSeconds",
   "fast_auto_on_seconds",
-  "fast_mode",
   "fast_seconds",
-  "thinking",
 ]);
+
+// Native harnesses receive recognized values as typed run controls. Other value
+// shapes with the same keys remain authored provider request parameters.
+function isAgentRuntimeModelParam(key: string, value: unknown): boolean {
+  if (key === "thinking") {
+    return (
+      value === false ||
+      value === "disabled" ||
+      value === "none" ||
+      (typeof value === "string" && normalizeThinkLevel(value) !== undefined)
+    );
+  }
+  if (FAST_MODE_MODEL_PARAM_KEYS.has(key)) {
+    return normalizeFastMode(value) !== undefined;
+  }
+  return (
+    FAST_MODE_CUTOFF_MODEL_PARAM_KEYS.has(key) &&
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value > 0
+  );
+}
 
 function legacyModelKey(provider: string, modelId: string): string | undefined {
   const rawKey = `${provider.trim()}/${modelId.trim()}`;
@@ -60,7 +80,7 @@ export function hasModelExtraParams(
   ) {
     return true;
   }
-  return Object.keys(sources.modelParams ?? {}).some(
-    (key) => !AGENT_RUNTIME_MODEL_PARAM_KEYS.has(key),
+  return Object.entries(sources.modelParams ?? {}).some(
+    ([key, value]) => !isAgentRuntimeModelParam(key, value),
   );
 }
