@@ -826,6 +826,7 @@ function armNoOutputTimer(session: ClaudeLiveSession, turn: ClaudeLiveTurn, dela
     }
     const retryableResumeStall =
       turn.useResume &&
+      session.stdoutBuffer.trim().length === 0 &&
       !turn.hasReplayUnsafeActivity &&
       turn.toolEventCount === 0 &&
       turn.activeTools.size === 0 &&

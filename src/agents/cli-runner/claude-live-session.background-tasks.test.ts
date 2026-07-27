@@ -695,7 +695,7 @@ describe("claude live session provisional results", () => {
       label: "marks a resumed synthetic-only stall as safe for cache-preserving recovery",
       useResume: true,
       expectedCode: "cli_no_output_timeout",
-      lines: [
+      chunk: jsonl([
         { type: "system", subtype: "init", session_id: "live-synthetic-no-result" },
         {
           type: "assistant",
@@ -706,25 +706,25 @@ describe("claude live session provisional results", () => {
             content: [{ type: "text", text: "No response requested." }],
           },
         },
-      ],
+      ]),
     },
     {
       label: "marks a resumed init-only stall as safe for recovery",
       useResume: true,
       expectedCode: "cli_no_output_timeout",
-      lines: [{ type: "system", subtype: "init", session_id: "live-init-no-result" }],
+      chunk: jsonl([{ type: "system", subtype: "init", session_id: "live-init-no-result" }]),
     },
     {
       label: "does not mark a fresh init-only stall as safe to replay",
       useResume: false,
       expectedCode: undefined,
-      lines: [{ type: "system", subtype: "init", session_id: "live-fresh-init-no-result" }],
+      chunk: jsonl([{ type: "system", subtype: "init", session_id: "live-fresh-init-no-result" }]),
     },
     {
       label: "does not mark a stall as retryable after substantive assistant output",
       useResume: true,
       expectedCode: undefined,
-      lines: [
+      chunk: jsonl([
         { type: "system", subtype: "init", session_id: "live-synthetic-substantive" },
         {
           type: "assistant",
@@ -744,9 +744,15 @@ describe("claude live session provisional results", () => {
             content: [{ type: "text", text: "Partial real answer" }],
           },
         },
-      ],
+      ]),
     },
-  ])("$label", async ({ useResume, expectedCode, lines }) => {
+    {
+      label: "does not mark an incomplete stdout record as safe to replay",
+      useResume: true,
+      expectedCode: undefined,
+      chunk: '{"type":"assistant","message":{"model":"claude-fable-5"',
+    },
+  ])("$label", async ({ useResume, expectedCode, chunk }) => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const driver = installLiveStdoutDriver();
     const resultPromise = startLiveTurn({
@@ -757,7 +763,7 @@ describe("claude live session provisional results", () => {
     });
     await vi.advanceTimersByTimeAsync(0);
     await driver.stdout.waitReady();
-    driver.stdout.emit(jsonl(lines));
+    driver.stdout.emit(chunk);
 
     const errorPromise = resultPromise.catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(1_000);
