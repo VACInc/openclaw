@@ -7,12 +7,14 @@ import { InsertQueryNode, Kysely as KyselyInstance, SqliteDialect } from "kysely
 // going through Kysely's async driver path.
 
 const kyselyByDatabase = new WeakMap<DatabaseSync, Kysely<unknown>>();
+// Cached statements retain their database. Every enabled owner must clear before
+// close or drop; this required lifecycle pairing is not enforced automatically.
 const statementCacheSymbol = Symbol("openclaw.kyselySyncStatementCache");
 const statementInvalidationSymbol = Symbol("openclaw.kyselySyncStatementInvalidation");
 const statementCacheEnabledSymbol = Symbol("openclaw.kyselySyncStatementCacheEnabled");
 const authorizerActiveSymbol = Symbol("openclaw.kyselySyncAuthorizerActive");
-// Keep SQL plus retained native bindings under 2 MiB while covering the stable
-// state-store working set; second-use admission protects the bound from churn.
+// Bound SQL plus variable-size bindings to about 2 MiB per enabled database.
+// Process-wide retention scales with open handles; repeated variable SQL can enter.
 const statementCacheCapacity = 32;
 const statementCacheEntryBytes = 64 * 1024;
 

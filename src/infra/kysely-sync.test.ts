@@ -364,63 +364,17 @@ describe("kysely sync helpers", () => {
   });
 
   it("allows databases and prepared statements to collect after lifecycle clearing", () => {
-    const moduleUrl = new URL("./kysely-sync.ts", import.meta.url).href;
-    const script = `
-      import { DatabaseSync } from "node:sqlite";
-      import {
-        clearNodeSqliteKyselyCacheForDatabase,
-        enableNodeSqliteKyselyStatementCache,
-        executeSqliteQuerySync,
-        getNodeSqliteKysely,
-      } from ${JSON.stringify(moduleUrl)};
-
-      const waitForTurn = () => new Promise((resolve) => setImmediate(resolve));
-      async function runScenario() {
-        let database = new DatabaseSync(":memory:");
-        database.exec("create table items (id integer primary key, name text not null)");
-        const databaseRef = new WeakRef(database);
-        const statementRefs = [];
-        const originalPrepare = DatabaseSync.prototype.prepare;
-        database.prepare = function (sql, options) {
-          const statement = originalPrepare.call(this, sql, options);
-          statementRefs.push(new WeakRef(statement));
-          return statement;
-        };
-        const db = getNodeSqliteKysely(database);
-        enableNodeSqliteKyselyStatementCache(database);
-        const select = db.selectFrom("items").selectAll().orderBy("id");
-        executeSqliteQuerySync(database, select);
-        executeSqliteQuerySync(database, select);
-        executeSqliteQuerySync(database, select);
-        delete database.prepare;
-        clearNodeSqliteKyselyCacheForDatabase(database);
-        database.close();
-        database = undefined;
-
-        for (let attempt = 0; attempt < 30; attempt += 1) {
-          await waitForTurn();
-          globalThis.gc();
-        }
-        return {
-          databaseCollected: databaseRef.deref() === undefined,
-          statementsCollected: statementRefs.filter((ref) => ref.deref() === undefined).length,
-          statementCount: statementRefs.length,
-        };
-      }
-
-      process.stdout.write(JSON.stringify(await runScenario()));
-    `;
-    const result = spawnSync(
-      process.execPath,
-      ["--expose-gc", "--import", "tsx", "--input-type=module", "--eval", script],
-      { cwd: process.cwd(), encoding: "utf8", timeout: 20_000 },
-    );
-
-    expect(result.stderr).toBe("");
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
+    expect(runRetentionScenario({ clearBeforeDrop: true })).toEqual({
       databaseCollected: true,
       statementsCollected: 2,
+      statementCount: 2,
+    });
+  });
+
+  it("retains a cached database when lifecycle clearing is skipped", () => {
+    expect(runRetentionScenario({ clearBeforeDrop: false })).toEqual({
+      databaseCollected: false,
+      statementsCollected: 1,
       statementCount: 2,
     });
   });
@@ -464,6 +418,77 @@ function countPrepares(database: DatabaseSync): { calls: () => number } {
     return originalPrepare(sqlText, options);
   };
   return { calls: () => calls };
+}
+
+function runRetentionScenario(options: { clearBeforeDrop: boolean }): {
+  databaseCollected: boolean;
+  statementsCollected: number;
+  statementCount: number;
+} {
+  const moduleUrl = new URL("./kysely-sync.ts", import.meta.url).href;
+  const cleanup = options.clearBeforeDrop
+    ? `
+        clearNodeSqliteKyselyCacheForDatabase(database);
+        database.close();
+      `
+    : "";
+  const script = `
+    import { DatabaseSync } from "node:sqlite";
+    import {
+      clearNodeSqliteKyselyCacheForDatabase,
+      enableNodeSqliteKyselyStatementCache,
+      executeSqliteQuerySync,
+      getNodeSqliteKysely,
+    } from ${JSON.stringify(moduleUrl)};
+
+    const waitForTurn = () => new Promise((resolve) => setImmediate(resolve));
+    async function runScenario() {
+      let database = new DatabaseSync(":memory:");
+      database.exec("create table items (id integer primary key, name text not null)");
+      const databaseRef = new WeakRef(database);
+      const statementRefs = [];
+      const originalPrepare = DatabaseSync.prototype.prepare;
+      database.prepare = function (sql, prepareOptions) {
+        const statement = originalPrepare.call(this, sql, prepareOptions);
+        statementRefs.push(new WeakRef(statement));
+        return statement;
+      };
+      const db = getNodeSqliteKysely(database);
+      enableNodeSqliteKyselyStatementCache(database);
+      const select = db.selectFrom("items").selectAll().orderBy("id");
+      executeSqliteQuerySync(database, select);
+      executeSqliteQuerySync(database, select);
+      executeSqliteQuerySync(database, select);
+      delete database.prepare;
+      ${cleanup}
+      database = undefined;
+
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await waitForTurn();
+        globalThis.gc();
+      }
+      return {
+        databaseCollected: databaseRef.deref() === undefined,
+        statementsCollected: statementRefs.filter((ref) => ref.deref() === undefined).length,
+        statementCount: statementRefs.length,
+      };
+    }
+
+    process.stdout.write(JSON.stringify(await runScenario()));
+  `;
+  const result = spawnSync(
+    process.execPath,
+    ["--expose-gc", "--import", "tsx", "--input-type=module", "--eval", script],
+    { cwd: process.cwd(), encoding: "utf8", timeout: 20_000 },
+  );
+
+  expect(result.stderr).toBe("");
+  expect(result.status).toBe(0);
+  return JSON.parse(result.stdout) as {
+    databaseCollected: boolean;
+    statementsCollected: number;
+    statementCount: number;
+  };
 }
 
 async function expectCompileOnlyRejection(promise: Promise<unknown>): Promise<void> {
