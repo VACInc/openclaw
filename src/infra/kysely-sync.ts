@@ -153,7 +153,19 @@ function executeCompiledSqliteQuerySync<Row>(
   const parameters = compiledQuery.parameters as SQLInputValue[];
   return executeWithCachedStatement(db, compiledQuery.sql, (statement) => {
     if (statement.columns().length > 0) {
-      return { rows: statement.all(...parameters) as Row[] };
+      // Node's all() snapshots the column count before SQLite can reprepare
+      // an expired statement. Eagerly consuming iterate() reads it after step.
+      const iterator = statement.iterate(...parameters);
+      try {
+        return { rows: [...iterator] as Row[] };
+      } catch (error) {
+        try {
+          iterator.return?.();
+        } catch {
+          // Preserve the step error if iterator cleanup itself fails.
+        }
+        throw error;
+      }
     }
 
     const { changes, lastInsertRowid } = statement.run(...parameters);

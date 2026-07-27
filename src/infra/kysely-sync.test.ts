@@ -275,6 +275,43 @@ describe("kysely sync helpers", () => {
     expect(prepares.calls()).toBe(3);
   });
 
+  it("refreshes cached query metadata after a schema change", () => {
+    database = new DatabaseSync(":memory:");
+    database.exec("create table items (id integer primary key, name text not null)");
+    database.exec("insert into items (id, name) values (1, 'Ada')");
+    const db = getNodeSqliteKysely<SyncHelperTestDatabase>(database);
+    const select = db.selectFrom("items").selectAll();
+    const prepares = countPrepares(database);
+
+    expect(executeSqliteQuerySync(database, select).rows).toEqual([{ id: 1, name: "Ada" }]);
+    expect(executeSqliteQuerySync(database, select).rows).toEqual([{ id: 1, name: "Ada" }]);
+    expect(executeSqliteQuerySync(database, select).rows).toEqual([{ id: 1, name: "Ada" }]);
+    expect(prepares.calls()).toBe(2);
+
+    database.exec("alter table items add column note text not null default 'new'");
+
+    expect(executeSqliteQuerySync(database, select).rows).toEqual([
+      { id: 1, name: "Ada", note: "new" },
+    ]);
+    expect(prepares.calls()).toBe(2);
+  });
+
+  it("resets a cached row statement after a step-time error", () => {
+    database = new DatabaseSync(":memory:");
+    const db = getNodeSqliteKysely<SyncHelperTestDatabase>(database);
+    const jsonValue = (value: string) => db.selectNoFrom(sql<string>`json(${value})`.as("value"));
+    const prepares = countPrepares(database);
+
+    expect(executeSqliteQuerySync(database, jsonValue("{}")).rows).toEqual([{ value: "{}" }]);
+    expect(executeSqliteQuerySync(database, jsonValue("{}")).rows).toEqual([{ value: "{}" }]);
+    expect(executeSqliteQuerySync(database, jsonValue("{}")).rows).toEqual([{ value: "{}" }]);
+    expect(prepares.calls()).toBe(2);
+
+    expect(() => executeSqliteQuerySync(database!, jsonValue("{"))).toThrow(/malformed JSON/iu);
+    expect(executeSqliteQuerySync(database, jsonValue("[]")).rows).toEqual([{ value: "[]" }]);
+    expect(prepares.calls()).toBe(2);
+  });
+
   it("allows databases and prepared statements to collect after lifecycle clearing", () => {
     const moduleUrl = new URL("./kysely-sync.ts", import.meta.url).href;
     const script = `
