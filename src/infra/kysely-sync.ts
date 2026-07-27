@@ -9,9 +9,12 @@ import { InsertQueryNode, Kysely as KyselyInstance, SqliteDialect } from "kysely
 const kyselyByDatabase = new WeakMap<DatabaseSync, Kysely<unknown>>();
 const statementCacheSymbol = Symbol("openclaw.kyselySyncStatementCache");
 const statementInvalidationSymbol = Symbol("openclaw.kyselySyncStatementInvalidation");
-// Keep native retention small while covering the stable SQL working set of
-// synchronous state stores; second-use admission protects this bound from churn.
+const statementCacheEnabledSymbol = Symbol("openclaw.kyselySyncStatementCacheEnabled");
+const authorizerActiveSymbol = Symbol("openclaw.kyselySyncAuthorizerActive");
+// Keep SQL plus retained native bindings under 2 MiB while covering the stable
+// state-store working set; second-use admission protects the bound from churn.
 const statementCacheCapacity = 32;
+const statementCacheEntryBytes = 64 * 1024;
 
 type SqliteAuthorizer = Parameters<DatabaseSync["setAuthorizer"]>[0];
 
@@ -24,6 +27,8 @@ type StatementCache = {
 type StatementCacheOwner = DatabaseSync & {
   [statementCacheSymbol]?: StatementCache;
   [statementInvalidationSymbol]?: true;
+  [statementCacheEnabledSymbol]?: true;
+  [authorizerActiveSymbol]?: boolean;
 };
 
 const compileOnlySqliteDialect = new SqliteDialect({
@@ -58,6 +63,7 @@ function installStatementInvalidation(owner: StatementCacheOwner): void {
       writable: true,
       value(this: StatementCacheOwner, callback: SqliteAuthorizer): void {
         setAuthorizer(callback);
+        this[authorizerActiveSymbol] = callback !== null;
         // Authorization is decided while compiling SQL. Drop all statements
         // after every successful transition, including removing an authorizer.
         delete this[statementCacheSymbol];
@@ -86,13 +92,49 @@ function installStatementInvalidation(owner: StatementCacheOwner): void {
   });
 }
 
+/**
+ * Enable bounded statement caching for a lifecycle-owned database that has not
+ * installed an authorizer before this call.
+ */
+export function enableNodeSqliteKyselyStatementCache(db: DatabaseSync): void {
+  const owner = db as StatementCacheOwner;
+  installStatementInvalidation(owner);
+  owner[statementCacheEnabledSymbol] = true;
+}
+
+function queryFitsStatementCache(sql: string, parameters: readonly SQLInputValue[]): boolean {
+  let bytes = Buffer.byteLength(sql);
+  if (bytes > statementCacheEntryBytes) {
+    return false;
+  }
+  for (const parameter of parameters) {
+    if (typeof parameter === "string") {
+      bytes += Buffer.byteLength(parameter);
+    } else if (ArrayBuffer.isView(parameter)) {
+      bytes += parameter.byteLength;
+    }
+    if (bytes > statementCacheEntryBytes) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function executeWithCachedStatement<Result>(
   db: DatabaseSync,
   sql: string,
+  parameters: readonly SQLInputValue[],
   execute: (statement: StatementSync) => Result,
 ): Result {
   const owner = db as StatementCacheOwner;
   installStatementInvalidation(owner);
+  if (
+    !owner[statementCacheEnabledSymbol] ||
+    owner[authorizerActiveSymbol] ||
+    !queryFitsStatementCache(sql, parameters)
+  ) {
+    return execute(db.prepare(sql));
+  }
   let cache = owner[statementCacheSymbol];
   if (!cache) {
     cache = {
@@ -151,7 +193,7 @@ function executeCompiledSqliteQuerySync<Row>(
   compiledQuery: CompiledQuery<Row>,
 ): QueryResult<Row> {
   const parameters = compiledQuery.parameters as SQLInputValue[];
-  return executeWithCachedStatement(db, compiledQuery.sql, (statement) => {
+  return executeWithCachedStatement(db, compiledQuery.sql, parameters, (statement) => {
     if (statement.columns().length > 0) {
       // Node's all() snapshots the column count before SQLite can reprepare
       // an expired statement. Eagerly consuming iterate() reads it after step.

@@ -4,6 +4,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import {
   clearNodeSqliteKyselyCacheForDatabase,
+  enableNodeSqliteKyselyStatementCache,
   executeSqliteQuerySync,
   getNodeSqliteKysely,
 } from "../infra/kysely-sync.js";
@@ -523,6 +524,7 @@ export function openOpenClawStateDatabase(
   }
   ensureOpenClawStatePermissions(pathname, env);
   const db = openNodeSqliteDatabase(pathname);
+  enableNodeSqliteKyselyStatementCache(db);
   const walMaintenance = (() => {
     let maintenance: SqliteWalMaintenance | undefined;
     try {

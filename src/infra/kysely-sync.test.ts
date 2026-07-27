@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { withTestTimeout } from "../../test/helpers/promise.js";
 import {
   clearNodeSqliteKyselyCacheForDatabase,
+  enableNodeSqliteKyselyStatementCache,
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
   getNodeSqliteKysely,
@@ -233,10 +234,60 @@ describe("kysely sync helpers", () => {
     expect(executeSqliteQuerySync(database, select).rows).toEqual([{ id: null, name: null }]);
     expect(executeSqliteQuerySync(database, select).rows).toEqual([{ id: null, name: null }]);
     expect(executeSqliteQuerySync(database, select).rows).toEqual([{ id: null, name: null }]);
-    expect(prepares.calls()).toBe(4);
+    expect(prepares.calls()).toBe(5);
 
     database.setAuthorizer(null);
     expect(executeSqliteQuerySync(database, select).rows).toEqual([{ id: 1, name: "Ada" }]);
+    expect(prepares.calls()).toBe(6);
+  });
+
+  it("does not cache while a dynamic SQLite authorizer is installed", () => {
+    database = new DatabaseSync(":memory:");
+    if (typeof database.setAuthorizer !== "function") {
+      return;
+    }
+    database.exec("create table items (id integer primary key, name text not null)");
+    database.exec("insert into items (id, name) values (1, 'Ada')");
+    const db = getNodeSqliteKysely<SyncHelperTestDatabase>(database);
+    const select = db.selectFrom("items").selectAll();
+    const prepares = countPrepares(database);
+    let allow = true;
+    database.setAuthorizer(() => (allow ? constants.SQLITE_OK : constants.SQLITE_DENY));
+
+    expect(executeSqliteQuerySync(database, select).rows).toEqual([{ id: 1, name: "Ada" }]);
+    expect(executeSqliteQuerySync(database, select).rows).toEqual([{ id: 1, name: "Ada" }]);
+    expect(executeSqliteQuerySync(database, select).rows).toEqual([{ id: 1, name: "Ada" }]);
+    expect(prepares.calls()).toBe(3);
+
+    allow = false;
+    expect(() => executeSqliteQuerySync(database!, select)).toThrow(/not authorized/iu);
+    expect(prepares.calls()).toBe(4);
+  });
+
+  it("does not retain oversized statement parameters", () => {
+    database = new DatabaseSync(":memory:");
+    const db = getNodeSqliteKysely<SyncHelperTestDatabase>(database);
+    const lengthOf = (value: string) => db.selectNoFrom(sql<number>`length(${value})`.as("value"));
+    const prepares = countPrepares(database);
+
+    expect(executeSqliteQuerySync(database, lengthOf("small")).rows).toEqual([{ value: 5 }]);
+    expect(executeSqliteQuerySync(database, lengthOf("small")).rows).toEqual([{ value: 5 }]);
+    expect(executeSqliteQuerySync(database, lengthOf("small")).rows).toEqual([{ value: 5 }]);
+    expect(prepares.calls()).toBe(2);
+
+    const oversized = "x".repeat(64 * 1024 + 1);
+    expect(executeSqliteQuerySync(database, lengthOf(oversized)).rows).toEqual([
+      { value: oversized.length },
+    ]);
+    expect(prepares.calls()).toBe(3);
+    expect(executeSqliteQuerySync(database, lengthOf("small")).rows).toEqual([{ value: 5 }]);
+    expect(prepares.calls()).toBe(3);
+
+    const oversizedSql = db.selectNoFrom(
+      sql.raw<number>(`1 /*${"x".repeat(64 * 1024)}*/`).as("value"),
+    );
+    expect(executeSqliteQuerySync(database, oversizedSql).rows).toEqual([{ value: 1 }]);
+    expect(executeSqliteQuerySync(database, oversizedSql).rows).toEqual([{ value: 1 }]);
     expect(prepares.calls()).toBe(5);
   });
 
@@ -318,6 +369,7 @@ describe("kysely sync helpers", () => {
       import { DatabaseSync } from "node:sqlite";
       import {
         clearNodeSqliteKyselyCacheForDatabase,
+        enableNodeSqliteKyselyStatementCache,
         executeSqliteQuerySync,
         getNodeSqliteKysely,
       } from ${JSON.stringify(moduleUrl)};
@@ -335,6 +387,7 @@ describe("kysely sync helpers", () => {
           return statement;
         };
         const db = getNodeSqliteKysely(database);
+        enableNodeSqliteKyselyStatementCache(database);
         const select = db.selectFrom("items").selectAll().orderBy("id");
         executeSqliteQuerySync(database, select);
         executeSqliteQuerySync(database, select);
@@ -403,6 +456,7 @@ describe("kysely sync helpers", () => {
 });
 
 function countPrepares(database: DatabaseSync): { calls: () => number } {
+  enableNodeSqliteKyselyStatementCache(database);
   const originalPrepare = database.prepare.bind(database);
   let calls = 0;
   database.prepare = (sqlText, options) => {
