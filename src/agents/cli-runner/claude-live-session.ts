@@ -83,6 +83,8 @@ type ClaudeLiveTurn = {
   timeoutTimer: NodeJS.Timeout | null;
   activeTools: Map<string, ClaudeLiveActiveTool>;
   observedStdout: boolean;
+  /** Only resumed turns may replay a lifecycle-only stall through a fork. */
+  useResume: boolean;
   /** True after any output other than init or the exact synthetic queue placeholder. */
   hasReplayUnsafeActivity: boolean;
   /**
@@ -823,6 +825,7 @@ function armNoOutputTimer(session: ClaudeLiveSession, turn: ClaudeLiveTurn, dela
       }
     }
     const retryableResumeStall =
+      turn.useResume &&
       !turn.hasReplayUnsafeActivity &&
       turn.toolEventCount === 0 &&
       turn.activeTools.size === 0 &&
@@ -1529,6 +1532,7 @@ function createTurn(params: {
   context: PreparedCliRunContext;
   noOutputTimeoutMs: number;
   allowSyntheticContinuationGrace: boolean;
+  useResume: boolean;
   onAssistantDelta: (delta: CliStreamingDelta) => void;
   onThinkingDelta?: (delta: CliThinkingDelta) => void;
   onThinkingProgress?: (progress: CliThinkingProgress) => void;
@@ -1566,6 +1570,7 @@ function createTurn(params: {
     timeoutTimer: null,
     activeTools: new Map(),
     observedStdout: false,
+    useResume: params.useResume,
     hasReplayUnsafeActivity: false,
     pendingSyntheticPlaceholder: false,
     allowSyntheticContinuationGrace: params.allowSyntheticContinuationGrace,
@@ -1910,6 +1915,7 @@ export async function runClaudeLiveSessionTurn(params: {
       context: params.context,
       noOutputTimeoutMs: params.noOutputTimeoutMs,
       allowSyntheticContinuationGrace: params.useResume && createdSessionForTurn,
+      useResume: params.useResume,
       onAssistantDelta: params.onAssistantDelta,
       onThinkingDelta: params.onThinkingDelta,
       onThinkingProgress: params.onThinkingProgress,

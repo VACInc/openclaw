@@ -690,20 +690,12 @@ describe("claude live session provisional results", () => {
     expect(driver.cancel).not.toHaveBeenCalled();
   });
 
-  it("marks a resumed synthetic-only stall as safe for cache-preserving recovery", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    const driver = installLiveStdoutDriver();
-    const resultPromise = startLiveTurn({
-      runId: "run-synthetic-no-result",
-      timeoutMs: 60_000,
-      noOutputTimeoutMs: 1_000,
+  it.each([
+    {
+      label: "marks a resumed synthetic-only stall as safe for cache-preserving recovery",
       useResume: true,
-    });
-    await vi.advanceTimersByTimeAsync(0);
-    await driver.stdout.waitReady();
-
-    driver.stdout.emit(
-      jsonl([
+      expectedCode: "cli_no_output_timeout",
+      lines: [
         { type: "system", subtype: "init", session_id: "live-synthetic-no-result" },
         {
           type: "assistant",
@@ -714,71 +706,25 @@ describe("claude live session provisional results", () => {
             content: [{ type: "text", text: "No response requested." }],
           },
         },
-      ]),
-    );
-
-    const rejection = expect(resultPromise).rejects.toMatchObject({
-      name: "FailoverError",
-      code: "cli_no_output_timeout",
-      cliTimeout: {
-        mode: "no-output",
-        timeoutSeconds: 1,
-        observedActivity: true,
-        activeToolCount: 0,
-        backgroundTaskCount: 0,
-      },
-    });
-    await vi.advanceTimersByTimeAsync(1_000);
-    await rejection;
-    expect(driver.cancel).toHaveBeenCalledWith("manual-cancel");
-  });
-
-  it("marks a resumed init-only stall as safe for recovery", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    const driver = installLiveStdoutDriver();
-    const resultPromise = startLiveTurn({
-      runId: "run-init-no-result",
-      timeoutMs: 60_000,
-      noOutputTimeoutMs: 1_000,
+      ],
+    },
+    {
+      label: "marks a resumed init-only stall as safe for recovery",
       useResume: true,
-    });
-    await vi.advanceTimersByTimeAsync(0);
-    await driver.stdout.waitReady();
-
-    driver.stdout.emit(
-      jsonl([{ type: "system", subtype: "init", session_id: "live-init-no-result" }]),
-    );
-
-    const rejection = expect(resultPromise).rejects.toMatchObject({
-      name: "FailoverError",
-      code: "cli_no_output_timeout",
-      cliTimeout: {
-        mode: "no-output",
-        timeoutSeconds: 1,
-        observedActivity: true,
-        activeToolCount: 0,
-        backgroundTaskCount: 0,
-      },
-    });
-    await vi.advanceTimersByTimeAsync(1_000);
-    await rejection;
-    expect(driver.cancel).toHaveBeenCalledWith("manual-cancel");
-  });
-
-  it("does not mark a stall as retryable after substantive assistant output", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    const driver = installLiveStdoutDriver();
-    const resultPromise = startLiveTurn({
-      runId: "run-synthetic-then-substantive",
-      timeoutMs: 60_000,
-      noOutputTimeoutMs: 1_000,
+      expectedCode: "cli_no_output_timeout",
+      lines: [{ type: "system", subtype: "init", session_id: "live-init-no-result" }],
+    },
+    {
+      label: "does not mark a fresh init-only stall as safe to replay",
+      useResume: false,
+      expectedCode: undefined,
+      lines: [{ type: "system", subtype: "init", session_id: "live-fresh-init-no-result" }],
+    },
+    {
+      label: "does not mark a stall as retryable after substantive assistant output",
       useResume: true,
-    });
-    await vi.advanceTimersByTimeAsync(0);
-    await driver.stdout.waitReady();
-
-    driver.stdout.emit(
-      jsonl([
+      expectedCode: undefined,
+      lines: [
         { type: "system", subtype: "init", session_id: "live-synthetic-substantive" },
         {
           type: "assistant",
@@ -798,8 +744,20 @@ describe("claude live session provisional results", () => {
             content: [{ type: "text", text: "Partial real answer" }],
           },
         },
-      ]),
-    );
+      ],
+    },
+  ])("$label", async ({ useResume, expectedCode, lines }) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const driver = installLiveStdoutDriver();
+    const resultPromise = startLiveTurn({
+      runId: `run-replay-safe-stall-${useResume ? "resume" : "fresh"}`,
+      timeoutMs: 60_000,
+      noOutputTimeoutMs: 1_000,
+      useResume,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await driver.stdout.waitReady();
+    driver.stdout.emit(jsonl(lines));
 
     const errorPromise = resultPromise.catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(1_000);
@@ -814,7 +772,7 @@ describe("claude live session provisional results", () => {
         backgroundTaskCount: 0,
       },
     });
-    expect(error.code).toBeUndefined();
+    expect(error.code).toBe(expectedCode);
     expect(driver.cancel).toHaveBeenCalledWith("manual-cancel");
   });
 

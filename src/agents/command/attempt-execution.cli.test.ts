@@ -689,6 +689,147 @@ describe("CLI attempt execution", () => {
     expect(persisted[sessionKey]?.cliSessionBindings?.["claude-cli"]).toBeUndefined();
   });
 
+  it("clears a persisted fork successor when recovery fails after rebinding", async () => {
+    const sessionKey = "agent:main:direct:cli-fork-finalization-failure";
+    const cliSessionId = "finalization-parent-session";
+    const forkedCliSessionId = "partial-fork-successor";
+    await writeClaudeCliAssistantTranscript(cliSessionId);
+    const sessionEntry = makeClaudeCliSessionEntry(
+      "session-cli-fork-finalization-failure",
+      cliSessionId,
+    );
+    sessionEntry.cliSessionBindings!["claude-cli"]!.forkNextResume = true;
+    const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
+    await writeSessionStoreSeed(sessionStore);
+    const finalizationError = Object.assign(new Error("fork finalization failed"), {
+      name: "AbortError",
+    });
+    runCliAgentMock.mockImplementationOnce(async (args: unknown) => {
+      const runArgs = requireRecord(args, "run CLI agent argument");
+      await (runArgs.claimCliSessionFork as () => Promise<boolean>)();
+      await (runArgs.persistCliSessionForkSuccessor as (sessionId: string) => Promise<void>)(
+        forkedCliSessionId,
+      );
+      throw finalizationError;
+    });
+
+    await expect(
+      runClaudeCliAttempt({
+        sessionKey,
+        sessionEntry,
+        sessionStore,
+        body: "resume and fail after fork",
+        runId: "run-cli-fork-finalization-failure",
+      }),
+    ).rejects.toBe(finalizationError);
+
+    expect(sessionStore[sessionKey]?.cliSessionBindings?.["claude-cli"]).toBeUndefined();
+    expect(readSessionStore()[sessionKey]?.cliSessionBindings?.["claude-cli"]).toBeUndefined();
+  });
+
+  it("preserves a restored fork marker when recovery dies before producing a successor", async () => {
+    const sessionKey = "agent:main:direct:cli-fork-before-successor-failure";
+    const cliSessionId = "recovery-source-session";
+    await writeClaudeCliAssistantTranscript(cliSessionId);
+    const sessionEntry = makeClaudeCliSessionEntry(
+      "session-cli-fork-before-successor-failure",
+      cliSessionId,
+    );
+    const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
+    await writeSessionStoreSeed(sessionStore);
+    const recoveryError = Object.assign(new Error("fork process died before init"), {
+      name: "AbortError",
+    });
+    runCliAgentMock.mockImplementationOnce(async (args: unknown) => {
+      const runArgs = requireRecord(args, "run CLI agent argument");
+      await (
+        runArgs.onBeforeForkedCliSessionRetry as (params: {
+          provider: string;
+          reason: "timeout";
+          sessionId: string;
+        }) => Promise<boolean>
+      )({ provider: "claude-cli", reason: "timeout", sessionId: cliSessionId });
+      await (runArgs.claimCliSessionFork as () => Promise<boolean>)();
+      await (runArgs.restoreCliSessionFork as () => Promise<void>)();
+      throw recoveryError;
+    });
+
+    await expect(
+      runClaudeCliAttempt({
+        sessionKey,
+        sessionEntry,
+        sessionStore,
+        body: "resume and fail before fork init",
+        runId: "run-cli-fork-before-successor-failure",
+      }),
+    ).rejects.toBe(recoveryError);
+
+    expect(sessionStore[sessionKey]?.cliSessionBindings?.["claude-cli"]).toMatchObject({
+      sessionId: cliSessionId,
+      forkNextResume: true,
+    });
+    expect(readSessionStore()[sessionKey]?.cliSessionBindings?.["claude-cli"]).toMatchObject({
+      sessionId: cliSessionId,
+      forkNextResume: true,
+    });
+  });
+
+  it("does not clear a concurrent rebind after failed fork recovery", async () => {
+    const sessionKey = "agent:main:direct:cli-fork-concurrent-rebind";
+    const cliSessionId = "concurrent-parent-session";
+    const forkedCliSessionId = "failed-fork-successor";
+    const concurrentCliSessionId = "newer-concurrent-session";
+    await writeClaudeCliAssistantTranscript(cliSessionId);
+    const sessionEntry = makeClaudeCliSessionEntry(
+      "session-cli-fork-concurrent-rebind",
+      cliSessionId,
+    );
+    const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
+    await writeSessionStoreSeed(sessionStore);
+    const recoveryError = Object.assign(new Error("fork recovery aborted"), {
+      name: "AbortError",
+    });
+    runCliAgentMock.mockImplementationOnce(async (args: unknown) => {
+      const runArgs = requireRecord(args, "run CLI agent argument");
+      await (
+        runArgs.onBeforeForkedCliSessionRetry as (params: {
+          provider: string;
+          reason: "timeout";
+          sessionId: string;
+        }) => Promise<boolean>
+      )({ provider: "claude-cli", reason: "timeout", sessionId: cliSessionId });
+      await (runArgs.claimCliSessionFork as () => Promise<boolean>)();
+      await (runArgs.persistCliSessionForkSuccessor as (sessionId: string) => Promise<void>)(
+        forkedCliSessionId,
+      );
+
+      const concurrentEntry = makeClaudeCliSessionEntry(
+        sessionEntry.sessionId,
+        concurrentCliSessionId,
+      );
+      await replaceSessionEntry({ sessionKey, storePath }, concurrentEntry);
+      sessionStore[sessionKey] = concurrentEntry;
+      throw recoveryError;
+    });
+
+    await expect(
+      runClaudeCliAttempt({
+        sessionKey,
+        sessionEntry,
+        sessionStore,
+        body: "resume while another turn rebinds",
+        runId: "run-cli-fork-concurrent-rebind",
+      }),
+    ).rejects.toBe(recoveryError);
+
+    expect(sessionStore[sessionKey]?.cliSessionBindings?.["claude-cli"]?.sessionId).toBe(
+      concurrentCliSessionId,
+    );
+    expect(readSessionStore()[sessionKey]?.cliSessionBindings?.["claude-cli"]?.sessionId).toBe(
+      concurrentCliSessionId,
+    );
+  });
+
   it("does not install a stale-session clearing hook for storeless CLI attempts", async () => {
     const sessionKey = "agent:main:internal-storeless";
     const cliSessionId = "storeless-stale-session";

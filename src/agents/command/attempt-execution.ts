@@ -896,12 +896,17 @@ export function runAgentAttempt(params: {
       try {
         return await runCliWithSession(activeCliSessionBinding?.sessionId, activeCliSessionBinding);
       } catch (err) {
+        const failedCliSessionBinding = getCliSessionBinding(
+          params.sessionEntry,
+          cliExecutionProvider,
+        );
+        const failedCliSessionId = failedCliSessionBinding?.sessionId;
         if (
           isClaudeCliProvider(cliExecutionProvider) &&
-          !activeCliSessionBinding?.forkNextResume &&
+          failedCliSessionBinding?.forkNextResume !== true &&
           shouldClearReusedCliSessionAfterError(err) &&
           !hasNewGeneratedMediaTaskForSessionKey(params.sessionKey, mediaTaskIdsBefore) &&
-          activeCliSessionBinding?.sessionId &&
+          failedCliSessionId &&
           mutableCliSessionStore
         ) {
           log.warn(
@@ -911,6 +916,7 @@ export function runAgentAttempt(params: {
           params.sessionEntry =
             (await clearCliSessionInStore({
               provider: cliExecutionProvider,
+              expectedCliSessionId: failedCliSessionId,
               ...mutableCliSessionStore,
             })) ?? params.sessionEntry;
         }
