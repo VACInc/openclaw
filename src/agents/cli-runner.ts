@@ -1409,6 +1409,22 @@ export async function runPreparedCliAgent(
         return deliveredFailure;
       }
       let recoveryError = err;
+      if (
+        params.forkCliSessionOnResume &&
+        resumeCheckpointId &&
+        context.preparedBackend.backend.resumeAtArg &&
+        isUnsupportedCliResumeAtError(err, context.preparedBackend.backend.resumeAtArg)
+      ) {
+        recoveryError = new FailoverError("CLI backend cannot resume from the stored checkpoint.", {
+          reason: "session_expired",
+          provider: params.provider,
+          model: context.modelId,
+          sessionId: params.sessionId,
+          lane: params.lane,
+          status: resolveFailoverStatus("session_expired"),
+          cause: err,
+        });
+      }
       if (isFailoverError(recoveryError)) {
         if (
           !params.forkCliSessionOnResume &&

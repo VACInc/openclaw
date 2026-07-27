@@ -778,6 +778,79 @@ describe("runCliAgent reliability", () => {
     expect(supervisorSpawnMock).toHaveBeenCalledTimes(3);
   });
 
+  it("cold reseeds an initially armed checkpoint after a Claude downgrade", async () => {
+    supervisorSpawnMock.mockClear();
+    supervisorSpawnMock
+      .mockResolvedValueOnce(
+        createManagedRun({
+          reason: "exit",
+          exitCode: 1,
+          exitSignal: null,
+          durationMs: 25,
+          stdout: "",
+          stderr: "error: unknown option '--resume-session-at'",
+          timedOut: false,
+          noOutputTimedOut: false,
+        }),
+      )
+      .mockResolvedValueOnce(
+        createManagedRun({
+          reason: "exit",
+          exitCode: 0,
+          exitSignal: null,
+          durationMs: 50,
+          stdout: "fresh fallback",
+          stderr: "",
+          timedOut: false,
+          noOutputTimedOut: false,
+        }),
+      );
+    const claimFork = vi.fn(async () => true);
+    const restoreFork = vi.fn(async () => {});
+    const clearBeforeRetry = vi.fn(async () => true);
+    const context = buildPreparedContext({
+      sessionKey: "agent:main:downgraded-claude",
+      runId: "run-downgraded-claude",
+      cliSessionId: "downgraded-session",
+      provider: "claude-cli",
+      model: "opus",
+      openClawHistoryPrompt: CLI_RESEED_PROMPT,
+    });
+    context.preparedBackend.backend = {
+      ...context.preparedBackend.backend,
+      resumeArgs: ["--resume", "{sessionId}"],
+      forkArg: "--fork-session",
+      resumeAtArg: "--resume-session-at",
+    };
+    context.params.cliSessionBinding = {
+      sessionId: "downgraded-session",
+      resumeCheckpointId: "assistant-before-stall",
+      forkNextResume: true,
+    };
+
+    const result = await runPreparedCliAgent({
+      ...context,
+      params: {
+        ...context.params,
+        forkCliSessionOnResume: true,
+        claimCliSessionFork: claimFork,
+        restoreCliSessionFork: restoreFork,
+        persistCliSessionForkSuccessor: vi.fn(async () => {}),
+        onBeforeFreshCliSessionRetry: clearBeforeRetry,
+      },
+    });
+
+    expect(result.payloads).toEqual([{ text: "fresh fallback" }]);
+    expect(claimFork).toHaveBeenCalledOnce();
+    expect(restoreFork).toHaveBeenCalledOnce();
+    expect(clearBeforeRetry).toHaveBeenCalledWith({
+      provider: "claude-cli",
+      reason: "session_expired",
+      sessionId: "downgraded-session",
+    });
+    expect(supervisorSpawnMock).toHaveBeenCalledTimes(2);
+  });
+
   it("preserves fresh retry for direct CLI callers without a pre-clear hook", async () => {
     supervisorSpawnMock.mockClear();
     supervisorSpawnMock.mockResolvedValueOnce(
