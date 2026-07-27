@@ -821,6 +821,30 @@ describe("command queue", () => {
     await expect(enqueueCommandInLane(CommandLane.Main, async () => "next")).resolves.toBe("next");
   });
 
+  it("rejects a lane waiter whose signal aborted before enqueue without consuming a slot", async () => {
+    // An already-aborted signal never dispatches a fresh abort event, so enrollment
+    // must recheck the signal itself or the entry would silently keep its slot.
+    const { task: first, release } = enqueueBlockedMainTask(async () => "first");
+    const abortError = new Error("cancelled before enqueue");
+    let queuedTaskStarted = false;
+    const queued = enqueueCommandInLane(
+      CommandLane.Main,
+      async () => {
+        queuedTaskStarted = true;
+        return "queued";
+      },
+      { queueWaitAbortSignal: AbortSignal.abort(abortError) },
+    );
+
+    await expect(queued).rejects.toBe(abortError);
+    expect(queuedTaskStarted).toBe(false);
+    expectLaneSnapshotFields(CommandLane.Main, { activeCount: 1, queuedCount: 0 });
+
+    release();
+    await expect(first).resolves.toBe("first");
+    await expect(enqueueCommandInLane(CommandLane.Main, async () => "next")).resolves.toBe("next");
+  });
+
   it("keeps draining functional after synchronous onWait failure", async () => {
     const lane = `drain-sync-throw-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     setCommandLaneConcurrency(lane, 1);
