@@ -907,4 +907,25 @@ describe("deliverFollowupDecision", () => {
 
     expect(onBlockReply).not.toHaveBeenCalled();
   });
+
+  it("does not retry an intentionally suppressed routed follow-up", async () => {
+    const onBlockReply = vi.fn(async (_payload: ReplyPayload) => {});
+    deliveryState.routeReply.mockReset();
+    deliveryState.routeReply.mockResolvedValue({
+      ok: true,
+      delivered: false,
+      suppressed: true,
+      reason: "reasoning_payload_not_external",
+    });
+
+    await deliverFollowupDecision({
+      decision: { kind: "deliver", payloads: [{ text: "internal reasoning", isReasoning: true }] },
+      turn: createTurn(),
+      defaults: createDefaults(onBlockReply),
+      runId: "run-1",
+      runFollowup: vi.fn(async () => {}),
+    });
+
+    expect(onBlockReply).not.toHaveBeenCalled();
+  });
 });

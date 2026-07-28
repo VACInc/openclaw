@@ -116,7 +116,10 @@ type RouteReplyResult = {
   /** True when a hook intentionally suppressed provider delivery. */
   suppressed?: boolean;
   /** Suppression reason when delivery was intentionally skipped. */
-  reason?: "cancelled_by_reply_payload_sending_hook" | "empty_after_reply_payload_sending_hook";
+  reason?:
+    | "reasoning_payload_not_external"
+    | "cancelled_by_reply_payload_sending_hook"
+    | "empty_after_reply_payload_sending_hook";
   /** Optional message ID from the provider. */
   messageId?: string;
   /** Error message if the send failed. */
@@ -143,7 +146,12 @@ function hasVisibleRouteReplyDelivery(results: readonly { messageId?: string }[]
 export async function routeReply(params: RouteReplyParams): Promise<RouteReplyResult> {
   const { payload, channel, to, accountId, threadId, cfg, abortSignal } = params;
   if (shouldSuppressReasoningPayload(payload)) {
-    return { ok: true, delivered: false };
+    return {
+      ok: true,
+      delivered: false,
+      suppressed: true,
+      reason: "reasoning_payload_not_external",
+    };
   }
   const normalizedChannel = normalizeMessageChannel(channel);
   const channelId =
