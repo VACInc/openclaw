@@ -51,6 +51,7 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
     recordAgentDispatchCompleted,
     recordProcessed,
     replyResult,
+    replyOperationRunState,
     replyRoute,
     routeReplyToOriginating,
     sendFinalPayload,
@@ -292,6 +293,7 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
   await waitForPendingDirectBlockReplyDelivery(getDispatchAbortSignal());
   let counts = dispatcher.getQueuedCounts();
   let noVisibleReplyFallbackDelivered = false;
+  const replyAcceptedByActiveRun = replyOperationRunState.admission?.status === "accepted";
   // Visible agent turns must never end silently: empty model completions get a
   // core fallback final. emptyFinalAllowedAsSilent is the only sanctioned silence.
   // Routed streamed blocks bypass dispatcher counts, so blockCount and the
@@ -302,6 +304,7 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
     sourceReplyDeliveryMode !== "message_tool_only" &&
     !sawVisibleFinalDelivery &&
     !getObservedReplyDelivery() &&
+    !replyAcceptedByActiveRun &&
     !emptyFinalAllowedAsSilent &&
     !sawDedupedAgainstBlock &&
     !hasDeliveredRoutedBlockReply() &&
@@ -377,6 +380,7 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
       ...(!sawVisibleFinalDelivery &&
       !noVisibleReplyFallbackDelivered &&
       !getObservedReplyDelivery() &&
+      !replyAcceptedByActiveRun &&
       !emptyFinalAllowedAsSilent
         ? { noVisibleReplyFallbackEligible: true }
         : {}),
