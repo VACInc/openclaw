@@ -49,11 +49,14 @@ function trackFullTranscriptLoads(env: NodeJS.ProcessEnv): () => number {
       sqlText.includes('select "event_json" from "transcript_events"') &&
       sqlText.includes('order by "seq" asc');
     if (isFullTranscriptLoad) {
-      const originalIterate = statement.iterate.bind(statement);
-      statement.iterate = (...args: Parameters<typeof originalIterate>) => {
+      const originalIterate = statement.iterate.bind(statement) as (
+        ...args: unknown[]
+      ) => ReturnType<typeof statement.iterate>;
+      // iterate is overloaded, so the wrapper forwards untyped and casts back.
+      statement.iterate = ((...args: unknown[]) => {
         loads += 1;
         return originalIterate(...args);
-      };
+      }) as typeof statement.iterate;
     }
     return statement;
   });
