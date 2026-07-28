@@ -94,6 +94,37 @@ describe("routeReply delivery result", () => {
     },
   );
 
+  it("treats a send without adapter identity as ambiguous and non-retryable", async () => {
+    mocks.deliverOutboundPayloads.mockImplementationOnce(
+      async ({
+        onPayloadDeliveryOutcome,
+      }: {
+        onPayloadDeliveryOutcome?: (outcome: unknown) => void;
+      }) => {
+        onPayloadDeliveryOutcome?.({
+          index: 0,
+          status: "suppressed",
+          reason: "adapter_returned_no_identity",
+        });
+        return [];
+      },
+    );
+
+    const res = await routeReply({
+      payload: { text: "hello" },
+      channel: "telegram",
+      to: "chat-1",
+      cfg: {} as never,
+    });
+
+    expect(res).toEqual({
+      ok: true,
+      delivered: true,
+      ambiguous: true,
+      reason: "adapter_returned_no_identity",
+    });
+  });
+
   it("preserves the last delivered message id when a later send fails", async () => {
     const cause = new Error("network reset");
     mocks.deliverOutboundPayloads.mockRejectedValueOnce(

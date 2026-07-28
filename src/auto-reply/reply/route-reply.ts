@@ -111,13 +111,16 @@ type RouteReplyParams = {
 type RouteReplyResult = {
   /** Whether the reply was sent successfully. */
   ok: boolean;
-  /** Whether at least one recipient-visible send completed. */
+  /** Whether a recipient-visible send completed or may already have completed. */
   delivered: boolean;
+  /** True when the adapter may have sent but returned no delivery identity. */
+  ambiguous?: boolean;
   /** True when a hook intentionally suppressed provider delivery. */
   suppressed?: boolean;
-  /** Suppression reason when delivery was intentionally skipped. */
+  /** Delivery disposition reason when additional caller context is useful. */
   reason?:
     | "reasoning_payload_not_external"
+    | "adapter_returned_no_identity"
     | "cancelled_by_message_sending_hook"
     | "cancelled_by_reply_payload_sending_hook"
     | "empty_after_message_sending_hook"
@@ -380,6 +383,16 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
         ok: true,
         delivered: false,
         suppressed: true,
+        reason: send.reason,
+      };
+    }
+    if (send.status === "suppressed" && send.reason === "adapter_returned_no_identity") {
+      // The adapter call completed but returned no identity. Treat that as
+      // potentially visible so callers never retry or emit a duplicate fallback.
+      return {
+        ok: true,
+        delivered: true,
+        ambiguous: true,
         reason: send.reason,
       };
     }
