@@ -294,6 +294,9 @@ export async function runReplyAgent(
       },
     );
     if (steerOutcome.queued) {
+      if (replyOperationRunState) {
+        replyOperationRunState.admission = { status: "accepted", mode: "steer" };
+      }
       activeReplyOperation?.recordActivity();
       try {
         await turnAdoptionLifecycle?.onAdopted();
@@ -386,6 +389,9 @@ export async function runReplyAgent(
     if (!enqueued) {
       typing.cleanup();
       return undefined;
+    }
+    if (replyOperationRunState) {
+      replyOperationRunState.admission = { status: "accepted", mode: "followup" };
     }
     // The queue must stay dormant while the active owner can still collect
     // messages. Registering after enqueue closes the owner-clear race.
