@@ -1048,8 +1048,8 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
     mocks.routeReply.mockImplementation(async (paramsUnknown: unknown) => {
       const params = paramsUnknown as { payload?: { text?: string } };
       return params.payload?.text === NO_VISIBLE_REPLY_FALLBACK_TEXT
-        ? { ok: true, messageId: "fallback-1" }
-        : { ok: true, suppressed: true };
+        ? { ok: true, delivered: true, messageId: "fallback-1" }
+        : { ok: true, delivered: false, suppressed: true };
     });
     const dispatcher = createDispatcher();
     const replyResolver = vi.fn(async () => ({ text: "real answer" }));
