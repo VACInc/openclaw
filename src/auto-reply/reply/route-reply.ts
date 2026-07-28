@@ -311,8 +311,15 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
             }
           : undefined,
     });
-    if (send.status === "failed" || send.status === "partial_failed") {
+    if (send.status === "failed") {
       throw send.error;
+    }
+    if (send.status === "partial_failed") {
+      return {
+        ok: false,
+        error: `Failed to route reply to ${channel}: ${formatErrorMessage(send.error)}`,
+        messageId: send.results.at(-1)?.messageId,
+      };
     }
     if (
       send.status === "suppressed" &&

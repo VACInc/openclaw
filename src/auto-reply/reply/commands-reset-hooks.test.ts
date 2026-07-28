@@ -9,7 +9,9 @@ import { parseInlineDirectives } from "./directive-handling.parse.js";
 
 const triggerInternalHookMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const routeReplyMock = vi.hoisted(() =>
-  vi.fn<(params: unknown) => Promise<{ ok: boolean }>>(async () => ({ ok: true })),
+  vi.fn<(params: unknown) => Promise<{ ok: boolean; messageId?: string; suppressed?: boolean }>>(
+    async () => ({ ok: true, messageId: "reset-hook-1" }),
+  ),
 );
 const resetMocks = vi.hoisted(() => ({
   resetConfiguredBindingTargetInPlace: vi.fn().mockResolvedValue({ ok: true as const }),
@@ -146,6 +148,7 @@ describe("handleCommands reset hooks", () => {
     resetMocks.resetConfiguredBindingTargetInPlace.mockResolvedValue({ ok: true });
     resetMocks.resolveBoundAcpThreadSessionKey.mockReturnValue(undefined);
     triggerInternalHookMock.mockResolvedValue(undefined);
+    routeReplyMock.mockResolvedValue({ ok: true, messageId: "reset-hook-1" });
   });
 
   afterEach(() => {
@@ -289,6 +292,7 @@ describe("handleCommands reset hooks", () => {
     triggerInternalHookMock.mockImplementationOnce(async (event: { messages: string[] }) => {
       event.messages.push("Reset hook says hi");
     });
+    const onObservedReplyDelivery = vi.fn();
     const params = buildResetParams(
       "/new",
       {
@@ -305,6 +309,7 @@ describe("handleCommands reset hooks", () => {
         MessageThreadId: "thread-1",
       },
     );
+    params.opts = { onObservedReplyDelivery };
 
     const result = await maybeHandleResetCommand(params);
 
@@ -315,7 +320,52 @@ describe("handleCommands reset hooks", () => {
       requesterSenderE164: "+15551234567",
       threadId: "thread-1",
     });
+    expect(onObservedReplyDelivery).toHaveBeenCalledOnce();
     expect(result).toEqual({ shouldContinue: false });
+  });
+
+  it.each([
+    ["failed", { ok: false }],
+    ["dropped", { ok: true }],
+    ["skipped", { ok: true, messageId: "skipped" }],
+    ["suppressed", { ok: true, suppressed: true }],
+    ["suppressed sentinel", { ok: true, messageId: "suppressed" }],
+  ] as const)("does not mark a %s reset hook route as observed", async (_name, routeResult) => {
+    triggerInternalHookMock.mockImplementationOnce(async (event: { messages: string[] }) => {
+      event.messages.push("Reset hook says hi");
+    });
+    routeReplyMock.mockResolvedValueOnce(routeResult);
+    const onObservedReplyDelivery = vi.fn();
+    const params = buildResetParams("/new", {
+      commands: { text: true },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+    } as OpenClawConfig);
+    params.opts = { onObservedReplyDelivery };
+
+    const result = await maybeHandleResetCommand(params);
+
+    expect(onObservedReplyDelivery).not.toHaveBeenCalled();
+    expect(result).toEqual({ shouldContinue: false });
+  });
+
+  it("marks a partially failed reset hook route as observed when a message was sent", async () => {
+    triggerInternalHookMock.mockImplementationOnce(async (event: { messages: string[] }) => {
+      event.messages.push("Reset hook says hi");
+    });
+    routeReplyMock.mockResolvedValueOnce({
+      ok: false,
+      messageId: "reset-hook-1",
+    });
+    const onObservedReplyDelivery = vi.fn();
+    const params = buildResetParams("/new", {
+      commands: { text: true },
+      channels: { whatsapp: { allowFrom: ["*"] } },
+    } as OpenClawConfig);
+    params.opts = { onObservedReplyDelivery };
+
+    await maybeHandleResetCommand(params);
+
+    expect(onObservedReplyDelivery).toHaveBeenCalledOnce();
   });
 
   it("prefers the target session entry when emitting reset hooks", async () => {

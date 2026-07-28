@@ -6,6 +6,7 @@ import type {
   ChannelThreadingAdapter,
 } from "../../channels/plugins/types.public.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { OutboundDeliveryError } from "../../infra/outbound/deliver-types.js";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
 import {
   createChannelTestPluginBase,
@@ -557,6 +558,30 @@ describe("routeReply", () => {
         channelId: "telegram",
         conversationId: "chat-1",
       },
+    });
+  });
+
+  it("preserves the last delivered message id when a later send fails", async () => {
+    const cause = new Error("network reset");
+    mocks.deliverOutboundPayloads.mockRejectedValueOnce(
+      new OutboundDeliveryError("network reset", {
+        cause,
+        results: [{ channel: "telegram", messageId: "msg-1" }],
+        stage: "platform_send",
+      }),
+    );
+
+    const res = await routeReply({
+      payload: { text: "hello" },
+      channel: "telegram",
+      to: "chat-1",
+      cfg: {} as never,
+    });
+
+    expect(res).toEqual({
+      ok: false,
+      error: "Failed to route reply to telegram: network reset",
+      messageId: "msg-1",
     });
   });
 

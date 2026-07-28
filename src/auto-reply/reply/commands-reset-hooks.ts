@@ -81,6 +81,7 @@ export async function emitResetCommandHooks(params: {
   storePath?: string;
   sessionEntry?: HandleCommandsParams["sessionEntry"];
   previousSessionEntry?: HandleCommandsParams["previousSessionEntry"];
+  onObservedReplyDelivery?: () => Promise<void> | void;
   workspaceDir: string;
 }): Promise<{ routedReply: boolean }> {
   const hookAgentId =
@@ -114,7 +115,7 @@ export async function emitResetCommandHooks(params: {
     const to = params.ctx.OriginatingTo || params.command.from || params.command.to;
     if (channel && to) {
       const { routeReply } = await loadRouteReplyRuntime();
-      await routeReply({
+      const result = await routeReply({
         payload: { text: hookEvent.messages.join("\n\n") },
         channel,
         to,
@@ -128,6 +129,15 @@ export async function emitResetCommandHooks(params: {
         cfg: params.cfg,
         replyKind: "final",
       });
+      const deliveredMessageId = result.messageId?.trim().toLowerCase();
+      if (
+        result.suppressed !== true &&
+        deliveredMessageId &&
+        deliveredMessageId !== "skipped" &&
+        deliveredMessageId !== "suppressed"
+      ) {
+        await params.onObservedReplyDelivery?.();
+      }
       routedReply = true;
     }
   }
