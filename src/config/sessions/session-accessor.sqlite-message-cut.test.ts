@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { trackSqliteStatementExecutions } from "../../../test/helpers/sqlite-statement-execution-counter.js";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
-import { clearNodeSqliteKyselyCacheForDatabase } from "../../infra/kysely-sync.js";
 import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
@@ -37,30 +37,13 @@ afterEach(() => {
 
 function trackFullTranscriptLoads(env: NodeJS.ProcessEnv): () => number {
   const database = openOpenClawAgentDatabase({ agentId, env });
-  // Statement caching reuses prepared statements, so prepare-call counting
-  // undercounts; count executions of the transcript query instead. Clear the
-  // cache first so already-cached statements cannot bypass the wrapped prepare.
-  clearNodeSqliteKyselyCacheForDatabase(database.db);
-  let loads = 0;
-  const originalPrepare = database.db.prepare.bind(database.db);
-  vi.spyOn(database.db, "prepare").mockImplementation((sqlText: string) => {
-    const statement = originalPrepare(sqlText);
-    const isFullTranscriptLoad =
-      sqlText.includes('select "event_json" from "transcript_events"') &&
-      sqlText.includes('order by "seq" asc');
-    if (isFullTranscriptLoad) {
-      const originalIterate = statement.iterate.bind(statement) as (
-        ...args: unknown[]
-      ) => ReturnType<typeof statement.iterate>;
-      // iterate is overloaded, so the wrapper forwards untyped and casts back.
-      statement.iterate = ((...args: unknown[]) => {
-        loads += 1;
-        return originalIterate(...args);
-      }) as typeof statement.iterate;
-    }
-    return statement;
-  });
-  return () => loads;
+  const { counts } = trackSqliteStatementExecutions(database.db, ["loads"], (sqlText) =>
+    sqlText.includes('select "event_json" from "transcript_events"') &&
+    sqlText.includes('order by "seq" asc')
+      ? "loads"
+      : null,
+  );
+  return () => counts.loads;
 }
 
 async function createSiblingSession(params: {
