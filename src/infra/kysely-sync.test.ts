@@ -190,7 +190,10 @@ describe("kysely sync helpers", () => {
     database = new DatabaseSync(":memory:");
     let nested = false;
     const db = getNodeSqliteKysely<SyncHelperTestDatabase>(database);
-    const query = db.selectNoFrom(sql<number>`nested_value()`.as("value"));
+    const query = db.selectNoFrom(
+      /* kysely-allow-raw: cache re-entry test needs a synthetic UDF call, not a store column. */
+      sql<number>`nested_value()`.as("value"),
+    );
     database.function("nested_value", () => {
       if (nested) {
         return 1;
@@ -267,7 +270,11 @@ describe("kysely sync helpers", () => {
   it("does not retain oversized statement parameters", () => {
     database = new DatabaseSync(":memory:");
     const db = getNodeSqliteKysely<SyncHelperTestDatabase>(database);
-    const lengthOf = (value: string) => db.selectNoFrom(sql<number>`length(${value})`.as("value"));
+    const lengthOf = (value: string) =>
+      db.selectNoFrom(
+        /* kysely-allow-raw: parameter-retention test measures binding size on a scalar, schema-free query. */
+        sql<number>`length(${value})`.as("value"),
+      );
     const prepares = countPrepares(database);
 
     expect(executeSqliteQuerySync(database, lengthOf("small")).rows).toEqual([{ value: 5 }]);
@@ -284,6 +291,7 @@ describe("kysely sync helpers", () => {
     expect(prepares.calls()).toBe(3);
 
     const oversizedSql = db.selectNoFrom(
+      /* kysely-allow-raw: admission-gate test needs an oversized SQL text, only reachable via raw. */
       sql.raw<number>(`1 /*${"x".repeat(64 * 1024)}*/`).as("value"),
     );
     expect(executeSqliteQuerySync(database, oversizedSql).rows).toEqual([{ value: 1 }]);
@@ -350,7 +358,11 @@ describe("kysely sync helpers", () => {
   it("resets a cached row statement after a step-time error", () => {
     database = new DatabaseSync(":memory:");
     const db = getNodeSqliteKysely<SyncHelperTestDatabase>(database);
-    const jsonValue = (value: string) => db.selectNoFrom(sql<string>`json(${value})`.as("value"));
+    const jsonValue = (value: string) =>
+      db.selectNoFrom(
+        /* kysely-allow-raw: step-error test needs json() to fail at execution time, not prepare time. */
+        sql<string>`json(${value})`.as("value"),
+      );
     const prepares = countPrepares(database);
 
     expect(executeSqliteQuerySync(database, jsonValue("{}")).rows).toEqual([{ value: "{}" }]);
