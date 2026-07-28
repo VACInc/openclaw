@@ -160,7 +160,7 @@ function summarizeVisibleRouteReplyDelivery(
   }
   return {
     delivered,
-    messageId: delivered ? lastVisibleMessageId : results.at(-1)?.messageId,
+    messageId: delivered ? lastVisibleMessageId : undefined,
   };
 }
 

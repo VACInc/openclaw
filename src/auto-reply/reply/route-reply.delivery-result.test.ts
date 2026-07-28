@@ -200,8 +200,8 @@ describe("routeReply delivery result", () => {
   });
 
   it.each([
-    ["skipped", false, "skipped"],
-    ["suppressed", false, "suppressed"],
+    ["skipped", false, undefined],
+    ["suppressed", false, undefined],
     ["unknown", true, undefined],
     ["ok", true, undefined],
   ] as const)(
