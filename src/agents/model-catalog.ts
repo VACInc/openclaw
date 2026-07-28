@@ -471,6 +471,11 @@ export async function buildPreparedModelCatalogSnapshot(
     const { buildShouldSuppressBuiltInModel } = await loadModelSuppression();
     logStage("catalog-deps-ready");
     const entries = params.modelRegistry.getAll() as DiscoveredModel[];
+    const declaredManifestModels = loadManifestModelCatalog({
+      config: cfg,
+      env,
+      metadataSnapshot: manifestMetadataSnapshot,
+    });
     logStage("registry-read", `entries=${entries.length}`);
 
     const shouldSuppressBuiltInModel = buildShouldSuppressBuiltInModel({ config: cfg });
@@ -525,8 +530,15 @@ export async function buildPreparedModelCatalogSnapshot(
         compat,
       } satisfies ModelCatalogEntry;
       models.push(model);
-      mergeCatalogRouteVariants(routeVariants, [model]);
     }
+    // Gateway startup may publish registry rows without runtime augmentation.
+    // Rank them here so both static startup and later live enrichment preserve
+    // provider-owned order instead of falling back to model-id sorting.
+    const orderedRegistryModels = assignProviderModelOrder(models, declaredManifestModels, {
+      appendUnknown: false,
+    });
+    models.splice(0, models.length, ...orderedRegistryModels);
+    mergeCatalogRouteVariants(routeVariants, orderedRegistryModels);
     const supplementalManifestPlan = planEffectiveModelCatalogRows({
       registry: {
         plugins: resolveEligibleManifestCatalogPlugins(manifestMetadataSnapshot, cfg),
@@ -544,11 +556,7 @@ export async function buildPreparedModelCatalogSnapshot(
     );
     // Runtime declarations describe possible models, not account entitlement.
     // Only live registry or refreshed rows may publish those provider models.
-    const manifestModels = loadManifestModelCatalog({
-      config: cfg,
-      env,
-      metadataSnapshot: manifestMetadataSnapshot,
-    }).filter((entry) =>
+    const manifestModels = declaredManifestModels.filter((entry) =>
       supplementalManifestKeys.has(catalogEntryDedupeKey(entry.provider, entry.id)),
     );
     mergeCatalogRouteVariants(routeVariants, manifestModels);
@@ -633,7 +641,12 @@ export async function buildPreparedModelCatalogSnapshot(
             id,
           });
         }
-        const orderedSupplemental = assignProviderModelOrder(normalizedSupplemental);
+        // Manifest ranks are provider-owned policy. Live discovery enriches
+        // those rows and appends unknown models without replacing the ranking.
+        const orderedSupplemental = assignProviderModelOrder(normalizedSupplemental, [
+          ...declaredManifestModels,
+          ...models,
+        ]);
         mergeCatalogRouteVariants(routeVariants, orderedSupplemental);
         mergeCatalogEntries(models, orderedSupplemental);
       }
