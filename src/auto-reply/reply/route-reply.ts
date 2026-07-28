@@ -118,7 +118,9 @@ type RouteReplyResult = {
   /** Suppression reason when delivery was intentionally skipped. */
   reason?:
     | "reasoning_payload_not_external"
+    | "cancelled_by_message_sending_hook"
     | "cancelled_by_reply_payload_sending_hook"
+    | "empty_after_message_sending_hook"
     | "empty_after_reply_payload_sending_hook";
   /** Optional message ID from the provider. */
   messageId?: string;
@@ -130,7 +132,8 @@ function summarizeVisibleRouteReplyDelivery(
   results: readonly { messageId?: string }[],
 ): Pick<RouteReplyResult, "delivered" | "messageId"> {
   // Durable results may prove delivery through a receipt or alternate identity
-  // when messageId is empty. Only explicit adapter sentinels mean no visible send.
+  // when messageId is empty. Provider success sentinels prove delivery but are
+  // not editable IDs; explicit suppression sentinels prove neither.
   let delivered = false;
   let lastVisibleMessageId: string | undefined;
   for (let index = results.length - 1; index >= 0; index -= 1) {
@@ -144,9 +147,11 @@ function summarizeVisibleRouteReplyDelivery(
     }
     if (!delivered) {
       delivered = true;
-      lastVisibleMessageId = result.messageId;
+      if (!messageId) {
+        lastVisibleMessageId = result.messageId;
+      }
     }
-    if (messageId) {
+    if (messageId && messageId !== "unknown" && messageId !== "ok") {
       return { delivered: true, messageId: result.messageId };
     }
   }
@@ -366,7 +371,9 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
     }
     if (
       send.status === "suppressed" &&
-      (send.reason === "cancelled_by_reply_payload_sending_hook" ||
+      (send.reason === "cancelled_by_message_sending_hook" ||
+        send.reason === "cancelled_by_reply_payload_sending_hook" ||
+        send.reason === "empty_after_message_sending_hook" ||
         send.reason === "empty_after_reply_payload_sending_hook")
     ) {
       return {
