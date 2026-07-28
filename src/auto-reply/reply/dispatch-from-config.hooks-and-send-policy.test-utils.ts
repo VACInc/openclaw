@@ -734,7 +734,11 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
 
   it("delivers routed fallback when routing drops an empty final without sending", async () => {
     setNoAbort();
-    mocks.routeReply.mockResolvedValue({ ok: true, messageId: "fallback-1" });
+    mocks.routeReply.mockResolvedValueOnce({ ok: true, delivered: false }).mockResolvedValueOnce({
+      ok: true,
+      delivered: true,
+      messageId: "fallback-1",
+    });
     const dispatcher = createDispatcher();
     const replyResolver = vi.fn(async () => ({ text: "" }));
     const ctx = buildTestCtx({
@@ -776,7 +780,7 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
 
   it("keeps eligibility when an empty routed final precedes a suppressed fallback", async () => {
     setNoAbort();
-    mocks.routeReply.mockResolvedValue({ ok: true, suppressed: true });
+    mocks.routeReply.mockResolvedValue({ ok: true, delivered: false, suppressed: true });
     const dispatcher = createDispatcher();
     const replyResolver = vi.fn(async () => ({ text: "" }));
     const ctx = buildTestCtx({
@@ -812,7 +816,7 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
 
   it("does not report a hook-suppressed routed fallback as delivered", async () => {
     setNoAbort();
-    mocks.routeReply.mockResolvedValue({ ok: true, suppressed: true });
+    mocks.routeReply.mockResolvedValue({ ok: true, delivered: false, suppressed: true });
     const dispatcher = createDispatcher();
     const replyResolver = vi.fn(async () => undefined);
     const ctx = buildTestCtx({
@@ -847,7 +851,11 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
 
   it("does not deliver no-visible fallback after a routed media-only block", async () => {
     setNoAbort();
-    mocks.routeReply.mockResolvedValue({ ok: true, messageId: "media-block-1" });
+    mocks.routeReply.mockResolvedValue({
+      ok: true,
+      delivered: true,
+      messageId: "media-block-1",
+    });
     const dispatcher = createDispatcher();
     const replyResolver = vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
       await opts?.onBlockReply?.({ mediaUrl: "https://example.com/seatmap.png" });

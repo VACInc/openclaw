@@ -9,9 +9,14 @@ import { parseInlineDirectives } from "./directive-handling.parse.js";
 
 const triggerInternalHookMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const routeReplyMock = vi.hoisted(() =>
-  vi.fn<(params: unknown) => Promise<{ ok: boolean; messageId?: string; suppressed?: boolean }>>(
-    async () => ({ ok: true, messageId: "reset-hook-1" }),
-  ),
+  vi.fn<
+    (params: unknown) => Promise<{
+      ok: boolean;
+      delivered: boolean;
+      messageId?: string;
+      suppressed?: boolean;
+    }>
+  >(async () => ({ ok: true, delivered: true, messageId: "reset-hook-1" })),
 );
 const resetMocks = vi.hoisted(() => ({
   resetConfiguredBindingTargetInPlace: vi.fn().mockResolvedValue({ ok: true as const }),
@@ -148,7 +153,11 @@ describe("handleCommands reset hooks", () => {
     resetMocks.resetConfiguredBindingTargetInPlace.mockResolvedValue({ ok: true });
     resetMocks.resolveBoundAcpThreadSessionKey.mockReturnValue(undefined);
     triggerInternalHookMock.mockResolvedValue(undefined);
-    routeReplyMock.mockResolvedValue({ ok: true, messageId: "reset-hook-1" });
+    routeReplyMock.mockResolvedValue({
+      ok: true,
+      delivered: true,
+      messageId: "reset-hook-1",
+    });
   });
 
   afterEach(() => {
@@ -325,16 +334,41 @@ describe("handleCommands reset hooks", () => {
   });
 
   it.each([
-    ["failed", { ok: false }],
-    ["dropped", { ok: true }],
-    ["skipped", { ok: true, messageId: "skipped" }],
-    ["suppressed", { ok: true, suppressed: true }],
-    ["suppressed sentinel", { ok: true, messageId: "suppressed" }],
-  ] as const)("does not mark a %s reset hook route as observed", async (_name, routeResult) => {
+    ["failed", { ok: false, delivered: false }],
+    ["dropped", { ok: true, delivered: false }],
+  ] as const)(
+    "falls back to the standard reset acknowledgement when the hook route is %s",
+    async (_name, routeResult) => {
+      triggerInternalHookMock.mockImplementationOnce(async (event: { messages: string[] }) => {
+        event.messages.push("Reset hook says hi");
+      });
+      routeReplyMock.mockResolvedValueOnce(routeResult);
+      const onObservedReplyDelivery = vi.fn();
+      const params = buildResetParams("/new", {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+      } as OpenClawConfig);
+      params.opts = { onObservedReplyDelivery };
+
+      const result = await maybeHandleResetCommand(params);
+
+      expect(onObservedReplyDelivery).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        shouldContinue: false,
+        reply: { text: "✅ New session started." },
+      });
+    },
+  );
+
+  it("keeps an intentionally suppressed reset hook route silent", async () => {
     triggerInternalHookMock.mockImplementationOnce(async (event: { messages: string[] }) => {
       event.messages.push("Reset hook says hi");
     });
-    routeReplyMock.mockResolvedValueOnce(routeResult);
+    routeReplyMock.mockResolvedValueOnce({
+      ok: true,
+      delivered: false,
+      suppressed: true,
+    });
     const onObservedReplyDelivery = vi.fn();
     const params = buildResetParams("/new", {
       commands: { text: true },
@@ -348,25 +382,28 @@ describe("handleCommands reset hooks", () => {
     expect(result).toEqual({ shouldContinue: false });
   });
 
-  it("marks a partially failed reset hook route as observed when a message was sent", async () => {
-    triggerInternalHookMock.mockImplementationOnce(async (event: { messages: string[] }) => {
-      event.messages.push("Reset hook says hi");
-    });
-    routeReplyMock.mockResolvedValueOnce({
-      ok: false,
-      messageId: "reset-hook-1",
-    });
-    const onObservedReplyDelivery = vi.fn();
-    const params = buildResetParams("/new", {
-      commands: { text: true },
-      channels: { whatsapp: { allowFrom: ["*"] } },
-    } as OpenClawConfig);
-    params.opts = { onObservedReplyDelivery };
+  it.each([
+    ["without a provider message id", { ok: true, delivered: true }],
+    ["before a later partial failure", { ok: false, delivered: true, messageId: "reset-hook-1" }],
+  ] as const)(
+    "marks a reset hook route as observed when delivered %s",
+    async (_name, routeResult) => {
+      triggerInternalHookMock.mockImplementationOnce(async (event: { messages: string[] }) => {
+        event.messages.push("Reset hook says hi");
+      });
+      routeReplyMock.mockResolvedValueOnce(routeResult);
+      const onObservedReplyDelivery = vi.fn();
+      const params = buildResetParams("/new", {
+        commands: { text: true },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+      } as OpenClawConfig);
+      params.opts = { onObservedReplyDelivery };
 
-    await maybeHandleResetCommand(params);
+      await maybeHandleResetCommand(params);
 
-    expect(onObservedReplyDelivery).toHaveBeenCalledOnce();
-  });
+      expect(onObservedReplyDelivery).toHaveBeenCalledOnce();
+    },
+  );
 
   it("prefers the target session entry when emitting reset hooks", async () => {
     const params = buildResetParams("/reset", {

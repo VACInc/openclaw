@@ -129,16 +129,10 @@ export async function emitResetCommandHooks(params: {
         cfg: params.cfg,
         replyKind: "final",
       });
-      const deliveredMessageId = result.messageId?.trim().toLowerCase();
-      if (
-        result.suppressed !== true &&
-        deliveredMessageId &&
-        deliveredMessageId !== "skipped" &&
-        deliveredMessageId !== "suppressed"
-      ) {
+      if (result.delivered) {
         await params.onObservedReplyDelivery?.();
       }
-      routedReply = true;
+      routedReply = result.delivered || result.suppressed === true;
     }
   }
 

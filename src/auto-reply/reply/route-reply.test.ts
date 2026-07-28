@@ -547,6 +547,7 @@ describe("routeReply", () => {
 
     expect(res).toEqual({
       ok: true,
+      delivered: false,
       suppressed: true,
       reason: "cancelled_by_reply_payload_sending_hook",
     });
@@ -580,9 +581,46 @@ describe("routeReply", () => {
 
     expect(res).toEqual({
       ok: false,
+      delivered: true,
       error: "Failed to route reply to telegram: network reset",
       messageId: "msg-1",
     });
+  });
+
+  it("reports delivery when the provider returns a non-id delivery identity", async () => {
+    mocks.deliverOutboundPayloads.mockResolvedValueOnce([
+      { channel: "whatsapp", messageId: "", toJid: "group:ops" },
+    ]);
+
+    const res = await routeReply({
+      payload: { text: "hello" },
+      channel: "whatsapp",
+      to: "group:ops",
+      cfg: {} as never,
+    });
+
+    expect(res).toEqual({
+      ok: true,
+      delivered: true,
+      messageId: "",
+    });
+  });
+
+  it.each([
+    ["skipped", false],
+    ["suppressed", false],
+    ["unknown", true],
+  ] as const)("reports message id %s visibility as %s", async (messageId, delivered) => {
+    mocks.deliverOutboundPayloads.mockResolvedValueOnce([{ channel: "telegram", messageId }]);
+
+    const res = await routeReply({
+      payload: { text: "hello" },
+      channel: "telegram",
+      to: "chat-1",
+      cfg: {} as never,
+    });
+
+    expect(res).toMatchObject({ ok: true, delivered, messageId });
   });
 
   it("suppresses routed delivery when reply payload hooks cancel", async () => {
@@ -610,6 +648,7 @@ describe("routeReply", () => {
 
     expect(res).toEqual({
       ok: true,
+      delivered: false,
       suppressed: true,
       reason: "cancelled_by_reply_payload_sending_hook",
     });
@@ -641,6 +680,7 @@ describe("routeReply", () => {
 
     expect(res).toEqual({
       ok: true,
+      delivered: false,
       suppressed: true,
       reason: "empty_after_reply_payload_sending_hook",
     });

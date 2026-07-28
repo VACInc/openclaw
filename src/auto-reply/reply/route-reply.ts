@@ -111,6 +111,8 @@ type RouteReplyParams = {
 type RouteReplyResult = {
   /** Whether the reply was sent successfully. */
   ok: boolean;
+  /** Whether at least one recipient-visible send completed. */
+  delivered: boolean;
   /** True when a hook intentionally suppressed provider delivery. */
   suppressed?: boolean;
   /** Suppression reason when delivery was intentionally skipped. */
@@ -120,6 +122,15 @@ type RouteReplyResult = {
   /** Error message if the send failed. */
   error?: string;
 };
+
+function hasVisibleRouteReplyDelivery(results: readonly { messageId?: string }[]): boolean {
+  // Durable results may prove delivery through a receipt or alternate identity
+  // when messageId is empty. Only explicit adapter sentinels mean no visible send.
+  return results.some((result) => {
+    const messageId = result.messageId?.trim().toLowerCase();
+    return messageId !== "skipped" && messageId !== "suppressed";
+  });
+}
 
 /**
  * Routes a reply payload to the specified channel.
@@ -132,7 +143,7 @@ type RouteReplyResult = {
 export async function routeReply(params: RouteReplyParams): Promise<RouteReplyResult> {
   const { payload, channel, to, accountId, threadId, cfg, abortSignal } = params;
   if (shouldSuppressReasoningPayload(payload)) {
-    return { ok: true };
+    return { ok: true, delivered: false };
   }
   const normalizedChannel = normalizeMessageChannel(channel);
   const channelId =
@@ -167,7 +178,7 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
       : undefined,
   });
   if (!normalized) {
-    return { ok: true };
+    return { ok: true, delivered: false };
   }
   const externalPayload: ReplyPayload = {
     ...normalized,
@@ -202,21 +213,22 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
       },
     )
   ) {
-    return { ok: true };
+    return { ok: true, delivered: false };
   }
 
   if (channel === INTERNAL_MESSAGE_CHANNEL) {
     return {
       ok: false,
+      delivered: false,
       error: "Webchat routing not supported for queued replies",
     };
   }
 
   if (!channelId) {
-    return { ok: false, error: `Unknown channel: ${String(channel)}` };
+    return { ok: false, delivered: false, error: `Unknown channel: ${String(channel)}` };
   }
   if (abortSignal?.aborted) {
-    return { ok: false, error: "Reply routing aborted" };
+    return { ok: false, delivered: false, error: "Reply routing aborted" };
   }
 
   const payloadMetadata = getReplyPayloadMetadata(normalized);
@@ -317,6 +329,7 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
     if (send.status === "partial_failed") {
       return {
         ok: false,
+        delivered: hasVisibleRouteReplyDelivery(send.results),
         error: `Failed to route reply to ${channel}: ${formatErrorMessage(send.error)}`,
         messageId: send.results.at(-1)?.messageId,
       };
@@ -328,6 +341,7 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
     ) {
       return {
         ok: true,
+        delivered: false,
         suppressed: true,
         reason: send.reason,
       };
@@ -335,11 +349,16 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
     const results = send.status === "sent" ? send.results : [];
 
     const last = results.at(-1);
-    return { ok: true, messageId: last?.messageId };
+    return {
+      ok: true,
+      delivered: hasVisibleRouteReplyDelivery(results),
+      messageId: last?.messageId,
+    };
   } catch (err) {
     const message = formatErrorMessage(err);
     return {
       ok: false,
+      delivered: false,
       error: `Failed to route reply to ${channel}: ${message}`,
     };
   }
