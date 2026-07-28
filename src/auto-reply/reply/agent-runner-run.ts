@@ -295,6 +295,9 @@ export async function runReplyAgent(
     );
     if (steerOutcome.queued) {
       if (replyOperationRunState) {
+        // Transcript commit has already transferred this turn to the active
+        // session. Keep that acceptance even if ingress adoption is later lost:
+        // the losing dispatch must neither replay nor emit its own fallback.
         replyOperationRunState.admission = { status: "accepted", mode: "steer" };
       }
       activeReplyOperation?.recordActivity();
@@ -303,8 +306,10 @@ export async function runReplyAgent(
       } catch (error) {
         if (isIngressAdoptionLostError(error)) {
           // Claim was tombstoned/superseded/guillotined after transcript commit.
-          // Cancel the active run so steered tools do not keep executing; do not
-          // rethrow — replaying ingress would duplicate the injected user turn.
+          // Cancel the active run so steered tools do not keep executing. Keep
+          // admission accepted and do not rethrow: ingress ownership is gone,
+          // so replay or a local no-visible-reply fallback would duplicate or
+          // misreport the already-injected user turn.
           const abortKey = sessionKey ?? queueKey;
           if (abortKey) {
             replyRunRegistry.abort(abortKey);
