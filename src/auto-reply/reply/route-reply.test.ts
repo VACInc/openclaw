@@ -593,6 +593,34 @@ describe("routeReply", () => {
     });
   });
 
+  it.each([
+    ["a trailing suppression sentinel", { channel: "telegram", messageId: "suppressed" }],
+    ["a trailing no-id receipt", { channel: "telegram", messageId: "" }],
+  ])("preserves an earlier editable message id after %s", async (_label, trailingResult) => {
+    const cause = new Error("network reset");
+    mocks.deliverOutboundPayloads.mockRejectedValueOnce(
+      new OutboundDeliveryError("network reset", {
+        cause,
+        results: [{ channel: "telegram", messageId: "msg-1" }, trailingResult],
+        stage: "platform_send",
+      }),
+    );
+
+    const res = await routeReply({
+      payload: { text: "hello" },
+      channel: "telegram",
+      to: "chat-1",
+      cfg: {} as never,
+    });
+
+    expect(res).toEqual({
+      ok: false,
+      delivered: true,
+      error: "Failed to route reply to telegram: network reset",
+      messageId: "msg-1",
+    });
+  });
+
   it("reports delivery when the provider returns a non-id delivery identity", async () => {
     mocks.deliverOutboundPayloads.mockResolvedValueOnce([
       { channel: "whatsapp", messageId: "", toJid: "group:ops" },

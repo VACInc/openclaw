@@ -126,13 +126,34 @@ type RouteReplyResult = {
   error?: string;
 };
 
-function hasVisibleRouteReplyDelivery(results: readonly { messageId?: string }[]): boolean {
+function summarizeVisibleRouteReplyDelivery(
+  results: readonly { messageId?: string }[],
+): Pick<RouteReplyResult, "delivered" | "messageId"> {
   // Durable results may prove delivery through a receipt or alternate identity
   // when messageId is empty. Only explicit adapter sentinels mean no visible send.
-  return results.some((result) => {
+  let delivered = false;
+  let lastVisibleMessageId: string | undefined;
+  for (let index = results.length - 1; index >= 0; index -= 1) {
+    const result = results[index];
+    if (!result) {
+      continue;
+    }
     const messageId = result.messageId?.trim().toLowerCase();
-    return messageId !== "skipped" && messageId !== "suppressed";
-  });
+    if (messageId === "skipped" || messageId === "suppressed") {
+      continue;
+    }
+    if (!delivered) {
+      delivered = true;
+      lastVisibleMessageId = result.messageId;
+    }
+    if (messageId) {
+      return { delivered: true, messageId: result.messageId };
+    }
+  }
+  return {
+    delivered,
+    messageId: delivered ? lastVisibleMessageId : results.at(-1)?.messageId,
+  };
 }
 
 /**
@@ -335,11 +356,12 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
       throw send.error;
     }
     if (send.status === "partial_failed") {
+      const delivery = summarizeVisibleRouteReplyDelivery(send.results);
       return {
         ok: false,
-        delivered: hasVisibleRouteReplyDelivery(send.results),
+        delivered: delivery.delivered,
         error: `Failed to route reply to ${channel}: ${formatErrorMessage(send.error)}`,
-        messageId: send.results.at(-1)?.messageId,
+        messageId: delivery.messageId,
       };
     }
     if (
@@ -355,12 +377,11 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
       };
     }
     const results = send.status === "sent" ? send.results : [];
-
-    const last = results.at(-1);
+    const delivery = summarizeVisibleRouteReplyDelivery(results);
     return {
       ok: true,
-      delivered: hasVisibleRouteReplyDelivery(results),
-      messageId: last?.messageId,
+      delivered: delivery.delivered,
+      messageId: delivery.messageId,
     };
   } catch (err) {
     const message = formatErrorMessage(err);
