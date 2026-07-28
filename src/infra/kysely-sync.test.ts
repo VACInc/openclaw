@@ -478,7 +478,15 @@ function runRetentionScenario(options: { clearBeforeDrop: boolean }): {
   `;
   const result = spawnSync(
     process.execPath,
-    ["--expose-gc", "--import", "tsx", "--input-type=module", "--eval", script],
+    [
+      "--disable-warning=ExperimentalWarning",
+      "--expose-gc",
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      script,
+    ],
     { cwd: process.cwd(), encoding: "utf8", timeout: 20_000 },
   );
 
