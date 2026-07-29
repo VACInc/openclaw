@@ -353,11 +353,6 @@ describe("google gemini cli backend auth bridge", () => {
           tools?: { core?: string[] };
           mcp?: { allowed?: string[] };
           mcpServers?: Record<string, unknown>;
-          admin?: {
-            extensions?: { enabled?: boolean };
-            mcp?: { enabled?: boolean };
-            skills?: { enabled?: boolean };
-          };
           experimental?: { enableAgents?: boolean };
           hooksConfig?: { enabled?: boolean };
           skills?: { enabled?: boolean };
@@ -366,9 +361,6 @@ describe("google gemini cli backend auth bridge", () => {
         expect(settings.tools).not.toHaveProperty("allowed");
         expect(settings.mcp?.allowed).toEqual(["openclaw"]);
         expect(settings.mcpServers).toEqual({});
-        expect(settings.admin?.extensions?.enabled).toBe(false);
-        expect(settings.admin?.mcp?.enabled).toBe(false);
-        expect(settings.admin?.skills?.enabled).toBe(false);
         expect(settings.experimental?.enableAgents).toBe(false);
         expect(settings.hooksConfig?.enabled).toBe(false);
         expect(settings.skills?.enabled).toBe(false);

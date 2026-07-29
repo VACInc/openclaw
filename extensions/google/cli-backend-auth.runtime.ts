@@ -294,10 +294,6 @@ function applyGeminiCliToolAvailability(
   } = tools;
   const mcp = isRecord(base.mcp) ? { ...base.mcp } : {};
   const { serverCommand: _serverCommand, ...nonAuthorityMcpSettings } = mcp;
-  const admin = isRecord(base.admin) ? { ...base.admin } : {};
-  const adminExtensions = isRecord(admin.extensions) ? { ...admin.extensions } : {};
-  const adminMcp = isRecord(admin.mcp) ? { ...admin.mcp } : {};
-  const adminSkills = isRecord(admin.skills) ? { ...admin.skills } : {};
   const experimental = isRecord(base.experimental) ? { ...base.experimental } : {};
   const agents = isRecord(base.agents) ? { ...base.agents } : {};
   const agentOverrides = isRecord(agents.overrides) ? { ...agents.overrides } : {};
@@ -317,14 +313,6 @@ function applyGeminiCliToolAvailability(
       serverCommand: "",
     },
     mcpServers: restrictedMcpServers,
-    admin: exposesOpenClawTools
-      ? admin
-      : {
-          ...admin,
-          extensions: { ...adminExtensions, enabled: false },
-          mcp: { ...adminMcp, enabled: false },
-          skills: { ...adminSkills, enabled: false },
-        },
     experimental: { ...experimental, enableAgents: false },
     agents: {
       ...agents,
