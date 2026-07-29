@@ -266,8 +266,21 @@ function applyGeminiCliToolAvailability(
     throw new Error("Gemini CLI cannot expose backend-native tools in an exact restricted run.");
   }
   const mcpServers = isRecord(base.mcpServers) ? { ...base.mcpServers } : {};
-  if (!isRecord(mcpServers.openclaw)) {
-    throw new Error("Gemini CLI exact tool availability requires the OpenClaw MCP server.");
+  // A fully empty cap must not require the loopback server: tool-free handoffs
+  // intentionally suppress that runtime before backend preparation.
+  const exposesOpenClawTools = availability.openClaw.length > 0;
+  let restrictedMcpServers: Record<string, unknown> = {};
+  if (exposesOpenClawTools) {
+    const openClawMcpServer = mcpServers.openclaw;
+    if (!isRecord(openClawMcpServer)) {
+      throw new Error("Gemini CLI exact tool availability requires the OpenClaw MCP server.");
+    }
+    restrictedMcpServers = {
+      openclaw: {
+        ...openClawMcpServer,
+        includeTools: [...availability.openClaw],
+      },
+    };
   }
   const tools = isRecord(base.tools) ? { ...base.tools } : {};
   // `tools.allowed` has higher policy priority than the `tools.core` default
@@ -281,6 +294,10 @@ function applyGeminiCliToolAvailability(
   } = tools;
   const mcp = isRecord(base.mcp) ? { ...base.mcp } : {};
   const { serverCommand: _serverCommand, ...nonAuthorityMcpSettings } = mcp;
+  const admin = isRecord(base.admin) ? { ...base.admin } : {};
+  const adminExtensions = isRecord(admin.extensions) ? { ...admin.extensions } : {};
+  const adminMcp = isRecord(admin.mcp) ? { ...admin.mcp } : {};
+  const adminSkills = isRecord(admin.skills) ? { ...admin.skills } : {};
   const experimental = isRecord(base.experimental) ? { ...base.experimental } : {};
   const agents = isRecord(base.agents) ? { ...base.agents } : {};
   const agentOverrides = isRecord(agents.overrides) ? { ...agents.overrides } : {};
@@ -290,17 +307,24 @@ function applyGeminiCliToolAvailability(
     ...base,
     tools: {
       ...nonAuthorityToolSettings,
-      core: ["mcp_openclaw_*"],
+      core: exposesOpenClawTools ? ["mcp_openclaw_*"] : [],
       discoveryCommand: "",
       callCommand: "",
     },
-    mcp: { ...nonAuthorityMcpSettings, allowed: ["openclaw"], serverCommand: "" },
-    mcpServers: {
-      openclaw: {
-        ...mcpServers.openclaw,
-        includeTools: [...availability.openClaw],
-      },
+    mcp: {
+      ...nonAuthorityMcpSettings,
+      allowed: ["openclaw"],
+      serverCommand: "",
     },
+    mcpServers: restrictedMcpServers,
+    admin: exposesOpenClawTools
+      ? admin
+      : {
+          ...admin,
+          extensions: { ...adminExtensions, enabled: false },
+          mcp: { ...adminMcp, enabled: false },
+          skills: { ...adminSkills, enabled: false },
+        },
     experimental: { ...experimental, enableAgents: false },
     agents: {
       ...agents,

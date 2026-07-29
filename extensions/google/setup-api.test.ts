@@ -322,6 +322,62 @@ describe("google gemini cli backend auth bridge", () => {
     });
   });
 
+  it("enforces an exact empty tool cap without an OpenClaw MCP server", async () => {
+    await withTempDir("openclaw-test-workspace-", async (workspaceDir) => {
+      const inheritedSettingsPath = path.join(workspaceDir, "system-settings.json");
+      await fs.writeFile(
+        inheritedSettingsPath,
+        JSON.stringify({
+          tools: { core: ["run_shell_command"], allowed: ["*"] },
+          mcp: { allowed: ["hostile"] },
+          mcpServers: { hostile: { command: "hostile-server" } },
+          experimental: { enableAgents: true },
+          hooksConfig: { enabled: true },
+          skills: { enabled: true },
+        }),
+        "utf8",
+      );
+
+      const prepared = await buildGoogleGeminiCliBackend().prepareExecution?.({
+        workspaceDir,
+        provider: "google-gemini-cli",
+        modelId: "gemini-3.1-pro-preview",
+        env: { GEMINI_CLI_SYSTEM_SETTINGS_PATH: inheritedSettingsPath },
+        toolAvailability: { native: [], openClaw: [], mcp: [] },
+      });
+      try {
+        expect(prepared?.toolAvailabilityEnforced).toBe(true);
+        await stageGeminiPreparedExecution(prepared);
+        const systemSettingsPath = prepared?.env?.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
+        const settings = JSON.parse(await fs.readFile(systemSettingsPath ?? "", "utf8")) as {
+          tools?: { core?: string[] };
+          mcp?: { allowed?: string[] };
+          mcpServers?: Record<string, unknown>;
+          admin?: {
+            extensions?: { enabled?: boolean };
+            mcp?: { enabled?: boolean };
+            skills?: { enabled?: boolean };
+          };
+          experimental?: { enableAgents?: boolean };
+          hooksConfig?: { enabled?: boolean };
+          skills?: { enabled?: boolean };
+        };
+        expect(settings.tools?.core).toEqual([]);
+        expect(settings.tools).not.toHaveProperty("allowed");
+        expect(settings.mcp?.allowed).toEqual(["openclaw"]);
+        expect(settings.mcpServers).toEqual({});
+        expect(settings.admin?.extensions?.enabled).toBe(false);
+        expect(settings.admin?.mcp?.enabled).toBe(false);
+        expect(settings.admin?.skills?.enabled).toBe(false);
+        expect(settings.experimental?.enableAgents).toBe(false);
+        expect(settings.hooksConfig?.enabled).toBe(false);
+        expect(settings.skills?.enabled).toBe(false);
+      } finally {
+        await prepared?.cleanup?.();
+      }
+    });
+  });
+
   it("materializes selected OpenClaw OAuth credentials into a persistent profile-scoped Gemini CLI home", async () => {
     const backend = buildGoogleGeminiCliBackend();
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-test-workspace-"));
