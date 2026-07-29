@@ -152,6 +152,57 @@ describe("google gemini cli backend config", () => {
     expect(backend.toolAvailabilityEnforcement).toBe("prepare-execution");
   });
 
+  it("enforces exact MCP server availability with a per-run argv override", () => {
+    const backend = buildGoogleGeminiCliBackend();
+    const baseContext = {
+      workspaceDir: "/tmp/openclaw-gemini-test",
+      provider: "google-gemini-cli",
+      modelId: "gemini-3.1-pro-preview",
+      useResume: false,
+      baseArgs: [
+        "--allowedMcpServerNames",
+        "camel-hostile",
+        "--allowed_mcp_server_names=snake-hostile",
+        "--allowed-mcp-server-names",
+        "hostile",
+        "--allowed-mcp-server-names=also-hostile",
+        "--prompt",
+        "{prompt}",
+        "--",
+        "--allowed-mcp-server-names",
+        "positional-hostile",
+      ],
+    };
+
+    const restrictedArgs = backend.resolveExecutionArgs?.({
+      ...baseContext,
+      toolAvailability: { native: [], openClaw: ["read"], mcp: ["read"] },
+    });
+    expect(restrictedArgs).toEqual([
+      "--prompt",
+      "{prompt}",
+      "--allowed-mcp-server-names",
+      "openclaw",
+      "--",
+      "--allowed-mcp-server-names",
+      "positional-hostile",
+    ]);
+
+    const emptyArgs = backend.resolveExecutionArgs?.({
+      ...baseContext,
+      toolAvailability: { native: [], openClaw: [], mcp: [] },
+    });
+    expect(emptyArgs?.slice(0, -4)).toEqual(["--prompt", "{prompt}", "--allowed-mcp-server-names"]);
+    expect(emptyArgs?.at(-4)).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(emptyArgs?.slice(-3)).toEqual([
+      "--",
+      "--allowed-mcp-server-names",
+      "positional-hostile",
+    ]);
+  });
+
   it("keeps legacy json output overrides on the json parser", () => {
     const backend = buildGoogleGeminiCliBackend();
     const normalized = backend.normalizeConfig?.({
