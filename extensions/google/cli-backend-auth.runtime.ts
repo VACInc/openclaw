@@ -294,6 +294,9 @@ function applyGeminiCliToolAvailability(
   } = tools;
   const mcp = isRecord(base.mcp) ? { ...base.mcp } : {};
   const { serverCommand: _serverCommand, ...nonAuthorityMcpSettings } = mcp;
+  // Gemini treats an empty MCP allowlist as unrestricted. Use a per-run name
+  // that no inherited server can know when this run must expose no MCP tools.
+  const allowedMcpServers = exposesOpenClawTools ? ["openclaw"] : [crypto.randomUUID()];
   const experimental = isRecord(base.experimental) ? { ...base.experimental } : {};
   const agents = isRecord(base.agents) ? { ...base.agents } : {};
   const agentOverrides = isRecord(agents.overrides) ? { ...agents.overrides } : {};
@@ -309,7 +312,7 @@ function applyGeminiCliToolAvailability(
     },
     mcp: {
       ...nonAuthorityMcpSettings,
-      allowed: ["openclaw"],
+      allowed: allowedMcpServers,
       serverCommand: "",
     },
     mcpServers: restrictedMcpServers,

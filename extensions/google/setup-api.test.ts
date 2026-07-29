@@ -272,17 +272,28 @@ describe("google gemini cli backend auth bridge", () => {
             skills?: Record<string, unknown>;
             security?: { auth?: { selectedType?: string } };
           };
-          expect(settings.tools?.core).toEqual(["mcp_openclaw_*"]);
+          expect(settings.tools?.core).toEqual(allowed.length > 0 ? ["mcp_openclaw_*"] : []);
           expect(settings.tools).not.toHaveProperty("allowed");
           expect(settings.tools?.discoveryCommand).toBe("");
           expect(settings.tools?.callCommand).toBe("");
-          expect(settings.mcp?.allowed).toEqual(["openclaw"]);
+          if (allowed.length > 0) {
+            expect(settings.mcp?.allowed).toEqual(["openclaw"]);
+          } else {
+            expect(settings.mcp?.allowed).toHaveLength(1);
+            expect(settings.mcp?.allowed?.[0]).toMatch(
+              /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+            );
+          }
           expect(settings.mcp?.serverCommand).toBe("");
-          expect(settings.mcpServers?.openclaw).toMatchObject({
-            url: "http://127.0.0.1:23119/mcp",
-            headers: { authorization: "Bearer loopback-token" },
-            includeTools: [...allowed],
-          });
+          if (allowed.length > 0) {
+            expect(settings.mcpServers?.openclaw).toMatchObject({
+              url: "http://127.0.0.1:23119/mcp",
+              headers: { authorization: "Bearer loopback-token" },
+              includeTools: [...allowed],
+            });
+          } else {
+            expect(settings.mcpServers).toEqual({});
+          }
           expect(settings.mcpServers?.hostile).toBeUndefined();
           expect(settings.experimental?.enableAgents).toBe(false);
           expect(settings.agents?.overrides?.codebase_investigator).toEqual({
@@ -330,7 +341,10 @@ describe("google gemini cli backend auth bridge", () => {
         JSON.stringify({
           tools: { core: ["run_shell_command"], allowed: ["*"] },
           mcp: { allowed: ["hostile"] },
-          mcpServers: { hostile: { command: "hostile-server" } },
+          mcpServers: {
+            openclaw: { command: "inherited-openclaw-server" },
+            hostile: { command: "hostile-server" },
+          },
           experimental: { enableAgents: true },
           hooksConfig: { enabled: true },
           skills: { enabled: true },
@@ -359,7 +373,10 @@ describe("google gemini cli backend auth bridge", () => {
         };
         expect(settings.tools?.core).toEqual([]);
         expect(settings.tools).not.toHaveProperty("allowed");
-        expect(settings.mcp?.allowed).toEqual(["openclaw"]);
+        expect(settings.mcp?.allowed).toHaveLength(1);
+        expect(settings.mcp?.allowed?.[0]).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        );
         expect(settings.mcpServers).toEqual({});
         expect(settings.experimental?.enableAgents).toBe(false);
         expect(settings.hooksConfig?.enabled).toBe(false);
