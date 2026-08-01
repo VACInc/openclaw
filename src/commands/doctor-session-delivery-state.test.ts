@@ -28,6 +28,9 @@ function insertSessionRow(
       "INSERT INTO session_nodes (session_key, current_session_id, entry_json, updated_at) VALUES (?, ?, ?, ?)",
     )
     .run(sessionKey, String(entry.sessionId), JSON.stringify(entry), Number(entry.updatedAt));
+  database.db
+    .prepare("UPDATE session_nodes SET entry_valid = 1 WHERE session_key = ?")
+    .run(sessionKey);
   const legacyContext = entry.deliveryContext as Record<string, unknown> | undefined;
   database.db
     .prepare(
@@ -319,6 +322,10 @@ describe("doctor canonical session delivery state", () => {
     expect(readEntryJson(env, "agent:main:invalid")).toBe("null");
     expect(readEntryJson(env, "agent:main:invalid-object")).toBe(invalidObjectJson);
     expect(readEntryValidity(env, "agent:main:invalid-object")).toBe(0);
+    closeOpenClawAgentDatabasesForTest();
+    expect(() => listSessionEntries({ agentId: "main", env })).toThrow(
+      /invalid persisted session row requires repair/u,
+    );
   });
 
   it("migrates a copied realistic store without touching the source or canonical row bytes", () => {
@@ -397,6 +404,8 @@ describe("doctor canonical session delivery state", () => {
       repaired: 3,
       scannedStores: 1,
     });
+    closeOpenClawAgentDatabasesForTest();
+    expect(listSessionEntries({ agentId: "main", env: copiedEnv })).toHaveLength(4);
     expect(repairCanonicalSessionDeliveryStates({ apply: true, cfg: {}, env: copiedEnv })).toEqual({
       found: 0,
       repaired: 0,
