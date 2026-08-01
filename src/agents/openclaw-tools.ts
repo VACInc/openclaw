@@ -289,7 +289,7 @@ export function createOpenClawTools(
           // Commit the start before yielding; handle teardown failures outside the owner turn.
           setImmediate(() => {
             void (async () =>
-              yieldMediaGenerationTurn(message, { hasExplicitMessage: true }))().catch(
+              yieldMediaGenerationTurn(message, { hasExplicitMessage: false }))().catch(
               (error: unknown) => {
                 mediaGenerationYieldLog.warn("Failed to yield foreground media generation turn", {
                   error: formatErrorMessage(error),

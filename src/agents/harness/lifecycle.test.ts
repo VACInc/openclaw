@@ -155,29 +155,6 @@ describe("AgentHarness lifecycle runner", () => {
     resetDiagnosticEventsForTest();
   });
 
-  it("runs a harness attempt with lifecycle-owned tool-result observation", async () => {
-    const params = createAttemptParams();
-    const result = createAttemptResult();
-    const runAttempt = vi.fn(async () => result);
-    const harness: AgentHarness = {
-      id: "codex",
-      label: "Codex",
-      pluginId: "codex-plugin",
-      supports: () => ({ supported: true, priority: 100 }),
-      runAttempt,
-    };
-
-    const attemptResult = await runAgentHarnessLifecycleAttempt(harness, params);
-
-    expect(attemptResult).toEqual({ ...result, agentHarnessId: "codex" });
-    expect(runAttempt).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ...params,
-        onAgentToolResult: expect.any(Function),
-      }),
-    );
-  });
-
   it("records accepted child spawns before classification and composes the caller observer", async () => {
     const onAgentToolResult = vi.fn();
     const params = { ...createAttemptParams(), onAgentToolResult };
@@ -256,6 +233,7 @@ describe("AgentHarness lifecycle runner", () => {
         childSessionKey: "agent:main:subagent:harness-child",
       },
     ]);
+    expect(attemptResult.agentHarnessId).toBe("codex");
   });
 
   it("runs isolated finalization through the narrow lifecycle contract", async () => {

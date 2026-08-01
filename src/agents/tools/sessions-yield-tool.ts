@@ -15,10 +15,8 @@ const SessionsYieldToolSchema = Type.Object({
   ),
 });
 
-export type SessionsYieldEvent = {
-  /** Distinguishes model-authored status from the internal resume-context fallback. */
-  hasExplicitMessage: boolean;
-};
+/** Distinguishes model-authored status from the internal resume-context fallback. */
+export type SessionsYieldEvent = { hasExplicitMessage: boolean };
 
 /** Creates the sessions_yield tool for runtimes that support yield callbacks. */
 export function createSessionsYieldTool(opts?: {

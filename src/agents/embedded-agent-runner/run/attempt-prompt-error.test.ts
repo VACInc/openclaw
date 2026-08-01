@@ -108,6 +108,22 @@ describe("handleEmbeddedAttemptPromptError", () => {
     );
   });
 
+  it("persists the implicit yield fallback as hidden handoff context", async () => {
+    const input = createInput({
+      error: new Error("yield handoff"),
+      yieldDetected: true,
+      yieldMessage: "Turn yielded.",
+    });
+    hoisted.isSessionsYieldAbortError.mockReturnValue(true);
+
+    await handleEmbeddedAttemptPromptError(input);
+
+    expect(hoisted.persistSessionsYieldContextMessage).toHaveBeenCalledWith(
+      input.activeSession,
+      "Turn yielded.",
+    );
+  });
+
   it("marks yield state before fallible recovery begins", async () => {
     const recoveryError = new Error("settle failed");
     let marked = false;

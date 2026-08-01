@@ -445,7 +445,7 @@ export async function runEmbeddedAttemptSettledPhase(
       promptCache: sessionRuntimeState.promptCache,
       contextBudgetStatus,
       yieldDetected: input.lifecycle.readYieldState().yieldDetected,
-      yieldMessage: input.lifecycle.readYieldState().yieldMessage ?? undefined,
+      yieldMessage: input.lifecycle.readYieldState().yieldStatusMessage ?? undefined,
       didDeliverSourceReplyViaMessageTool: hasDeliveredSourceReply(),
     },
     clientToolCallSlots,

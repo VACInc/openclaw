@@ -108,6 +108,7 @@ function createFixture() {
         yieldAbortSettled: null,
         yieldDetected: true,
         yieldMessage: "yield",
+        yieldStatusMessage: "yield status",
       }),
       setToolSearchCatalogExecutor,
     },

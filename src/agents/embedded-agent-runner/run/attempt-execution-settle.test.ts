@@ -178,6 +178,7 @@ function createFixture() {
         yieldAbortSettled: null,
         yieldDetected: true,
         yieldMessage: "yield",
+        yieldStatusMessage: "yield status",
       }),
     },
     getRepairedRejectedThinkingReplay: () => true,
@@ -252,7 +253,7 @@ describe("runEmbeddedAttemptSettledPhase", () => {
       expect.objectContaining({
         state: expect.objectContaining({
           yieldDetected: true,
-          yieldMessage: "yield",
+          yieldMessage: "yield status",
         }),
       }),
     );
@@ -315,6 +316,27 @@ describe("runEmbeddedAttemptSettledPhase", () => {
       fixture.queueHandle,
       "agent:main",
       "/tmp/session.jsonl",
+    );
+  });
+
+  it("keeps implicit yield context out of the visible status result", async () => {
+    const fixture = createFixture();
+    fixture.input.lifecycle.readYieldState = () => ({
+      yieldAbortSettled: null,
+      yieldDetected: true,
+      yieldMessage: "Turn yielded.",
+      yieldStatusMessage: null,
+    });
+
+    await runEmbeddedAttemptSettledPhase(fixture.input);
+
+    expect(mocks.completeResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: expect.objectContaining({
+          yieldDetected: true,
+          yieldMessage: undefined,
+        }),
+      }),
     );
   });
 

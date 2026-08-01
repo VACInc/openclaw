@@ -336,6 +336,34 @@ describe("createOpenClawTools media generation session wiring", () => {
       }),
     );
   });
+
+  it("keeps system-authored media progress context-only", async () => {
+    const onYield = vi.fn();
+    const config = {
+      agents: {
+        defaults: { mediaModels: { image: { primary: "image-owner/model" } } },
+      },
+    } satisfies OpenClawConfig;
+
+    createOpenClawTools({
+      config,
+      agentSessionKey: "agent:main:slack:channel:C123",
+      disableMessageTool: true,
+      disablePluginTools: true,
+      onYield,
+    });
+    const options = mocks.createImageGenerateToolOptions.mock.calls[0]?.[0] as
+      | { onAsyncTaskStarted?: (message: string) => void }
+      | undefined;
+    options?.onAsyncTaskStarted?.("Image generation started.");
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+
+    expect(onYield).toHaveBeenCalledWith("Image generation started.", {
+      hasExplicitMessage: false,
+    });
+  });
 });
 
 describe("createOpenClawTools session status route context wiring", () => {

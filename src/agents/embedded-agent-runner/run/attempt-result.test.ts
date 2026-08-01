@@ -123,7 +123,7 @@ describe("attempt result projection", () => {
     ]);
   });
 
-  it("drops the synthetic sessions_yield abort after the yield fact is recorded", () => {
+  it("keeps sessions_yield trace evidence but clears its synthetic abort failure", () => {
     const result = completeResult({
       yieldDetected: true,
       lastToolError: { toolName: "sessions_yield", error: "aborted" },
@@ -136,6 +136,7 @@ describe("attempt result projection", () => {
     expect(result.lastToolError).toBeUndefined();
     expect(result.toolMetas).toEqual([
       { toolName: "sessions_spawn", meta: undefined, replaySafe: false },
+      { toolName: "sessions_yield", meta: undefined, replaySafe: false },
     ]);
   });
 

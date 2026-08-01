@@ -100,12 +100,7 @@ function normalizeEmbeddedAttemptToolMetas(
         asyncStarted?: boolean;
         asyncTaskRunId?: string;
         asyncTaskId?: string;
-      } =>
-        typeof entry.toolName === "string" &&
-        entry.toolName.trim().length > 0 &&
-        // sessions_yield ends the turn by aborting its active tool execution.
-        // Once the yield fact is recorded, that synthetic abort is not a tool failure.
-        !(yieldDetected && entry.toolName === "sessions_yield"),
+      } => typeof entry.toolName === "string" && entry.toolName.trim().length > 0,
     )
     .map((entry) => {
       const normalized: EmbeddedRunAttemptResult["toolMetas"][number] = {
@@ -113,7 +108,7 @@ function normalizeEmbeddedAttemptToolMetas(
         meta: entry.meta,
         replaySafe: entry.replaySafe === true,
       };
-      if (entry.isError === true) {
+      if (entry.isError === true && !(yieldDetected && entry.toolName === "sessions_yield")) {
         normalized.isError = true;
       }
       if (entry.asyncStarted === true) {

@@ -309,7 +309,6 @@ export async function runAgentHarnessLifecycleAttempt(
   let agentRunStartedAt = 0;
   let agentRunCompleted = false;
   const observedAcceptedSessionSpawns: AcceptedSessionSpawn[] = [];
-  const onAgentToolResult = params.onAgentToolResult;
   const lifecycleParams: AgentHarnessAttemptParams = {
     ...params,
     onAgentToolResult: (event) => {
@@ -319,7 +318,7 @@ export async function runAgentHarnessLifecycleAttempt(
           observedAcceptedSessionSpawns.push(acceptedSpawn);
         }
       }
-      onAgentToolResult?.(event);
+      params.onAgentToolResult?.(event);
     },
   };
   const emitAgentRunCompleted = (completion: AgentRunCompletion): void => {
