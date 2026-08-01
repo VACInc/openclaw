@@ -29,6 +29,7 @@ import {
   isMessagingTool,
   isMessagingToolSendAction,
   normalizeHeartbeatToolResponse,
+  normalizeAcceptedSessionSpawnResult,
   projectRuntimeToolInputSchema,
   resolveToolExecutionErrorKind,
   resolveToolResultFailureKind,
@@ -36,6 +37,7 @@ import {
   sanitizeToolResult,
   setBeforeToolCallDiagnosticsEnabled,
   type AnyAgentTool,
+  type AcceptedSessionSpawn,
   type HeartbeatToolResponse,
   type MessagingToolSend,
   type MessagingToolSourceReplyPayload,
@@ -372,6 +374,7 @@ export type CodexDynamicToolBridge = {
     messagingToolSentMediaUrls: string[];
     messagingToolSentTargets: MessagingToolSend[];
     messagingToolSourceReplyPayloads: MessagingToolSourceReplyPayload[];
+    acceptedSessionSpawns: AcceptedSessionSpawn[];
     heartbeatToolResponse?: HeartbeatToolResponse;
     toolMediaUrls: string[];
     toolAudioAsVoice: boolean;
@@ -502,6 +505,7 @@ export function createCodexDynamicToolBridge(params: {
     messagingToolSentMediaUrls: [],
     messagingToolSentTargets: [],
     messagingToolSourceReplyPayloads: [],
+    acceptedSessionSpawns: [],
     toolMediaUrls: [],
     toolAudioAsVoice: false,
     quarantinedTools,
@@ -1250,6 +1254,12 @@ function collectToolTelemetry(params: {
   }
   if (!params.isError && params.toolName === "cron" && isCronAddAction(params.args)) {
     params.telemetry.successfulCronAdds = (params.telemetry.successfulCronAdds ?? 0) + 1;
+  }
+  if (!params.isError && params.toolName === "sessions_spawn") {
+    const acceptedSpawn = normalizeAcceptedSessionSpawnResult(params.result);
+    if (acceptedSpawn) {
+      params.telemetry.acceptedSessionSpawns.push(acceptedSpawn);
+    }
   }
   if (!params.isError && params.toolName === HEARTBEAT_RESPONSE_TOOL_NAME) {
     const response = normalizeHeartbeatToolResponse(params.result?.details);

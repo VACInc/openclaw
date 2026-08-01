@@ -643,6 +643,32 @@ describe("resolveFollowupDeliveryDecision", () => {
     });
   });
 
+  it("delivers an explicit sessions_yield status from a queued follow-up turn", () => {
+    const execution = createSettledExecution();
+    if (execution.outcome.kind !== "settled") {
+      throw new Error("expected settled execution");
+    }
+    execution.outcome.result.acceptedSessionSpawns = [
+      { runId: "child-run", childSessionKey: "agent:main:child" },
+    ];
+    execution.outcome.result.meta = {
+      ...execution.outcome.result.meta,
+      yielded: true,
+      yieldMessage: "Research started; results will follow.",
+    };
+
+    expect(
+      resolveFollowupDeliveryDecision({
+        turn: createTurn(),
+        execution,
+        accounting: createAccounting(),
+      }),
+    ).toMatchObject({
+      kind: "deliver",
+      payloads: [{ text: "Research started; results will follow." }],
+    });
+  });
+
   it("normalizes auto-compaction notices with the originating delivery context", () => {
     const turn = createTurn();
     turn.queued.originatingChatType = "group";

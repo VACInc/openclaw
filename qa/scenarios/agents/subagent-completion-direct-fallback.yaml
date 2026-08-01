@@ -9,10 +9,10 @@ scenario:
     secondary:
       - agent-runtime.subagent-turns-subagents
       - channels.qa-channel-final-reply
-  objective: Verify a yielded parent still receives a successful subagent result through direct fallback delivery when the dormant announce turn produces no visible reply.
+  objective: Verify a yielded parent immediately sends its explicit waiting status, then receives a successful subagent result through direct fallback delivery when the dormant announce turn produces no visible reply.
   successCriteria:
     - Parent launches a native subagent.
-    - Parent yields instead of waiting in-turn.
+    - Parent yields instead of waiting in-turn and sends its explicit waiting status immediately.
     - Subagent completion result is delivered to the original QA DM without a thread id.
     - Durable task delivery is marked delivered, not failed.
   docsRefs:
@@ -23,15 +23,18 @@ scenario:
     - src/agents/subagent-announce-delivery.ts
     - src/agents/subagent-registry-lifecycle.ts
     - src/agents/tools/sessions-yield-tool.ts
+    - src/auto-reply/reply/agent-runner-result-payloads.ts
     - extensions/qa-lab/src/providers/mock-openai/server.ts
   execution:
     kind: flow
     retryCount: 0
-    summary: Reproduce yielded-parent subagent completion delivery and require frozen-result fallback to the QA DM.
+    summary: Reproduce a yielded parent, require its immediate explicit waiting status, then require frozen-result fallback to the QA DM.
     config:
+      conversationId: subagent-direct-fallback
       prompt: "Subagent direct fallback QA check: spawn one native subagent worker. The worker must finish with exactly QA-SUBAGENT-DIRECT-FALLBACK-OK. After spawning it, call sessions_yield and wait for the completion event. Do not use ACP."
       expectedMarker: QA-SUBAGENT-DIRECT-FALLBACK-OK
       expectedLabel: qa-direct-fallback-worker
+      expectedYieldStatus: Waiting for QA-SUBAGENT-DIRECT-FALLBACK-OK.
 
 flow:
   steps:
@@ -48,23 +51,36 @@ flow:
         - call: reset
         - set: sessionKey
           value:
-            expr: "`agent:qa:subagent-direct-fallback:${randomUUID().slice(0, 8)}`"
+            expr: "buildAgentSessionKey({ agentId: 'qa', channel: 'qa-channel', accountId: 'default', peer: { kind: 'direct', id: config.conversationId }, dmScope: env.cfg.session?.dmScope, identityLinks: env.cfg.session?.identityLinks })"
         - try:
             actions:
-              - call: runAgentPrompt
+              - sendInbound:
+                  conversation:
+                    id:
+                      ref: config.conversationId
+                    kind: direct
+                  senderId:
+                    ref: config.conversationId
+                  senderName: QA Driver
+                  text:
+                    expr: config.prompt
+              - call: waitForOutboundMessage
+                saveAs: outboundYieldStatus
                 args:
-                  - ref: env
-                  - sessionKey:
-                      ref: sessionKey
-                    message:
-                      expr: config.prompt
-                    timeoutMs:
-                      expr: liveTurnTimeoutMs(env, 90000)
+                  - ref: state
+                  - lambda:
+                      params: [candidate]
+                      expr: "candidate.conversation.id === config.conversationId && candidate.text.trim() === config.expectedYieldStatus"
+                  - expr: liveTurnTimeoutMs(env, 90000)
+              - assert:
+                  expr: "outboundYieldStatus.text.trim() === config.expectedYieldStatus"
+                  message:
+                    expr: "`explicit sessions_yield status missing from outbound QA DM: ${recentOutboundSummary(state)}`"
               - call: waitForCondition
                 saveAs: outbound
                 args:
                   - lambda:
-                      expr: "state.getSnapshot().messages.filter((message) => message.direction === 'outbound' && String(message.text ?? '').trim() === config.expectedMarker).at(-1)"
+                      expr: "state.getSnapshot().messages.filter((message) => message.direction === 'outbound' && message.conversation.id === config.conversationId && String(message.text ?? '').trim() === config.expectedMarker).at(-1)"
                   - expr: liveTurnTimeoutMs(env, 180000)
                   - expr: "env.providerMode === 'mock-openai' ? 100 : 250"
               - assert:
@@ -118,4 +134,4 @@ flow:
                   expr: "deliveredTask.deliveryStatus === 'delivered'"
                   message:
                     expr: "`expected delivered task status for ${config.expectedLabel}, got ${JSON.stringify(deliveredTask)}`"
-      detailsExpr: "outbound.text"
+      detailsExpr: "`${outboundYieldStatus.text} -> ${outbound.text}`"

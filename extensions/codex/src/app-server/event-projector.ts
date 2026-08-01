@@ -7,12 +7,10 @@ import {
   runAgentHarnessBeforeCompactionHook,
   type BeforeToolCallFailureDisposition,
   type EmbeddedRunAttemptParams,
-  type HeartbeatToolResponse,
-  type MessagingToolSend,
-  type MessagingToolSourceReplyPayload,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { attemptTerminal, type AttemptFailureSource } from "./attempt-terminal.js";
 import type { EmbeddedRunAttemptResult } from "./attempt-terminal.js";
+import type { CodexDynamicToolBridge } from "./dynamic-tools.js";
 import { CodexAssistantProjection } from "./event-projector-assistant.js";
 import { CodexProjectionDiagnostics } from "./event-projector-diagnostics.js";
 import { CodexEventProjection } from "./event-projector-events.js";
@@ -62,18 +60,14 @@ export { shouldEmitTranscriptToolProgress } from "./event-projector-tool-progres
 
 type ApprovalFailure = Exclude<BeforeToolCallFailureDisposition, "blocked">;
 
-type CodexAppServerToolTelemetry = {
-  didSendViaMessagingTool: boolean;
-  didDeliverSourceReplyViaMessageTool?: boolean;
-  messagingToolSentTexts: string[];
-  messagingToolSentMediaUrls: string[];
-  messagingToolSentTargets: MessagingToolSend[];
-  messagingToolSourceReplyPayloads?: MessagingToolSourceReplyPayload[];
-  heartbeatToolResponse?: HeartbeatToolResponse;
-  toolMediaUrls?: string[];
-  toolAudioAsVoice?: boolean;
-  successfulCronAdds?: number;
-};
+type CodexAppServerToolTelemetry = Pick<
+  CodexDynamicToolBridge["telemetry"],
+  | "didSendViaMessagingTool"
+  | "messagingToolSentTexts"
+  | "messagingToolSentMediaUrls"
+  | "messagingToolSentTargets"
+> &
+  Partial<CodexDynamicToolBridge["telemetry"]>;
 
 export class CodexAppServerEventProjector {
   private readonly assistantProjection: CodexAssistantProjection;
@@ -316,7 +310,7 @@ export class CodexAppServerEventProjector {
 
   buildResult(
     toolTelemetry: CodexAppServerToolTelemetry,
-    options?: { yieldDetected?: boolean },
+    options?: { yieldDetected?: boolean; yieldMessage?: string },
   ): EmbeddedRunAttemptResult {
     // Result construction runs after the notification queue drains. Close any
     // tool lacking a terminal item so audit consumers never retain an open action.
@@ -434,6 +428,7 @@ export class CodexAppServerEventProjector {
       messagingToolSentMediaUrls: toolTelemetry.messagingToolSentMediaUrls,
       messagingToolSentTargets: toolTelemetry.messagingToolSentTargets,
       messagingToolSourceReplyPayloads: toolTelemetry.messagingToolSourceReplyPayloads ?? [],
+      acceptedSessionSpawns: toolTelemetry.acceptedSessionSpawns ?? [],
       heartbeatToolResponse: toolTelemetry.heartbeatToolResponse,
       toolMediaUrls: this.generatedMediaProjection.buildToolMediaUrls(toolTelemetry),
       hostOwnedToolMediaUrls: this.generatedMediaProjection.buildHostOwnedMediaUrls(toolTelemetry),
@@ -454,6 +449,7 @@ export class CodexAppServerEventProjector {
         activeCount: this.activeItemIds.size,
       },
       yieldDetected: options?.yieldDetected || false,
+      ...(options?.yieldMessage ? { yieldMessage: options.yieldMessage } : {}),
       didSendDeterministicApprovalPrompt:
         this.eventProjection.guardianReviewCount > 0 ? false : undefined,
     };

@@ -520,6 +520,35 @@ export function buildEmptyInteractiveReplyPayload(params: {
   });
 }
 
+/** Builds the explicit waiting status for an otherwise-silent yielded user turn. */
+export function buildSessionsYieldStatusReplyPayload(params: {
+  yielded: boolean;
+  yieldMessage?: string;
+  isInteractive: boolean;
+  isHeartbeat?: boolean;
+  silentExpected?: boolean;
+  allowEmptyAssistantReplyAsSilent?: boolean;
+  isMessageToolOnly: boolean;
+  hasExplicitSilentReply: boolean;
+  hasVisibleReplyDelivery: boolean;
+}): ReplyPayload | undefined {
+  const text = params.yieldMessage?.trim();
+  if (
+    !params.yielded ||
+    !text ||
+    !params.isInteractive ||
+    params.isHeartbeat === true ||
+    params.silentExpected === true ||
+    params.allowEmptyAssistantReplyAsSilent === true ||
+    params.isMessageToolOnly ||
+    params.hasExplicitSilentReply ||
+    params.hasVisibleReplyDelivery
+  ) {
+    return undefined;
+  }
+  return { text };
+}
+
 /** Converts known agent-run failures into user-facing reply payloads. */
 export function buildKnownAgentRunFailureReplyPayload(params: {
   err: unknown;

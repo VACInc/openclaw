@@ -19,6 +19,8 @@ function completeResult(params?: {
     asyncTaskRunId?: string;
     asyncTaskId?: string;
   }>;
+  yieldDetected?: boolean;
+  lastToolError?: { toolName: string; error?: string };
 }) {
   return completeEmbeddedAttemptResult({
     attempt: {
@@ -40,7 +42,7 @@ function completeResult(params?: {
       getItemLifecycle: () => undefined,
       getLastAssistantTextMessageIndex: () => undefined,
       getLastCompactionTokensAfter: () => undefined,
-      getLastToolError: () => undefined,
+      getLastToolError: () => params?.lastToolError,
       getLatestMcpAppChannelView: () => params?.latestMcpAppChannelView,
       getMessagingToolSentMediaUrls: () => [],
       getMessagingToolSentTargets: () => [],
@@ -58,7 +60,7 @@ function completeResult(params?: {
       terminal: { kind: "ok" },
       sessionIdUsed: "session-1",
       messagesSnapshot: [],
-      yieldDetected: false,
+      yieldDetected: params?.yieldDetected ?? false,
       didDeliverSourceReplyViaMessageTool: false,
       diagnosticTrace: { traceId: "trace-1", spanId: "span-1" },
     } as never,
@@ -118,6 +120,37 @@ describe("attempt result projection", () => {
         asyncTaskRunId: "run-1",
         asyncTaskId: "task-1",
       },
+    ]);
+  });
+
+  it("drops the synthetic sessions_yield abort after the yield fact is recorded", () => {
+    const result = completeResult({
+      yieldDetected: true,
+      lastToolError: { toolName: "sessions_yield", error: "aborted" },
+      toolMetas: [
+        { toolName: "sessions_spawn", replaySafe: false },
+        { toolName: "sessions_yield", replaySafe: false, isError: true },
+      ],
+    });
+
+    expect(result.lastToolError).toBeUndefined();
+    expect(result.toolMetas).toEqual([
+      { toolName: "sessions_spawn", meta: undefined, replaySafe: false },
+    ]);
+  });
+
+  it("keeps sessions_yield failures when the yield callback never ran", () => {
+    const result = completeResult({
+      lastToolError: { toolName: "sessions_yield", error: "before-yield hook failed" },
+      toolMetas: [{ toolName: "sessions_yield", replaySafe: false, isError: true }],
+    });
+
+    expect(result.lastToolError).toEqual({
+      toolName: "sessions_yield",
+      error: "before-yield hook failed",
+    });
+    expect(result.toolMetas).toEqual([
+      { toolName: "sessions_yield", meta: undefined, replaySafe: false, isError: true },
     ]);
   });
 

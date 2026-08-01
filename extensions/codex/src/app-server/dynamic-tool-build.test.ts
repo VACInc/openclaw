@@ -179,6 +179,43 @@ describe("Codex app-server dynamic tool build", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  it("preserves explicit sessions_yield message provenance", async () => {
+    const workspaceDir = path.join(tempDir, "workspace");
+    const params = createParams(path.join(tempDir, "session.jsonl"), workspaceDir);
+    params.disableTools = false;
+    params.runtimePlan = createCodexRuntimePlanFixture();
+    const yielded: Array<{ message: string; explicit: boolean }> = [];
+    let capturedOnYield:
+      | ((message: string, event: { hasExplicitMessage: boolean }) => Promise<void> | void)
+      | undefined;
+    setOpenClawCodingToolsFactoryForTests((options) => {
+      capturedOnYield = (
+        options as {
+          onYield?: (
+            message: string,
+            event: { hasExplicitMessage: boolean },
+          ) => Promise<void> | void;
+        }
+      ).onYield;
+      return [];
+    });
+
+    await buildDynamicToolsForTest(params, workspaceDir, {
+      sandbox: null as never,
+      onYieldDetected: (message, event) => {
+        yielded.push({ message, explicit: event.hasExplicitMessage });
+      },
+    });
+
+    const onYield = expectDefined(capturedOnYield, "captured onYield callback");
+    await onYield("Research started; results will follow.", { hasExplicitMessage: true });
+    await onYield("Turn yielded.", { hasExplicitMessage: false });
+    expect(yielded).toEqual([
+      { message: "Research started; results will follow.", explicit: true },
+      { message: "Turn yielded.", explicit: false },
+    ]);
+  });
+
   it("uses the message tool channel before a differing ingress provider", () => {
     expect(
       resolveCodexMessageToolProvider({

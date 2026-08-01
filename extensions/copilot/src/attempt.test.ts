@@ -1797,13 +1797,27 @@ describe("runCopilotAttempt", () => {
   it("F7: result.yieldDetected is true when the tool bridge fires onYieldDetected during the attempt", async () => {
     const sdk = makeFakeSdk();
     const pool = makeFakePool(sdk);
-    const createToolBridge = vi.fn(async (input: { onYieldDetected?: (msg?: string) => void }) => {
+    const createToolBridge = vi.fn(async (input: CopilotToolBridgeInput) => {
       // Simulate a wrapped tool invoking sessions_yield before the
       // attempt settles. The bridge is responsible for notifying the
       // caller via onYieldDetected so the final result can carry the
       // flag (parent runner uses it to mark liveness paused /
       // stop_reason end_turn). Mirrors PI/codex parity.
-      input.onYieldDetected?.("paused by tool");
+      await input.onToolCompleted?.({
+        args: { task: "scan logs" },
+        result: {
+          content: [{ text: "Accepted: launching child session.", type: "text" }],
+          details: {
+            status: "accepted",
+            runId: "child-run",
+            childSessionKey: "agent:main:subagent:child-run",
+          },
+        },
+        startedAt: Date.now(),
+        toolCallId: "spawn-call",
+        toolName: "sessions_spawn",
+      });
+      input.onYieldDetected?.("paused by tool", { hasExplicitMessage: true });
       return { sdkTools: [], sourceTools: [] };
     });
 
@@ -1813,6 +1827,28 @@ describe("runCopilotAttempt", () => {
     });
 
     expect(result.yieldDetected).toBe(true);
+    expect(result.yieldMessage).toBe("paused by tool");
+    expect(result.acceptedSessionSpawns).toEqual([
+      { runId: "child-run", childSessionKey: "agent:main:subagent:child-run" },
+    ]);
+  });
+
+  it("F7: does not expose the sessions_yield fallback as a user status", async () => {
+    const sdk = makeFakeSdk();
+    const pool = makeFakePool(sdk);
+    const createToolBridge = vi.fn(
+      async (input: {
+        onYieldDetected?: (message: string, event: { hasExplicitMessage: boolean }) => void;
+      }) => {
+        input.onYieldDetected?.("Turn yielded.", { hasExplicitMessage: false });
+        return { sdkTools: [], sourceTools: [] };
+      },
+    );
+
+    const result = await runCopilotAttempt(makeParams(), { createToolBridge, pool });
+
+    expect(result.yieldDetected).toBe(true);
+    expect(result.yieldMessage).toBeUndefined();
   });
 
   it("F7: result.yieldDetected is false on a clean attempt (no sessions_yield fired)", async () => {

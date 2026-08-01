@@ -248,6 +248,14 @@ describe("runEmbeddedAttemptSettledPhase", () => {
     const result = await runEmbeddedAttemptSettledPhase(fixture.input);
 
     expect(result).toBe(fixture.result);
+    expect(mocks.completeResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: expect.objectContaining({
+          yieldDetected: true,
+          yieldMessage: "yield",
+        }),
+      }),
+    );
     expect(fixture.order).toEqual([
       "prompt",
       "finalize",

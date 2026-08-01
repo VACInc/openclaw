@@ -19,6 +19,8 @@ import { emitCodexAppServerEvent } from "./run-attempt-lifecycle.js";
 import type { CodexAttemptRuntime } from "./run-attempt-runtime.js";
 import { resolveCodexDynamicToolDirectNames } from "./run-attempt-tools.js";
 
+type OnCodexYieldDetected = Parameters<typeof buildDynamicTools>[0]["onYieldDetected"];
+
 export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
   const {
     connection,
@@ -63,6 +65,7 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
   }
   const toolState = {
     yieldDetected: false,
+    yieldMessage: undefined as string | undefined,
     persistentWebSearchAllowed: undefined as boolean | undefined,
     webSearchAllowed: false,
   };
@@ -108,6 +111,10 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
     frameToolCallId?: string;
     frameImageIdentity?: string;
   } = { value: 0 };
+  const onYieldDetected: OnCodexYieldDetected = (message, event) => {
+    toolState.yieldDetected = true;
+    toolState.yieldMessage = event.hasExplicitMessage ? message : undefined;
+  };
   const commonToolParams = {
     params: dynamicToolParams,
     resolvedWorkspace,
@@ -121,9 +128,7 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
     sessionAgentId,
     pluginConfig,
     profilerEnabled,
-    onYieldDetected: () => {
-      toolState.yieldDetected = true;
-    },
+    onYieldDetected,
     onCodexAppServerEvent: (event: Parameters<typeof emitCodexAppServerEvent>[1]) => {
       void emitCodexAppServerEvent(params, event);
     },

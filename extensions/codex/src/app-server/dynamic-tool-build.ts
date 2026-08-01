@@ -56,6 +56,7 @@ type OpenClawCodingToolsOptions = NonNullable<
 type OpenClawCodingToolsFactory =
   (typeof import("openclaw/plugin-sdk/agent-harness"))["createOpenClawCodingTools"];
 type OpenClawDynamicTool = ReturnType<OpenClawCodingToolsFactory>[number];
+type SessionsYieldEvent = Parameters<NonNullable<OpenClawCodingToolsOptions["onYield"]>>[1];
 type OpenClawSandboxContext = Awaited<ReturnType<typeof resolveSandboxContext>>;
 type CodexDynamicToolBuildEvent = Parameters<
   NonNullable<EmbeddedRunAttemptParams["onAgentEvent"]>
@@ -100,7 +101,7 @@ type DynamicToolBuildParams = {
   ignoreRuntimePlan?: boolean;
   /** Host fact resolver; injectable only for focused plugin contract tests. */
   isHostScopedToolActive?: (toolName: string) => boolean;
-  onYieldDetected: () => void;
+  onYieldDetected: (message: string, event: SessionsYieldEvent) => void;
   onCodexAppServerEvent?: (event: CodexDynamicToolBuildEvent) => void;
   onPersistentWebSearchPolicyResolved?: (allowed: boolean) => void;
   onWebSearchPolicyResolved?: (allowed: boolean) => void;
@@ -324,8 +325,8 @@ export async function buildDynamicTools(input: DynamicToolBuildParams) {
     forceMessageTool: shouldForceMessageTool(messagePolicyParams),
     enableHeartbeatTool: params.trigger === "heartbeat" || input.forceHeartbeatTool === true,
     forceHeartbeatTool: params.trigger === "heartbeat" || input.forceHeartbeatTool === true,
-    onYield: (message) => {
-      input.onYieldDetected();
+    onYield: (message, event) => {
+      input.onYieldDetected(message, event);
       input.onCodexAppServerEvent?.({
         stream: "codex_app_server.tool",
         data: { name: "sessions_yield", message },

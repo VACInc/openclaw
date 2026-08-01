@@ -9,6 +9,7 @@ import {
   resolveAttemptFsWorkspaceOnly,
   resolveAttemptSpawnWorkspaceDir,
   resolveCompactionTimeoutMs,
+  normalizeAcceptedSessionSpawnResult,
   runAgentHarnessAfterToolCallHook,
   runAgentHarnessAfterCompactionHook,
   runAgentHarnessBeforeCompactionHook,
@@ -120,6 +121,8 @@ export async function runCopilotExecution(context: {
   let downgradedFromResume = false;
   let resumeFailureRecovered = false;
   let yieldDetected = false;
+  let yieldMessage: string | undefined;
+  const acceptedSessionSpawns: NonNullable<AgentHarnessAttemptResult["acceptedSessionSpawns"]> = [];
   let lastToolError: AgentHarnessAttemptResult["lastToolError"];
   const hostObserveToolTerminal = input.observeToolTerminal;
   const observeToolTerminal = hostObserveToolTerminal
@@ -274,11 +277,18 @@ export async function runCopilotExecution(context: {
           attemptParams: observeToolTerminal ? { ...input, observeToolTerminal } : input,
           computerContextEpoch,
           sessionRef,
-          onYieldDetected: () => {
+          onYieldDetected: (message, event) => {
             yieldDetected = true;
+            yieldMessage = event.hasExplicitMessage ? message : undefined;
           },
-          onToolCompleted: ({ args, error, result, startedAt, toolCallId, toolName }) =>
-            runAgentHarnessAfterToolCallHook({
+          onToolCompleted: async ({ args, error, result, startedAt, toolCallId, toolName }) => {
+            if (toolName === "sessions_spawn") {
+              const acceptedSpawn = normalizeAcceptedSessionSpawnResult(result);
+              if (acceptedSpawn) {
+                acceptedSessionSpawns.push(acceptedSpawn);
+              }
+            }
+            await runAgentHarnessAfterToolCallHook({
               toolName,
               toolCallId,
               runId: input.runId,
@@ -290,7 +300,8 @@ export async function runCopilotExecution(context: {
               ...(result !== undefined ? { result } : {}),
               ...(error ? { error } : {}),
               startedAt,
-            }),
+            });
+          },
         });
         cleanupToolBridge = toolBridge.cleanup;
         codeModeEngaged = toolBridge.codeModeEngaged;
@@ -619,6 +630,7 @@ export async function runCopilotExecution(context: {
     }
   }
   return await completeCopilotAttempt({
+    acceptedSessionSpawns,
     aborted,
     attemptStartedAt,
     bridge,
@@ -645,5 +657,6 @@ export async function runCopilotExecution(context: {
     timedOut,
     timedOutDuringCompaction,
     yieldDetected,
+    yieldMessage,
   });
 }

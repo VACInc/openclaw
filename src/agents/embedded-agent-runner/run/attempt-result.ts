@@ -57,6 +57,7 @@ type EmbeddedAttemptResultState = Pick<
   | "promptCache"
   | "contextBudgetStatus"
   | "yieldDetected"
+  | "yieldMessage"
   | "didDeliverSourceReplyViaMessageTool"
 > & {
   diagnosticTrace: DiagnosticTraceContext;
@@ -85,6 +86,7 @@ type CompleteEmbeddedAttemptResultInput = {
 
 function normalizeEmbeddedAttemptToolMetas(
   entries: EmbeddedAttemptSubscription["toolMetas"],
+  yieldDetected: boolean,
 ): EmbeddedRunAttemptResult["toolMetas"] {
   return entries
     .filter(
@@ -98,7 +100,12 @@ function normalizeEmbeddedAttemptToolMetas(
         asyncStarted?: boolean;
         asyncTaskRunId?: string;
         asyncTaskId?: string;
-      } => typeof entry.toolName === "string" && entry.toolName.trim().length > 0,
+      } =>
+        typeof entry.toolName === "string" &&
+        entry.toolName.trim().length > 0 &&
+        // sessions_yield ends the turn by aborting its active tool execution.
+        // Once the yield fact is recorded, that synthetic abort is not a tool failure.
+        !(yieldDetected && entry.toolName === "sessions_yield"),
     )
     .map((entry) => {
       const normalized: EmbeddedRunAttemptResult["toolMetas"][number] = {
@@ -170,7 +177,10 @@ export function completeEmbeddedAttemptResult(
     setTerminalLifecycleMeta,
     toolMetas,
   } = subscription;
-  const toolMetasNormalized = normalizeEmbeddedAttemptToolMetas(toolMetas);
+  const toolMetasNormalized = normalizeEmbeddedAttemptToolMetas(
+    toolMetas,
+    state.yieldDetected === true,
+  );
 
   if (input.cache.observabilityEnabled) {
     const cacheBreak = input.cache.break;
@@ -300,7 +310,11 @@ export function completeEmbeddedAttemptResult(
   const clientToolCalls =
     completedClientToolCalls.length > 0 ? completedClientToolCalls : undefined;
   const didSendDeterministicApprovalPromptNow = didSendDeterministicApprovalPrompt();
-  const lastToolError = getLastToolError();
+  const observedLastToolError = getLastToolError();
+  const lastToolError =
+    state.yieldDetected && observedLastToolError?.toolName === "sessions_yield"
+      ? undefined
+      : observedLastToolError;
   const heartbeatToolResponse = getHeartbeatToolResponse();
   const messagingToolSourceReplyPayloads = getMessagingToolSourceReplyPayloads();
   const hasToolMediaBlockReplyNow = hasToolMediaBlockReply();
@@ -407,6 +421,7 @@ export function completeEmbeddedAttemptResult(
     compactionTokensAfter: getLastCompactionTokensAfter(),
     clientToolCalls,
     yieldDetected: state.yieldDetected || undefined,
+    yieldMessage: state.yieldMessage || undefined,
   };
   return finalizeEmbeddedAttempt({
     result,

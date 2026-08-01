@@ -66,6 +66,10 @@ export {
   isDeliveredMessageToolOnlySourceReplyResult,
   isDeliveredMessagingToolResult,
 } from "../agents/embedded-agent-message-tool-source-reply.js";
+export {
+  normalizeAcceptedSessionSpawnResult,
+  type AcceptedSessionSpawn,
+} from "../agents/accepted-session-spawn.js";
 export { formatFastModeAutoProgressText, resolveFastModeForElapsed } from "../shared/fast-mode.js";
 export type { AgentMessage } from "../agents/runtime/index.js";
 export type { FastModeAutoProgressState } from "../shared/fast-mode.js";

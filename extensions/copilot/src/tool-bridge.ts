@@ -27,6 +27,7 @@ import { createAgentHarnessToolSurfaceRuntime } from "openclaw/plugin-sdk/agent-
 type CreateOpenClawCodingTools =
   (typeof import("openclaw/plugin-sdk/agent-harness"))["createOpenClawCodingTools"];
 type OpenClawCodingToolsOptions = NonNullable<Parameters<CreateOpenClawCodingTools>[0]>;
+type SessionsYieldEvent = Parameters<NonNullable<OpenClawCodingToolsOptions["onYield"]>>[1];
 type AgentHarnessToolSurfaceRuntime = ReturnType<typeof createAgentHarnessToolSurfaceRuntime>;
 type CatalogExecuteParams = Parameters<
   NonNullable<AgentHarnessToolSurfaceRuntime["toolSearchCatalogExecutor"]>
@@ -131,7 +132,7 @@ interface CopilotToolBridgeInput {
    * `src/agents/pi-embedded-runner/run/attempt.ts:1107-1113` and
    * `extensions/codex/src/app-server/run-attempt.ts:539-541`.
    */
-  onYieldDetected?: (message?: string) => void;
+  onYieldDetected?: (message: string, event: SessionsYieldEvent) => void;
   onToolCompleted?: (completion: CopilotToolCompletion) => void | Promise<void>;
   createOpenClawCodingTools?: (opts: unknown) => AnyAgentTool[] | Promise<AnyAgentTool[]>;
   beforeExecute?: (ctx: {
@@ -446,7 +447,7 @@ function buildOpenClawCodingToolsOptions(
     // recordToolPrepStage intentionally omitted: copilot does not
     // surface attempt-stage telemetry yet. Codex omits this too.
     onToolOutcome: a.onToolOutcome,
-    onYield: (message) => {
+    onYield: (message, event) => {
       // Notify the caller first so the final attempt result can carry
       // yieldDetected even if the abort below races a concurrent
       // settle path. Errors thrown by the caller's handler must not
@@ -455,7 +456,7 @@ function buildOpenClawCodingToolsOptions(
       // calling abort) and codex (`onYieldDetected()` runs before the
       // run-abort controller fires).
       try {
-        input.onYieldDetected?.(message);
+        input.onYieldDetected?.(message, event);
       } catch (error) {
         console.warn("[copilot-tool-bridge] onYieldDetected handler threw; continuing", error);
       }

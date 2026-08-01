@@ -1,4 +1,4 @@
-import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
+import type { AcceptedSessionSpawn, AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
   projectAgentHarnessTranscriptMessageForDisplay,
   runAgentHarnessLlmOutputHook,
@@ -15,6 +15,7 @@ import type {
 } from "./attempt-types.js";
 import { attachEventBridge } from "./event-bridge.js";
 export async function completeCopilotAttempt(params: {
+  acceptedSessionSpawns: AcceptedSessionSpawn[];
   aborted: boolean;
   attemptStartedAt: number;
   bridge: ReturnType<typeof attachEventBridge> | undefined;
@@ -45,8 +46,10 @@ export async function completeCopilotAttempt(params: {
   timedOut: boolean;
   timedOutDuringCompaction: boolean;
   yieldDetected: boolean;
+  yieldMessage?: string;
 }): Promise<AgentHarnessAttemptResult> {
   const {
+    acceptedSessionSpawns,
     aborted,
     attemptStartedAt,
     bridge,
@@ -73,6 +76,7 @@ export async function completeCopilotAttempt(params: {
     timedOut,
     timedOutDuringCompaction,
     yieldDetected,
+    yieldMessage,
   } = params;
   const snap = bridge?.snapshot();
   const assistantTexts = bridge?.finalizeAssistantTexts() ?? [];
@@ -93,6 +97,7 @@ export async function completeCopilotAttempt(params: {
           currentRunUserKey,
         ));
   const result = createResult(input, {
+    acceptedSessionSpawns,
     aborted,
     assistantTexts,
     codeModeEngaged,
@@ -132,6 +137,7 @@ export async function completeCopilotAttempt(params: {
     toolMetas: snap ? [...snap.toolMetas] : [],
     usage: snap?.usage,
     yieldDetected,
+    yieldMessage,
   });
   if (sentTurnStarted && !settledToolFinalization && !transcriptJournal?.hasFailed()) {
     runAgentHarnessLlmOutputHook({

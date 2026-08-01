@@ -559,8 +559,12 @@ describe("CodexAppServerEventProjector commentary projection", () => {
       TURN_ID,
     );
 
-    const result = projector.buildResult(buildEmptyToolTelemetry(), { yieldDetected: true });
+    const result = projector.buildResult(buildEmptyToolTelemetry(), {
+      yieldDetected: true,
+      yieldMessage: "Research started; results will follow.",
+    });
 
     expect(result.yieldDetected).toBe(true);
+    expect(result.yieldMessage).toBe("Research started; results will follow.");
   });
 });

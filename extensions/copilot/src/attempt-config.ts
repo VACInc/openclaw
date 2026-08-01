@@ -1,5 +1,9 @@
 import type { MessageOptions, SessionConfig, Tool as SdkTool } from "@github/copilot-sdk";
-import type { AgentMessage, SandboxContext } from "openclaw/plugin-sdk/agent-harness-runtime";
+import type {
+  AcceptedSessionSpawn,
+  AgentMessage,
+  SandboxContext,
+} from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
   detectAndLoadAgentHarnessPromptImages,
   getModelProviderRequestTransport,
@@ -30,6 +34,7 @@ export function createResult(
   params: AttemptParamsLike,
   state: {
     aborted?: boolean;
+    acceptedSessionSpawns?: AcceptedSessionSpawn[];
     assistantTranscriptOwned?: boolean;
     assistantTranscriptIdempotencyKey?: string;
     assistantTexts?: string[];
@@ -54,6 +59,7 @@ export function createResult(
     toolMetas?: AgentHarnessAttemptResult["toolMetas"];
     usage?: AssistantUsageSnapshot;
     yieldDetected?: boolean;
+    yieldMessage?: string;
   },
 ): AttemptResultWithSdkSessionId {
   const promptError = state.promptError;
@@ -95,6 +101,7 @@ export function createResult(
     promptError !== undefined ? withPromptFailure(interruption, promptError) : interruption;
   return {
     terminal,
+    acceptedSessionSpawns: state.acceptedSessionSpawns ?? [],
     ...(state.assistantTranscriptOwned
       ? {
           assistantTranscriptOwned: true,
@@ -128,6 +135,7 @@ export function createResult(
     sessionIdUsed: state.sessionIdUsed ?? readString(params.sessionId) ?? "copilot-session",
     toolMetas,
     yieldDetected: state.yieldDetected === true,
+    ...(state.yieldMessage ? { yieldMessage: state.yieldMessage } : {}),
   };
 }
 export function createPromptError(

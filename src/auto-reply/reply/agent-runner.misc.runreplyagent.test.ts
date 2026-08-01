@@ -636,6 +636,28 @@ describe("runReplyAgent auto-compaction token update", () => {
     ).toBeUndefined();
   });
 
+  it("delivers an explicit sessions_yield status before the child result", async () => {
+    const result = await runEmptyDirectReply({
+      acceptedSessionSpawns: [{ runId: "child-run", childSessionKey: "agent:main:child" }],
+      meta: {
+        agentMeta: {},
+        yielded: true,
+        yieldMessage: "Research started; results will follow.",
+      },
+    });
+
+    expectReplyText(result, "Research started; results will follow.");
+  });
+
+  it("keeps yielded turns without an explicit status silent", async () => {
+    expect(
+      await runEmptyDirectReply({
+        acceptedSessionSpawns: [{ runId: "child-run", childSessionKey: "agent:main:child" }],
+        meta: { agentMeta: {}, yielded: true },
+      }),
+    ).toBeUndefined();
+  });
+
   it("surfaces terminal direct failures after runtime compaction progress", async () => {
     const onBlockReply = vi.fn();
     const result = await runEmptyDirectReply(

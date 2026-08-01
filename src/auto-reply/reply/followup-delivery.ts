@@ -4,6 +4,7 @@ import {
   hasCommittedSourceReplyDeliveryEvidence,
   hasCompletedSourceReplyDeliveryEvidence,
   hasCompletedTerminalDeliveryEvidence,
+  hasVisibleCommittedMessagingToolDeliveryEvidence,
   hasVisibleOutboundDeliveryEvidence,
 } from "../../agents/embedded-agent-runner/delivery-evidence.js";
 import { hasDeliberateSilentTerminalReply } from "../../agents/embedded-agent-runner/result-fallback-classifier.js";
@@ -20,7 +21,10 @@ import {
 import type { ReplyPayload } from "../types.js";
 import { normalizeAssistantFinalDeliveryText } from "./agent-runner-core.js";
 import type { AgentTurnExecutionResult } from "./agent-runner-execution.types.js";
-import { buildEmptyInteractiveReplyPayload } from "./agent-runner-failure-reply.js";
+import {
+  buildEmptyInteractiveReplyPayload,
+  buildSessionsYieldStatusReplyPayload,
+} from "./agent-runner-failure-reply.js";
 import type { AccountedAgentTurn } from "./agent-runner-result-accounting.js";
 import { appendUsageLine, resolveResponseUsageLine } from "./agent-runner-usage-line.js";
 import { resolveFollowupDeliveryPayloads } from "./followup-delivery-payloads.js";
@@ -201,13 +205,28 @@ export function resolveFollowupDeliveryDecision(params: {
     hasVisibleOutboundDeliveryEvidence(result) ||
     hasCommittedSourceReplyDeliveryEvidence(result) ||
     result.didSendDeterministicApprovalPrompt === true;
+  const hasVisibleReplyDelivery =
+    hasCommittedSourceReplyDeliveryEvidence(result) ||
+    hasVisibleCommittedMessagingToolDeliveryEvidence(result) ||
+    result.didSendDeterministicApprovalPrompt === true;
   const fallbackPayload = accounting.terminalFailurePayload
     ? isInteractive && !hasCompletedTerminalDeliveryEvidence(result)
       ? sourcePolicy.sourceReplyDeliveryMode === "message_tool_only"
         ? markReplyPayloadForSourceSuppressionDelivery(accounting.terminalFailurePayload)
         : accounting.terminalFailurePayload
       : undefined
-    : buildEmptyInteractiveReplyPayload({
+    : (buildSessionsYieldStatusReplyPayload({
+        yielded: result.meta?.yielded === true,
+        yieldMessage: result.meta?.yieldMessage,
+        isInteractive,
+        isHeartbeat: opts?.isHeartbeat,
+        silentExpected: turn.queued.run.silentExpected,
+        allowEmptyAssistantReplyAsSilent: turn.queued.run.allowEmptyAssistantReplyAsSilent,
+        isMessageToolOnly: sourcePolicy.sourceReplyDeliveryMode === "message_tool_only",
+        hasExplicitSilentReply: hasDeliberateSilentTerminalReply(result),
+        hasVisibleReplyDelivery,
+      }) ??
+      buildEmptyInteractiveReplyPayload({
         isInteractive,
         isHeartbeat: opts?.isHeartbeat,
         silentExpected: turn.queued.run.silentExpected,
@@ -224,7 +243,7 @@ export function resolveFollowupDeliveryDecision(params: {
           Surface: turn.queued.originatingChannel,
         },
         cfg: turn.config,
-      });
+      }));
   const hasTerminalPayload = payloads.some(
     (payload) =>
       payload.isReasoning !== true &&
