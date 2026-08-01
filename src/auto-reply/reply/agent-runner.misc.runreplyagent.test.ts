@@ -390,6 +390,9 @@ describe("runReplyAgent auto-compaction token update", () => {
     agentResult: Record<string, unknown>,
     options?: {
       agentEvents?: Array<{ stream: string; data: Record<string, unknown> }>;
+      allowEmptyAssistantReplyAsSilent?: boolean;
+      blockPayloads?: ReplyPayload[];
+      blockStreamingEnabled?: boolean;
       config?: OpenClawConfig;
       onBlockReply?: (payload: unknown) => Promise<void> | void;
     },
@@ -408,6 +411,16 @@ describe("runReplyAgent auto-compaction token update", () => {
         for (const event of options?.agentEvents ?? []) {
           await onAgentEvent(event);
         }
+      }
+      const onBlockReply = requireRecord(params, "embedded agent params").onBlockReply;
+      if (typeof onBlockReply === "function") {
+        for (const payload of options?.blockPayloads ?? []) {
+          await onBlockReply(payload);
+        }
+      }
+      const onBlockReplyFlush = requireRecord(params, "embedded agent params").onBlockReplyFlush;
+      if (options?.blockPayloads?.length && typeof onBlockReplyFlush === "function") {
+        await onBlockReplyFlush();
       }
       return {
         payloads: [],
@@ -429,6 +442,7 @@ describe("runReplyAgent auto-compaction token update", () => {
       sessionEntry,
       config: options?.config,
     });
+    followupRun.run.allowEmptyAssistantReplyAsSilent = options?.allowEmptyAssistantReplyAsSilent;
     return runReplyAgent({
       commandBody: "hello",
       followupRun,
@@ -448,7 +462,7 @@ describe("runReplyAgent auto-compaction token update", () => {
       agentCfgContextTokens: 200_000,
       resolvedVerboseLevel: "off",
       isNewSession: false,
-      blockStreamingEnabled: false,
+      blockStreamingEnabled: options?.blockStreamingEnabled ?? false,
       resolvedBlockStreamingBreak: "message_end",
       shouldInjectGroupIntro: false,
       typingMode: "instant",
@@ -646,6 +660,32 @@ describe("runReplyAgent auto-compaction token update", () => {
       },
     });
 
+    expectReplyText(result, "Research started; results will follow.");
+  });
+
+  it("delivers an explicit sessions_yield status after streamed pre-yield progress", async () => {
+    const onBlockReply = vi.fn();
+    const result = await runEmptyDirectReply(
+      {
+        acceptedSessionSpawns: [{ runId: "child-run", childSessionKey: "agent:main:child" }],
+        meta: {
+          agentMeta: {},
+          yielded: true,
+          yieldMessage: "Research started; results will follow.",
+        },
+      },
+      {
+        allowEmptyAssistantReplyAsSilent: true,
+        blockPayloads: [{ text: "Working" }],
+        blockStreamingEnabled: true,
+        onBlockReply,
+      },
+    );
+
+    expect(onBlockReply).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Working" }),
+      expect.anything(),
+    );
     expectReplyText(result, "Research started; results will follow.");
   });
 

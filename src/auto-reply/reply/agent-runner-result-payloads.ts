@@ -145,15 +145,12 @@ export async function prepareReplyAgentPayloads(state: {
             followupRun.run.inputProvenance.kind === "external_user"),
         isHeartbeat,
         silentExpected: followupRun.run.silentExpected,
-        allowEmptyAssistantReplyAsSilent: followupRun.run.allowEmptyAssistantReplyAsSilent,
         isMessageToolOnly:
           (opts?.sourceReplyDeliveryMode ?? followupRun.run.sourceReplyDeliveryMode) ===
           "message_tool_only",
         hasExplicitSilentReply: deliberateSilentTerminalReply,
         hasVisibleReplyDelivery:
-          successfulSourceReplyDelivery ||
-          completedSourceReplyDelivery ||
-          runResult.didSendDeterministicApprovalPrompt === true,
+          completedSourceReplyDelivery || runResult.didSendDeterministicApprovalPrompt === true,
       });
   const emptyInteractiveReplyPayload =
     terminalFailurePayload || sessionsYieldStatusReplyPayload

@@ -69,7 +69,6 @@ describe("buildSessionsYieldStatusReplyPayload", () => {
     { isInteractive: false },
     { isHeartbeat: true },
     { silentExpected: true },
-    { allowEmptyAssistantReplyAsSilent: true },
     { isMessageToolOnly: true },
     { hasExplicitSilentReply: true },
     { hasVisibleReplyDelivery: true },

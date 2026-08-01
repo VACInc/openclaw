@@ -527,7 +527,6 @@ export function buildSessionsYieldStatusReplyPayload(params: {
   isInteractive: boolean;
   isHeartbeat?: boolean;
   silentExpected?: boolean;
-  allowEmptyAssistantReplyAsSilent?: boolean;
   isMessageToolOnly: boolean;
   hasExplicitSilentReply: boolean;
   hasVisibleReplyDelivery: boolean;
@@ -539,7 +538,6 @@ export function buildSessionsYieldStatusReplyPayload(params: {
     !params.isInteractive ||
     params.isHeartbeat === true ||
     params.silentExpected === true ||
-    params.allowEmptyAssistantReplyAsSilent === true ||
     params.isMessageToolOnly ||
     params.hasExplicitSilentReply ||
     params.hasVisibleReplyDelivery
