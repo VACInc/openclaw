@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
+import { parseSqliteSessionEntryRecord } from "../config/sessions/session-entry-json.js";
 import { resolveAllAgentSessionStoreCandidateTargetsSync } from "../config/sessions/targets.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -95,22 +96,20 @@ function collectDeliveryRewrites(database: DatabaseSync): DeliveryRewrite[] {
   const db = getNodeSqliteKysely<OpenClawAgentKyselyDatabase>(database);
   const rows = executeSqliteQuerySync(
     database,
-    db.selectFrom("session_nodes").select(["session_key", "current_session_id", "entry_json"]),
+    db
+      .selectFrom("session_nodes")
+      .select(["session_key", "current_session_id", "entry_json", "updated_at"]),
   ).rows;
   return rows.flatMap((row) => {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(row.entry_json);
-    } catch {
-      return [];
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    const parsed = parseSqliteSessionEntryRecord(row);
+    if (!parsed) {
       return [];
     }
     const entry = parsed as SessionEntry;
     const normalizedEntry = normalizeLegacySessionEntryDelivery(entry);
     const entryJson = JSON.stringify(normalizedEntry);
-    return entryJson === row.entry_json
+    return entryJson === row.entry_json ||
+      !parseSqliteSessionEntryRecord({ ...row, entry_json: entryJson })
       ? []
       : [
           {
@@ -133,6 +132,15 @@ function applyDeliveryRewrites(database: DatabaseSync): number {
       db
         .updateTable("session_nodes")
         .set({ entry_json: rewrite.entryJson })
+        .where("session_key", "=", rewrite.sessionKey),
+    );
+    // Updating entry_json resets the validity projection to pending. Settle the proven-valid
+    // rewrite in a second statement so strict runtime readers can consume doctor's output.
+    executeSqliteQuerySync(
+      database,
+      db
+        .updateTable("session_nodes")
+        .set({ entry_valid: 1 })
         .where("session_key", "=", rewrite.sessionKey),
     );
     executeSqliteQuerySync(
