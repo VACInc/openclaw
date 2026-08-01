@@ -128,7 +128,6 @@ function makeForwardingCase(internalEvents: AgentInternalEvent[]) {
       requireExplicitMessageTarget: true,
       chatType: "channel",
       senderIsOwner: true,
-      onAgentToolResult,
     },
   } satisfies {
     runId: string;
@@ -1008,6 +1007,10 @@ describe("runEmbeddedAgent overflow compaction trigger routing", () => {
     expect(attemptParams?.internalEvents).toBe(internalEvents);
     expect(attemptParams?.agentHarnessId).toBe("openclaw");
     expect(attemptParams?.agentHarnessRuntimeOverride).toBe("openclaw");
+    expect(attemptParams?.onAgentToolResult).not.toBe(forwardingCase.params.onAgentToolResult);
+    const toolResultEvent = { toolName: "read", result: "ok", isError: false };
+    attemptParams?.onAgentToolResult?.(toolResultEvent);
+    expect(forwardingCase.params.onAgentToolResult).toHaveBeenCalledWith(toolResultEvent);
   });
 
   it("routes non-empty request stream params through OpenClaw before auth preparation", async () => {
