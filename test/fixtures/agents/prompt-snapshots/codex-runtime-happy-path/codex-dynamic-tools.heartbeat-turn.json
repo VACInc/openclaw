@@ -45,10 +45,11 @@
           "type": "function"
         },
         {
-          "description": "End turn after subagent spawn; results arrive next message.",
+          "description": "End turn after subagent spawn; results arrive later. Set message to send a waiting status now.",
           "inputSchema": {
             "properties": {
               "message": {
+                "description": "Waiting status to send now; the subagent result arrives in a later message.",
                 "type": "string"
               }
             },

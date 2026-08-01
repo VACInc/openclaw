@@ -161,7 +161,9 @@ describe("resolveGatewayScopedTools", () => {
       message: "waiting on subagents",
     });
 
-    expect(onYield).toHaveBeenCalledWith("waiting on subagents");
+    expect(onYield).toHaveBeenCalledWith("waiting on subagents", {
+      hasExplicitMessage: true,
+    });
     expect(toolResult.details).toEqual({
       status: "yielded",
       message: "waiting on subagents",
