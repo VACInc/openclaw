@@ -644,6 +644,8 @@ describe("resolveFollowupDeliveryDecision", () => {
   });
 
   it("delivers an explicit sessions_yield status from a queued follow-up turn", () => {
+    const turn = createTurn();
+    turn.queued.run.allowEmptyAssistantReplyAsSilent = true;
     const execution = createSettledExecution();
     if (execution.outcome.kind !== "settled") {
       throw new Error("expected settled execution");
@@ -659,7 +661,7 @@ describe("resolveFollowupDeliveryDecision", () => {
 
     expect(
       resolveFollowupDeliveryDecision({
-        turn: createTurn(),
+        turn,
         execution,
         accounting: createAccounting(),
       }),

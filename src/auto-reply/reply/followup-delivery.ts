@@ -221,7 +221,6 @@ export function resolveFollowupDeliveryDecision(params: {
         isInteractive,
         isHeartbeat: opts?.isHeartbeat,
         silentExpected: turn.queued.run.silentExpected,
-        allowEmptyAssistantReplyAsSilent: turn.queued.run.allowEmptyAssistantReplyAsSilent,
         isMessageToolOnly: sourcePolicy.sourceReplyDeliveryMode === "message_tool_only",
         hasExplicitSilentReply: hasDeliberateSilentTerminalReply(result),
         hasVisibleReplyDelivery,
