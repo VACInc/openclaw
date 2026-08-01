@@ -486,6 +486,21 @@ yourself.
 This keeps text, image, video, music, TTS, approval, and messaging-tool
 outputs on the same delivery path as OpenClaw-backed runs.
 
+### Yielded turns and child continuations
+
+A harness that executes OpenClaw tools must call the host-supplied
+`AgentHarnessAttemptParams.onAgentToolResult` with each sanitized terminal tool
+result before the attempt settles. OpenClaw records accepted `sessions_spawn`
+results at this lifecycle boundary so yielded parent turns stay attached to
+their child continuations. Harnesses must not infer acceptance from display
+text or implement their own normalization policy.
+
+When `sessions_yield` ends the attempt, set `yieldDetected: true`. If the tool
+call included an explicit model-authored waiting status, also copy it to
+`yieldMessage`; omit `yieldMessage` for OpenClaw's internal fallback. The reply
+pipeline may deliver the explicit status once while the child continues, but
+must not expose the fallback or change the later child-completion delivery.
+
 Set `AgentHarnessAttemptResult.hostOwnedToolMediaUrls` only for native artifacts
 that the trusted harness runtime created and persisted itself. Every entry must
 also appear in `toolMediaUrls`. Never include model-selected dynamic-tool or

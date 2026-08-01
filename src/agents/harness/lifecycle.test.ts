@@ -155,7 +155,7 @@ describe("AgentHarness lifecycle runner", () => {
     resetDiagnosticEventsForTest();
   });
 
-  it("runs a harness attempt without changing attempt params", async () => {
+  it("runs a harness attempt with lifecycle-owned tool-result observation", async () => {
     const params = createAttemptParams();
     const result = createAttemptResult();
     const runAttempt = vi.fn(async () => result);
@@ -170,7 +170,92 @@ describe("AgentHarness lifecycle runner", () => {
     const attemptResult = await runAgentHarnessLifecycleAttempt(harness, params);
 
     expect(attemptResult).toEqual({ ...result, agentHarnessId: "codex" });
-    expect(runAttempt).toHaveBeenCalledWith(params);
+    expect(runAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...params,
+        onAgentToolResult: expect.any(Function),
+      }),
+    );
+  });
+
+  it("records accepted child spawns before classification and composes the caller observer", async () => {
+    const onAgentToolResult = vi.fn();
+    const params = { ...createAttemptParams(), onAgentToolResult };
+    const classify = vi.fn<NonNullable<AgentHarness["classify"]>>(() => "ok");
+    const harness: AgentHarness = {
+      id: "codex",
+      label: "Codex",
+      supports: () => ({ supported: true }),
+      runAttempt: async (attemptParams) => {
+        attemptParams.onAgentToolResult?.({
+          toolName: "sessions_spawn",
+          result: {
+            details: {
+              status: "accepted",
+              runId: "child-run",
+              childSessionKey: "agent:main:subagent:child-run",
+            },
+          },
+          isError: false,
+        });
+        attemptParams.onAgentToolResult?.({
+          toolName: "sessions_spawn",
+          result: {
+            details: {
+              status: "accepted",
+              runId: "ignored-error",
+              childSessionKey: "agent:main:subagent:ignored-error",
+            },
+          },
+          isError: true,
+        });
+        attemptParams.onAgentToolResult?.({
+          toolName: "sessions_spawn",
+          result: { details: { status: "accepted", runId: "missing-key" } },
+          isError: false,
+        });
+        return {
+          ...createAttemptResult(),
+          acceptedSessionSpawns: [
+            {
+              runId: "child-run",
+              childSessionKey: "agent:main:subagent:child-run",
+            },
+            {
+              runId: "harness-child",
+              childSessionKey: "agent:main:subagent:harness-child",
+            },
+          ],
+        };
+      },
+      classify,
+    };
+
+    const attemptResult = await runAgentHarnessLifecycleAttempt(harness, params);
+
+    expect(onAgentToolResult).toHaveBeenCalledTimes(3);
+    expect(classify.mock.calls[0]?.[0]).toMatchObject({
+      acceptedSessionSpawns: [
+        {
+          runId: "child-run",
+          childSessionKey: "agent:main:subagent:child-run",
+        },
+        {
+          runId: "harness-child",
+          childSessionKey: "agent:main:subagent:harness-child",
+        },
+      ],
+    });
+    expect(attemptResult.acceptedSessionSpawns).toEqual([
+      {
+        runId: "child-run",
+        childSessionKey: "agent:main:subagent:child-run",
+      },
+      {
+        runId: "harness-child",
+        childSessionKey: "agent:main:subagent:harness-child",
+      },
+    ]);
   });
 
   it("runs isolated finalization through the narrow lifecycle contract", async () => {

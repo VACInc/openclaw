@@ -1803,20 +1803,6 @@ describe("runCopilotAttempt", () => {
       // caller via onYieldDetected so the final result can carry the
       // flag (parent runner uses it to mark liveness paused /
       // stop_reason end_turn). Mirrors PI/codex parity.
-      await input.onToolCompleted?.({
-        args: { task: "scan logs" },
-        result: {
-          content: [{ text: "Accepted: launching child session.", type: "text" }],
-          details: {
-            status: "accepted",
-            runId: "child-run",
-            childSessionKey: "agent:main:subagent:child-run",
-          },
-        },
-        startedAt: Date.now(),
-        toolCallId: "spawn-call",
-        toolName: "sessions_spawn",
-      });
       input.onYieldDetected?.("paused by tool", { hasExplicitMessage: true });
       return { sdkTools: [], sourceTools: [] };
     });
@@ -1828,9 +1814,6 @@ describe("runCopilotAttempt", () => {
 
     expect(result.yieldDetected).toBe(true);
     expect(result.yieldMessage).toBe("paused by tool");
-    expect(result.acceptedSessionSpawns).toEqual([
-      { runId: "child-run", childSessionKey: "agent:main:subagent:child-run" },
-    ]);
   });
 
   it("F7: does not expose the sessions_yield fallback as a user status", async () => {

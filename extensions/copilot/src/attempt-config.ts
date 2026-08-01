@@ -1,9 +1,5 @@
 import type { MessageOptions, SessionConfig, Tool as SdkTool } from "@github/copilot-sdk";
-import type {
-  AcceptedSessionSpawn,
-  AgentMessage,
-  SandboxContext,
-} from "openclaw/plugin-sdk/agent-harness-runtime";
+import type { AgentMessage, SandboxContext } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
   detectAndLoadAgentHarnessPromptImages,
   getModelProviderRequestTransport,
@@ -34,7 +30,6 @@ export function createResult(
   params: AttemptParamsLike,
   state: {
     aborted?: boolean;
-    acceptedSessionSpawns?: AcceptedSessionSpawn[];
     assistantTranscriptOwned?: boolean;
     assistantTranscriptIdempotencyKey?: string;
     assistantTexts?: string[];
@@ -101,7 +96,6 @@ export function createResult(
     promptError !== undefined ? withPromptFailure(interruption, promptError) : interruption;
   return {
     terminal,
-    acceptedSessionSpawns: state.acceptedSessionSpawns ?? [],
     ...(state.assistantTranscriptOwned
       ? {
           assistantTranscriptOwned: true,

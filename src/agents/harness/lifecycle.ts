@@ -26,6 +26,10 @@ import {
   type DiagnosticTraceContext,
 } from "../../infra/diagnostic-trace-context.js";
 import {
+  normalizeAcceptedSessionSpawnResult,
+  type AcceptedSessionSpawn,
+} from "../accepted-session-spawn.js";
+import {
   normalizeAgentRunAttemptTerminal,
   projectAgentRunAttemptTerminal,
 } from "../agent-run-terminal-outcome.js";
@@ -204,6 +208,28 @@ function withFallbackFinalizationDiagnosticTrace(
   };
 }
 
+function mergeAcceptedSessionSpawns(
+  result: AgentHarnessAttemptResult,
+  observed: readonly AcceptedSessionSpawn[],
+): AgentHarnessAttemptResult {
+  if (observed.length === 0) {
+    return result;
+  }
+  const acceptedSessionSpawns = [...(result.acceptedSessionSpawns ?? [])];
+  for (const spawn of observed) {
+    if (
+      acceptedSessionSpawns.some(
+        (existing) =>
+          existing.runId === spawn.runId && existing.childSessionKey === spawn.childSessionKey,
+      )
+    ) {
+      continue;
+    }
+    acceptedSessionSpawns.push(spawn);
+  }
+  return { ...result, acceptedSessionSpawns };
+}
+
 function emitAgentHarnessRunStarted(
   harness: AgentHarness,
   params: AgentHarnessAttemptParams,
@@ -282,6 +308,20 @@ export async function runAgentHarnessLifecycleAttempt(
   let agentRunTrace: DiagnosticTraceContext | undefined;
   let agentRunStartedAt = 0;
   let agentRunCompleted = false;
+  const observedAcceptedSessionSpawns: AcceptedSessionSpawn[] = [];
+  const onAgentToolResult = params.onAgentToolResult;
+  const lifecycleParams: AgentHarnessAttemptParams = {
+    ...params,
+    onAgentToolResult: (event) => {
+      if (!event.isError && event.toolName === "sessions_spawn") {
+        const acceptedSpawn = normalizeAcceptedSessionSpawnResult(event.result);
+        if (acceptedSpawn) {
+          observedAcceptedSessionSpawns.push(acceptedSpawn);
+        }
+      }
+      onAgentToolResult?.(event);
+    },
+  };
   const emitAgentRunCompleted = (completion: AgentRunCompletion): void => {
     if (!agentRunTrace || agentRunCompleted) {
       return;
@@ -320,7 +360,10 @@ export async function runAgentHarnessLifecycleAttempt(
     }
     const runAndClassify = async () => {
       phase = "send";
-      const rawResult = await execute(params);
+      const rawResult = mergeAcceptedSessionSpawns(
+        await execute(lifecycleParams),
+        observedAcceptedSessionSpawns,
+      );
       phase = "resolve";
       // Classification happens inside the diagnostic phase so failures identify
       // whether they came from send or result resolution.

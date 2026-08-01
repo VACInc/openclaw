@@ -1,4 +1,4 @@
-import type { AcceptedSessionSpawn, AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
+import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
   projectAgentHarnessTranscriptMessageForDisplay,
   runAgentHarnessLlmOutputHook,
@@ -15,7 +15,6 @@ import type {
 } from "./attempt-types.js";
 import { attachEventBridge } from "./event-bridge.js";
 export async function completeCopilotAttempt(params: {
-  acceptedSessionSpawns: AcceptedSessionSpawn[];
   aborted: boolean;
   attemptStartedAt: number;
   bridge: ReturnType<typeof attachEventBridge> | undefined;
@@ -49,7 +48,6 @@ export async function completeCopilotAttempt(params: {
   yieldMessage?: string;
 }): Promise<AgentHarnessAttemptResult> {
   const {
-    acceptedSessionSpawns,
     aborted,
     attemptStartedAt,
     bridge,
@@ -97,7 +95,6 @@ export async function completeCopilotAttempt(params: {
           currentRunUserKey,
         ));
   const result = createResult(input, {
-    acceptedSessionSpawns,
     aborted,
     assistantTexts,
     codeModeEngaged,
