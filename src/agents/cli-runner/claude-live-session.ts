@@ -75,6 +75,10 @@ type ManagedRun = Awaited<ReturnType<ProcessSupervisor["spawn"]>>;
 type ClaudeLiveTurn = {
   backend: CliBackendConfig;
   diagnosticRefs: ClaudeLiveDiagnosticRefs;
+  /** Correlates terminal results to the user message written for this turn. */
+  requestMessageUuid: string;
+  /** Tracks whether --replay-user-messages has reached this turn's stdin message. */
+  messageReplayState: "pending" | "unowned" | "acknowledged";
   /** Enclosing run abort signal; authoritative for tool terminal reason on turn failure. */
   abortSignal?: AbortSignal;
   outputLimits: ClaudeLiveOutputLimits;
@@ -92,6 +96,8 @@ type ClaudeLiveTurn = {
   useResume: boolean;
   /** True after any output other than init or the exact synthetic queue placeholder. */
   hasReplayUnsafeActivity: boolean;
+  /** This turn emitted an interim result while its own background work remained active. */
+  ownsBackgroundContinuation: boolean;
   /**
    * Claude consumed queued session notifications before processing this turn.
    * The following empty result is provisional; the same process can emit the
@@ -963,6 +969,49 @@ function isClaudeLiveSubstantiveAssistantProgress(parsed: Record<string, unknown
   );
 }
 
+function noteClaudeLiveUserMessageReplay(
+  turn: ClaudeLiveTurn,
+  parsed: Record<string, unknown>,
+): boolean {
+  if (
+    parsed.type !== "user" ||
+    typeof parsed.uuid !== "string" ||
+    !isRecord(parsed.message) ||
+    parsed.message.role !== "user" ||
+    typeof parsed.message.content !== "string"
+  ) {
+    return false;
+  }
+  if (parsed.uuid === turn.requestMessageUuid) {
+    turn.messageReplayState = "acknowledged";
+  } else if (turn.messageReplayState === "pending") {
+    turn.messageReplayState = "unowned";
+  }
+  return true;
+}
+
+function isClaudeLiveUnownedResult(turn: ClaudeLiveTurn, parsed: Record<string, unknown>): boolean {
+  if (parsed.type !== "result") {
+    return false;
+  }
+  const resultMessageUuid =
+    typeof parsed.user_message_uuid === "string" ? parsed.user_message_uuid.trim() : "";
+  if (resultMessageUuid === turn.requestMessageUuid) {
+    return false;
+  }
+  const taskNotificationOrigin =
+    isRecord(parsed.origin) && parsed.origin.kind === "task-notification";
+  if (taskNotificationOrigin && turn.ownsBackgroundContinuation) {
+    return false;
+  }
+  // Current Claude versions echo the triggering input UUID. Older origin-aware
+  // versions still identify queued task notifications without that field, and
+  // replay ordering identifies an older result before this input is acknowledged.
+  return (
+    taskNotificationOrigin || resultMessageUuid.length > 0 || turn.messageReplayState === "unowned"
+  );
+}
+
 function deferClaudeLiveSyntheticResult(
   session: ClaudeLiveSession,
   turn: ClaudeLiveTurn,
@@ -1398,10 +1447,15 @@ function handleClaudeLiveLine(session: ClaudeLiveSession, line: string): void {
   if (!turn) {
     return;
   }
+  const userMessageReplay = noteClaudeLiveUserMessageReplay(turn, parsed);
+  const unownedResult = isClaudeLiveUnownedResult(turn, parsed);
+  const unownedUserMessageReplay = userMessageReplay && turn.messageReplayState === "unowned";
   if (
     !(
       (parsed.type === "system" && parsed.subtype === "init") ||
-      isClaudeLiveProvisionalSyntheticPlaceholder(parsed)
+      isClaudeLiveProvisionalSyntheticPlaceholder(parsed) ||
+      unownedUserMessageReplay ||
+      unownedResult
     )
   ) {
     turn.hasReplayUnsafeActivity = true;
@@ -1420,6 +1474,14 @@ function handleClaudeLiveLine(session: ClaudeLiveSession, line: string): void {
     return;
   }
   turn.rawLines.push(trimmed);
+  if (userMessageReplay) {
+    emitClaudeLiveProgress(turn, "cli_live:user_message_replayed");
+    return;
+  }
+  if (unownedResult) {
+    emitClaudeLiveProgress(turn, "cli_live:result_deferred_unowned_notification");
+    return;
+  }
   applyBackgroundTasksChanged(session, parsed);
   if (turn.allowSyntheticContinuationGrace && isClaudeLiveProvisionalSyntheticPlaceholder(parsed)) {
     turn.pendingSyntheticPlaceholder = true;
@@ -1466,6 +1528,7 @@ function handleClaudeLiveLine(session: ClaudeLiveSession, line: string): void {
   // post-drain result. Other listed types (e.g. local_bash) do not hold it.
   if (session.outstandingBackgroundTaskIds.size > 0) {
     // An interim result is not terminal; background work returns the run to send.
+    turn.ownsBackgroundContinuation = true;
     turn.onPhase?.("send");
     emitClaudeLiveProgress(turn, "cli_live:result_deferred_background_tasks");
     return;
@@ -1569,9 +1632,10 @@ function handleClaudeExit(session: ClaudeLiveSession, exitCode: number | null): 
   );
 }
 
-function createClaudeUserInputMessage(content: string): string {
+function createClaudeUserInputMessage(content: string, uuid: string): string {
   return `${JSON.stringify({
     type: "user",
+    uuid,
     session_id: "",
     parent_tool_use_id: null,
     message: {
@@ -1701,6 +1765,7 @@ async function createClaudeLiveSession(params: {
 
 function createTurn(params: {
   context: PreparedCliRunContext;
+  requestMessageUuid: string;
   noOutputTimeoutMs: number;
   allowSyntheticContinuationGrace: boolean;
   useResume: boolean;
@@ -1725,6 +1790,8 @@ function createTurn(params: {
 }): ClaudeLiveTurn {
   const turn: ClaudeLiveTurn = {
     backend: params.context.preparedBackend.backend,
+    requestMessageUuid: params.requestMessageUuid,
+    messageReplayState: "pending",
     diagnosticRefs: {
       runId: params.context.params.runId,
       sessionId: params.context.params.sessionId,
@@ -1743,6 +1810,7 @@ function createTurn(params: {
     observedStdout: false,
     useResume: params.useResume,
     hasReplayUnsafeActivity: false,
+    ownsBackgroundContinuation: false,
     pendingSyntheticPlaceholder: false,
     allowSyntheticContinuationGrace: params.allowSyntheticContinuationGrace,
     deferredSyntheticOutput: null,
@@ -2189,9 +2257,11 @@ async function runSerializedClaudeLiveSessionTurn(
   liveSession.noOutputTimeoutMs = params.noOutputTimeoutMs;
   liveSession.stderr = "";
 
+  const requestMessageUuid = crypto.randomUUID();
   const outputPromise = new Promise<CliOutput>((resolve, reject) => {
     liveSession.currentTurn = createTurn({
       context: params.context,
+      requestMessageUuid,
       noOutputTimeoutMs: params.noOutputTimeoutMs,
       allowSyntheticContinuationGrace: params.useResume && createdSessionForTurn,
       useResume: params.useResume,
@@ -2235,7 +2305,7 @@ async function runSerializedClaudeLiveSessionTurn(
       abort();
     } else {
       try {
-        const requestPayload = createClaudeUserInputMessage(params.prompt);
+        const requestPayload = createClaudeUserInputMessage(params.prompt, requestMessageUuid);
         params.onRequestPayload?.(requestPayload);
         await Promise.race([writeTurnInput(liveSession, requestPayload), outputPromise]);
       } catch (error) {

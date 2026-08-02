@@ -10,24 +10,23 @@ import {
   resetDiagnosticRunActivityForTest,
   startDiagnosticRunActivityTracking,
 } from "../../logging/diagnostic-run-activity.js";
-import type { getProcessSupervisor } from "../../process/supervisor/index.js";
 import {
   restoreCliRunnerPrepareTestDeps,
   supervisorSpawnMock,
 } from "../cli-runner.test-support.js";
-import { runClaudeLiveSessionTurn } from "./claude-live-session.js";
+import {
+  installLiveStdoutDriver,
+  jsonl,
+  startLiveTurn,
+} from "./claude-live-session.background-tasks.test-support.js";
 import { resetClaudeLiveSessionsForTest } from "./claude-live-session.test-support.js";
 import { setCliRunnerExecuteTestDeps } from "./execute.test-support.js";
 import { writeCliSystemPromptFile } from "./helpers.js";
-import type { PreparedCliRunContext } from "./types.js";
 
 vi.mock("../../plugin-sdk/anthropic-cli.js", () => ({
   CLAUDE_CLI_BACKEND_ID: "claude-cli",
   isClaudeCliProvider: (providerId: string) => providerId === "claude-cli",
 }));
-
-type ProcessSupervisor = ReturnType<typeof getProcessSupervisor>;
-type SupervisorSpawnFn = ProcessSupervisor["spawn"];
 
 beforeEach(() => {
   setDiagnosticsEnabledForProcess(true);
@@ -45,157 +44,6 @@ afterEach(() => {
   resetDiagnosticRunActivityForTest();
   resetClaudeLiveSessionsForTest();
 });
-
-function buildPreparedCliRunContext(params: {
-  runId: string;
-  timeoutMs?: number;
-  sessionId?: string;
-  sessionKey?: string;
-  credentialFingerprint?: string;
-}): PreparedCliRunContext {
-  const backend = {
-    command: "claude",
-    args: ["-p", "--output-format", "stream-json"],
-    output: "jsonl" as const,
-    input: "stdin" as const,
-    modelArg: "--model",
-    sessionArgs: ["--session-id", "{sessionId}"],
-    sessionMode: "always" as const,
-    systemPromptFileArg: "--append-system-prompt-file",
-    systemPromptWhen: "first" as const,
-    serialize: true,
-    liveSession: "claude-stdio" as const,
-  };
-  return {
-    params: {
-      sessionId: params.sessionId ?? "s-bg",
-      sessionKey: params.sessionKey ?? "agent:main:bg",
-      sessionFile: "/tmp/session.jsonl",
-      workspaceDir: "/tmp",
-      prompt: "hi",
-      provider: "claude-cli",
-      model: "sonnet",
-      timeoutMs: params.timeoutMs ?? 60_000,
-      runId: params.runId,
-    },
-    started: Date.now(),
-    workspaceDir: "/tmp",
-    backendResolved: {
-      id: "claude-cli",
-      config: backend,
-      bundleMcp: true,
-      pluginId: "anthropic",
-    },
-    preparedBackend: {
-      backend,
-      env: {},
-      ...(params.credentialFingerprint
-        ? {
-            secretInput: {
-              fd: 3,
-              fingerprint: params.credentialFingerprint,
-              createData: () => Buffer.from("secret"),
-            },
-          }
-        : {}),
-    },
-    reusableCliSession: { mode: "none" },
-    hadSessionFile: false,
-    contextEngineConfig: {},
-    modelId: "sonnet",
-    normalizedModel: "sonnet",
-    systemPrompt: "You are a helpful assistant.",
-    systemPromptReport: {} as PreparedCliRunContext["systemPromptReport"],
-    bootstrapPromptWarningLines: [],
-    authEpochVersion: 2,
-  };
-}
-
-function getProcessSupervisorForTest() {
-  return {
-    spawn: (params: Parameters<SupervisorSpawnFn>[0]) =>
-      supervisorSpawnMock(params) as ReturnType<SupervisorSpawnFn>,
-    cancel: vi.fn(),
-    cancelScope: vi.fn(),
-    getRecord: vi.fn(),
-  };
-}
-
-function installLiveStdoutDriver(params?: {
-  onWrite?: (stdout: (chunk: string) => void) => void;
-}): {
-  cancel: ReturnType<typeof vi.fn>;
-  stdout: { emit: (chunk: string) => void; waitReady: () => Promise<void> };
-} {
-  let stdoutListener: ((chunk: string) => void) | undefined;
-  const cancel = vi.fn();
-  let markReady: (() => void) | undefined;
-  const ready = new Promise<void>((resolve) => {
-    markReady = resolve;
-  });
-  const stdin = {
-    write: vi.fn((_data: string, cb?: (err?: Error | null) => void) => {
-      if (stdoutListener && params?.onWrite) {
-        params.onWrite(stdoutListener);
-      }
-      cb?.();
-      markReady?.();
-    }),
-    end: vi.fn(),
-  };
-  supervisorSpawnMock.mockImplementation(async (...args: unknown[]) => {
-    const input = (args[0] ?? {}) as { onStdout?: (chunk: string) => void };
-    stdoutListener = input.onStdout;
-    return {
-      runId: "live-bg-run",
-      pid: 4242,
-      startedAtMs: Date.now(),
-      stdin,
-      wait: vi.fn(() => new Promise(() => {})),
-      cancel,
-    };
-  });
-  return {
-    cancel,
-    stdout: {
-      emit: (chunk: string) => {
-        stdoutListener?.(chunk);
-      },
-      waitReady: () => ready,
-    },
-  };
-}
-
-function jsonl(lines: unknown[]): string {
-  return lines.map((line) => JSON.stringify(line)).join("\n") + "\n";
-}
-
-function startLiveTurn(params: {
-  runId: string;
-  timeoutMs?: number;
-  noOutputTimeoutMs?: number;
-  useResume?: boolean;
-  onPhase?: (phase: "send" | "resolve") => void;
-  credentialFingerprint?: string;
-}) {
-  const context = buildPreparedCliRunContext({
-    runId: params.runId,
-    timeoutMs: params.timeoutMs,
-    credentialFingerprint: params.credentialFingerprint,
-  });
-  return runClaudeLiveSessionTurn({
-    context,
-    args: context.preparedBackend.backend.args ?? [],
-    env: {},
-    prompt: "hi",
-    useResume: params.useResume ?? false,
-    noOutputTimeoutMs: params.noOutputTimeoutMs ?? 5_000,
-    getProcessSupervisor: getProcessSupervisorForTest,
-    onAssistantDelta: () => {},
-    onPhase: params.onPhase,
-    cleanup: async () => {},
-  });
-}
 
 describe("claude live session provisional results", () => {
   it("reuses the same credential generation and restarts when it rotates", async () => {
@@ -359,6 +207,7 @@ describe("claude live session provisional results", () => {
             session_id: "live-bg",
             result: "Subagent finished: subagent final output",
             origin: { kind: "task-notification" },
+            user_message_uuid: "owned-background-notification",
           },
         ]),
       );
@@ -430,6 +279,111 @@ describe("claude live session provisional results", () => {
     });
     const result = await startLiveTurn({ runId: "run-bg-none" });
     expect(result.output.text).toBe("plain answer");
+    expect(driver.cancel).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unowned task-notification result from consuming the current user turn", async () => {
+    let requestMessageUuid = "";
+    const driver = installLiveStdoutDriver({
+      onWrite: (_stdout, input) => {
+        const parsed = JSON.parse(input) as { uuid?: string };
+        requestMessageUuid = parsed.uuid ?? "";
+      },
+    });
+    const resultPromise = startLiveTurn({
+      runId: "run-orphaned-task-notification",
+      useResume: true,
+    });
+    await driver.stdout.waitReady();
+    expect(requestMessageUuid).not.toBe("");
+
+    driver.stdout.emit(
+      jsonl([
+        { type: "system", subtype: "init", session_id: "live-orphaned-notification" },
+        {
+          type: "user",
+          uuid: "queued-notification-message",
+          session_id: "live-orphaned-notification",
+          parent_tool_use_id: null,
+          message: { role: "user", content: "queued notification" },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "live-orphaned-notification",
+          result: "",
+        },
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "live-orphaned-notification",
+          result: "",
+          origin: { kind: "task-notification" },
+        },
+      ]),
+    );
+
+    let settled = false;
+    void resultPromise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await waitForDiagnosticEventsDrained();
+    expect(
+      getDiagnosticSessionActivitySnapshot({ sessionKey: "agent:main:bg" }).lastProgressReason,
+    ).toBe("cli_live:result_deferred_unowned_notification");
+
+    driver.stdout.emit(
+      jsonl([
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "live-orphaned-notification",
+          result: "",
+          user_message_uuid: "different-user-message",
+        },
+      ]),
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    driver.stdout.emit(
+      jsonl([
+        {
+          type: "user",
+          uuid: requestMessageUuid,
+          session_id: "live-orphaned-notification",
+          parent_tool_use_id: null,
+          message: { role: "user", content: "hi" },
+        },
+        {
+          type: "assistant",
+          session_id: "live-orphaned-notification",
+          message: {
+            model: "claude-fable-5",
+            role: "assistant",
+            content: [{ type: "text", text: "The actual user response." }],
+          },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "live-orphaned-notification",
+          result: "The actual user response.",
+          origin: { kind: "human" },
+          user_message_uuid: requestMessageUuid,
+        },
+      ]),
+    );
+
+    const result = await resultPromise;
+    expect(result.output.text).toBe("The actual user response.");
     expect(driver.cancel).not.toHaveBeenCalled();
   });
 
