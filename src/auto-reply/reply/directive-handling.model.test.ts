@@ -23,10 +23,6 @@ const modelsCommandMock = vi.hoisted(() => ({
   delegateToActual: false,
   resolveModelsCommandReply: vi.fn(),
 }));
-const stickyModelMock = vi.hoisted(() => ({
-  persistBestEffort: vi.fn(),
-}));
-
 function defaultModelsCommandReply() {
   return {
     text: [
@@ -97,11 +93,6 @@ vi.mock("./commands-models.js", () => ({
     }
     return defaultModelsCommandReply();
   },
-}));
-
-vi.mock("../../agents/sticky-model-selection.js", () => ({
-  persistStickyModelSelectionBestEffort: (params: { agentId: string; model: string }) =>
-    stickyModelMock.persistBestEffort(params),
 }));
 
 vi.mock("./directive-handling.auth.js", () => ({
@@ -483,7 +474,6 @@ beforeEach(() => {
   vi.mocked(resolveSessionAgentId).mockReset().mockReturnValue("main");
   vi.mocked(enqueueSystemEvent).mockClear();
   queueMocks.refreshQueuedFollowupSession.mockReset();
-  stickyModelMock.persistBestEffort.mockClear();
   clearInternalHooks();
 });
 
@@ -567,7 +557,7 @@ async function persistModelDirectiveForTest(params: {
   provider?: string;
   model?: string;
   initialModelLabel?: string;
-  canPersistStickyModelSelection?: boolean;
+  senderIsOwner?: boolean;
 }) {
   if (params.profiles) {
     setAuthProfiles(params.profiles);
@@ -607,7 +597,7 @@ async function persistModelDirectiveForTest(params: {
       surface: "telegram",
       channel: "telegram",
       ownerList: [],
-      senderIsOwner: params.canPersistStickyModelSelection ?? true,
+      senderIsOwner: params.senderIsOwner ?? true,
       isAuthorizedSender: true,
       rawBodyNormalized: commandBody,
       commandBodyNormalized: commandBody,
@@ -911,7 +901,6 @@ describe("/model chat UX", () => {
     expect(reply?.text).toContain("Providers:");
     expect(reply?.text).toContain("Use: /models <provider>");
     expect(reply?.text).toContain("Switch: /model <provider/model>");
-    expect(stickyModelMock.persistBestEffort).not.toHaveBeenCalled();
   });
 
   it("passes workspace scope through the /model list browser alias", async () => {
@@ -1890,7 +1879,6 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
       elevatedAllowed: false,
       allowedModelKeys,
       allowedModelCatalog,
-      canPersistStickyModelSelection: true,
       ...overrides,
     });
   }
@@ -1922,22 +1910,6 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
     expect(result?.text).toContain("for this session");
     expect(result?.text).not.toContain("failed");
     expect(sessionEntry.liveModelSwitchPending).toBe(true);
-    expect(stickyModelMock.persistBestEffort).toHaveBeenCalledWith({
-      agentId: "main",
-      model: "openai/gpt-4o",
-    });
-  });
-
-  it("uses the target session agent when persisting a model selection", async () => {
-    vi.mocked(resolveSessionAgentId).mockReturnValue("work");
-    const sessionEntry = createSessionEntry();
-
-    await runHandleCommand("/model openai/gpt-4o", { sessionEntry });
-
-    expect(stickyModelMock.persistBestEffort).toHaveBeenCalledWith({
-      agentId: "work",
-      model: "openai/gpt-4o",
-    });
   });
 
   it("keeps a non-owner model selection session-scoped", async () => {
@@ -1945,7 +1917,7 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
 
     const result = await runHandleCommand("/model openai/gpt-4o", {
       sessionEntry,
-      canPersistStickyModelSelection: false,
+      senderIsOwner: false,
     });
 
     expect(result?.text).toContain("Model set to openai/gpt-4o for this session.");
@@ -1953,7 +1925,6 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
       providerOverride: "openai",
       modelOverride: "gpt-4o",
     });
-    expect(stickyModelMock.persistBestEffort).not.toHaveBeenCalled();
   });
 
   it("persists an explicit runtime with a directive-only model switch", async () => {
@@ -2059,7 +2030,6 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
       expect(sessionStore[sessionKey]).toEqual(lockedEntry);
       expect(loadSessionEntry({ sessionKey, storePath })).toEqual(lockedEntry);
       expect(queueMocks.refreshQueuedFollowupSession).not.toHaveBeenCalled();
-      expect(stickyModelMock.persistBestEffort).not.toHaveBeenCalled();
       expect(enqueueSystemEvent).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -2087,32 +2057,17 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
     expect(otherEntry.modelOverrideSource).toBeUndefined();
   });
 
-  it("persists a mixed-command model selection after its session transaction", async () => {
-    vi.mocked(resolveSessionAgentId).mockReturnValue("work");
-
-    await persistModelDirectiveForTest({
-      command: "/model openai/gpt-4o continue with the request",
-      allowedModelKeys: ["anthropic/claude-opus-4-6", "openai/gpt-4o"],
-    });
-
-    expect(stickyModelMock.persistBestEffort).toHaveBeenCalledWith({
-      agentId: "work",
-      model: "openai/gpt-4o",
-    });
-  });
-
   it("keeps a mixed-command model selection session-scoped without authority", async () => {
     const { sessionEntry } = await persistModelDirectiveForTest({
       command: "/model openai/gpt-4o continue with the request",
       allowedModelKeys: ["anthropic/claude-opus-4-6", "openai/gpt-4o"],
-      canPersistStickyModelSelection: false,
+      senderIsOwner: false,
     });
 
     expect(sessionEntry).toMatchObject({
       providerOverride: "openai",
       modelOverride: "gpt-4o",
     });
-    expect(stickyModelMock.persistBestEffort).not.toHaveBeenCalled();
   });
 
   it("remaps unsupported stored thinking levels when persisting a model switch", async () => {
@@ -2836,7 +2791,6 @@ describe("canonical session directive persistence policy", () => {
             { provider: "anthropic", id: "claude-opus-4-6", name: "Claude Opus 4.5" },
             { provider: "openai", id: "gpt-4o", name: "GPT-4o" },
           ],
-          canPersistStickyModelSelection: true,
         }),
       );
 

@@ -1,7 +1,6 @@
 // Tests mixed directives through the real reply admission and transaction boundary.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
-import { persistStickyModelSelectionBestEffort } from "../../agents/sticky-model-selection.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
@@ -31,10 +30,6 @@ vi.mock("../../agents/agent-scope.js", () => ({
 
 vi.mock("../../agents/sandbox.js", () => ({
   resolveSandboxRuntimeStatus: vi.fn(() => ({ sandboxed: false })),
-}));
-
-vi.mock("../../agents/sticky-model-selection.js", () => ({
-  persistStickyModelSelectionBestEffort: vi.fn(),
 }));
 
 vi.mock("../../gateway/session-patch-hooks.js", () => ({
@@ -224,7 +219,6 @@ describe("mixed inline directives", () => {
     expect(persistenceMocks.persist).toHaveBeenCalledOnce();
     expect(triggerSessionPatchHook).toHaveBeenCalledOnce();
     expect(refreshQueuedFollowupSession).toHaveBeenCalledOnce();
-    expect(persistStickyModelSelectionBestEffort).toHaveBeenCalledOnce();
     expect(enqueueSystemEvent).toHaveBeenCalledOnce();
     expect(enqueueSystemEvent).toHaveBeenCalledWith("Model switched to openai/gpt-5.6-luna.", {
       sessionKey: "agent:main:dm:1",
@@ -426,7 +420,6 @@ describe("mixed inline directives", () => {
     expect(sessionStore["agent:main:dm:1"]).toEqual(lockedEntry);
     expect(triggerSessionPatchHook).not.toHaveBeenCalled();
     expect(refreshQueuedFollowupSession).not.toHaveBeenCalled();
-    expect(persistStickyModelSelectionBestEffort).not.toHaveBeenCalled();
     expect(enqueueSystemEvent).not.toHaveBeenCalled();
   });
 

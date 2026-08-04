@@ -8,7 +8,6 @@ import {
   validateSessionsResetParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
-import { persistStickyModelSelectionBestEffort } from "../../agents/sticky-model-selection.js";
 import { replyRunRegistry } from "../../auto-reply/reply/reply-run-registry.js";
 import {
   applySessionPatchProjection,
@@ -349,18 +348,6 @@ export const sessionMutationHandlers: GatewayRequestHandlers = {
         : (parsed?.agentId ?? resolveDefaultAgentId(cfg)),
     );
     const resolved = resolveSessionModelRef(cfg, applied.entry, agentId);
-    if (
-      typeof p.model === "string" &&
-      callerScopes.includes(ADMIN_SCOPE) &&
-      applied.entry.modelOverrideSource === "user" &&
-      applied.entry.providerOverride &&
-      applied.entry.modelOverride
-    ) {
-      persistStickyModelSelectionBestEffort({
-        agentId,
-        model: `${resolved.provider}/${resolved.model}`,
-      });
-    }
     const resolvedDisplayModel = resolveSessionDisplayModelIdentityRef({
       cfg,
       agentId,

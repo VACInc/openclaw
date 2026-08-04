@@ -6,9 +6,7 @@ import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import type { GatewayClient, GatewayRequestContext, RespondFn } from "./types.js";
 
 const effects = vi.hoisted(() => ({
-  info: vi.fn(),
   mutateConfigFileWithRetry: vi.fn(),
-  warn: vi.fn(),
 }));
 
 vi.mock("../../config/config.js", async () => {
@@ -17,20 +15,7 @@ vi.mock("../../config/config.js", async () => {
   return { ...actual, mutateConfigFileWithRetry: effects.mutateConfigFileWithRetry };
 });
 
-vi.mock("../../logging/subsystem.js", async () => {
-  const actual = await vi.importActual<typeof import("../../logging/subsystem.js")>(
-    "../../logging/subsystem.js",
-  );
-  return {
-    ...actual,
-    createSubsystemLogger: (subsystem: string) =>
-      subsystem === "agents/sticky-model-selection"
-        ? { info: effects.info, warn: effects.warn }
-        : actual.createSubsystemLogger(subsystem),
-  };
-});
-
-// Sticky-model tests own persistence policy; session-utils.test.ts owns the thinking
+// These tests own model mutation scope; session-utils.test.ts owns the thinking
 // projection that otherwise materializes provider policy for every mutation here.
 vi.mock("../session-utils.js", async () => {
   const actual = await vi.importActual<typeof import("../session-utils.js")>("../session-utils.js");
@@ -70,23 +55,23 @@ function context(): GatewayRequestContext {
   } as unknown as GatewayRequestContext;
 }
 
-function client(scopes: string[]): GatewayClient {
+function client(): GatewayClient {
   return {
     connect: {
       minProtocol: 1,
       maxProtocol: 1,
       client: { id: "openclaw-control-ui", version: "test", platform: "test", mode: "webchat" },
       role: "operator",
-      scopes,
+      scopes: ["operator.admin"],
     },
   };
 }
 
-async function patchSession(params: Record<string, unknown>, scopes = ["operator.admin"]) {
+async function patchSession(params: Record<string, unknown>) {
   const responses: Parameters<RespondFn>[] = [];
   await sessionMutationHandlers["sessions.patch"]?.({
     params,
-    client: client(scopes),
+    client: client(),
     context: context(),
     respond: (...response: Parameters<RespondFn>) => responses.push(response),
   } as never);
@@ -95,31 +80,22 @@ async function patchSession(params: Record<string, unknown>, scopes = ["operator
 }
 
 beforeEach(() => {
-  effects.info.mockReset();
-  effects.warn.mockReset();
-  effects.mutateConfigFileWithRetry
-    .mockReset()
-    .mockImplementation(
-      async (params: { mutate: (draft: OpenClawConfig, context: unknown) => unknown }) => {
-        const draft = structuredClone(cfg);
-        const result = await params.mutate(draft, {});
-        return { nextConfig: draft, result };
-      },
-    );
+  effects.mutateConfigFileWithRetry.mockReset();
 });
 
 afterEach(() => {
   closeOpenClawAgentDatabasesForTest();
 });
 
-describe("sessions.patch sticky model persistence", () => {
+describe("sessions.patch model scope", () => {
   it.each([
-    { agentId: "main", sessionKey: "agent:main:dm:sticky" },
-    { agentId: "work", sessionKey: "agent:work:dm:sticky" },
+    { agentId: "main", sessionKey: "agent:main:dm:model-scope" },
+    { agentId: "work", sessionKey: "agent:work:dm:model-scope" },
   ])(
-    "persists an accepted model for the resolved $agentId agent",
+    "keeps an accepted $agentId model selection in its session",
     async ({ agentId, sessionKey }) => {
       await withOpenClawTestState({ scenario: "minimal" }, async () => {
+        const configuredBefore = structuredClone(cfg);
         await upsertSessionEntry(
           { agentId, sessionKey },
           { sessionId: `session-${agentId}`, updatedAt: 1 },
@@ -128,63 +104,21 @@ describe("sessions.patch sticky model persistence", () => {
         const response = await patchSession({ key: sessionKey, model: "openai/gpt-5.6-sol" });
 
         expect(response[0]).toBe(true);
-        await vi.waitFor(() => expect(effects.mutateConfigFileWithRetry).toHaveBeenCalledOnce());
+        expect(loadSessionEntry({ agentId, sessionKey })).toMatchObject({
+          providerOverride: "openai",
+          modelOverride: "gpt-5.6-sol",
+          modelOverrideSource: "user",
+        });
+        expect(cfg).toEqual(configuredBefore);
+        expect(effects.mutateConfigFileWithRetry).not.toHaveBeenCalled();
       });
     },
   );
 
-  it("keeps a non-admin model switch session-scoped", async () => {
+  it("resets a session override without rewriting the configured default", async () => {
     await withOpenClawTestState({ scenario: "minimal" }, async () => {
-      const sessionKey = "agent:main:dm:non-admin";
-      await upsertSessionEntry(
-        { agentId: "main", sessionKey },
-        { sessionId: "session-non-admin", updatedAt: 1 },
-      );
-
-      const response = await patchSession({ key: sessionKey, model: "openai/gpt-5.6-sol" }, [
-        "operator.write",
-      ]);
-
-      expect(response[0]).toBe(true);
-      expect(loadSessionEntry({ agentId: "main", sessionKey })).toMatchObject({
-        providerOverride: "openai",
-        modelOverride: "gpt-5.6-sol",
-      });
-      expect(effects.mutateConfigFileWithRetry).not.toHaveBeenCalled();
-    });
-  });
-
-  it("returns session success and warns when the sticky config write fails", async () => {
-    await withOpenClawTestState({ scenario: "minimal" }, async () => {
-      const sessionKey = "agent:main:dm:write-failure";
-      await upsertSessionEntry(
-        { agentId: "main", sessionKey },
-        { sessionId: "session-write-failure", updatedAt: 1 },
-      );
-      effects.mutateConfigFileWithRetry.mockRejectedValueOnce(new Error("config write failed"));
-
-      const response = await patchSession({ key: sessionKey, model: "openai/gpt-5.6-sol" });
-
-      expect(response[0]).toBe(true);
-      expect(loadSessionEntry({ agentId: "main", sessionKey })).toMatchObject({
-        providerOverride: "openai",
-        modelOverride: "gpt-5.6-sol",
-      });
-      await vi.waitFor(() =>
-        expect(effects.warn).toHaveBeenCalledWith(
-          "failed sticky model persistence agentId=main model=openai/gpt-5.6-sol reason=config write failed",
-        ),
-      );
-    });
-  });
-
-  it.each([
-    { name: "omitted", patch: { label: "Sticky" } },
-    { name: "cleared", patch: { model: null } },
-    { name: "reset to the current default", patch: { model: "anthropic/claude-opus-4-6" } },
-  ])("does not persist when model is $name", async ({ patch }) => {
-    await withOpenClawTestState({ scenario: "minimal" }, async () => {
-      const sessionKey = "agent:main:dm:no-sticky";
+      const sessionKey = "agent:main:dm:model-default";
+      const configuredBefore = structuredClone(cfg);
       await upsertSessionEntry(
         { agentId: "main", sessionKey },
         {
@@ -197,9 +131,16 @@ describe("sessions.patch sticky model persistence", () => {
         },
       );
 
-      const response = await patchSession({ key: sessionKey, ...patch });
+      const response = await patchSession({
+        key: sessionKey,
+        model: "anthropic/claude-opus-4-6",
+      });
 
       expect(response[0]).toBe(true);
+      const entry = loadSessionEntry({ agentId: "main", sessionKey });
+      expect(entry?.providerOverride).toBeUndefined();
+      expect(entry?.modelOverride).toBeUndefined();
+      expect(cfg).toEqual(configuredBefore);
       expect(effects.mutateConfigFileWithRetry).not.toHaveBeenCalled();
     });
   });

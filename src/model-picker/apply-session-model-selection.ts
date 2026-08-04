@@ -9,7 +9,6 @@ import {
   resolveCompatibleAgentRuntimeForProvider,
   resolveSessionRuntimeOverrideForProvider,
 } from "../agents/session-runtime-compat.js";
-import { persistStickyModelSelectionBestEffort } from "../agents/sticky-model-selection.js";
 import { resolveEffectiveAgentRuntime } from "../agents/thinking-runtime.js";
 import { applyModelRuntimeDirective } from "../auto-reply/reply/directive-handling.model-runtime.js";
 import { resolveContextTokens } from "../auto-reply/reply/model-selection-context.js";
@@ -55,7 +54,6 @@ export type ApplySessionModelSelectionParams = {
   allowedModelKeys: ReadonlySet<string>;
   modelCatalog: readonly ModelCatalogEntry[];
   thinkingCatalog?: readonly ModelCatalogEntry[];
-  canPersistStickyModelSelection?: boolean;
   request: SessionModelSelectionRequest;
   /** Raw directive text used only by the existing session patch hook. */
   patchModel?: string;
@@ -300,9 +298,6 @@ export async function applySessionModelSelection(
   const model = request.model;
   const effectiveModelRef = `${provider}/${model}`;
   const changed = applied.changed || thinkingRemap !== undefined;
-  if (params.canPersistStickyModelSelection === true && !request.isDefault) {
-    persistStickyModelSelectionBestEffort({ agentId: params.agentId, model: effectiveModelRef });
-  }
   if (changed) {
     triggerSessionPatchHook({
       cfg: params.cfg,

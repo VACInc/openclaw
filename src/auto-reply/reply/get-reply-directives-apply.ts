@@ -183,9 +183,6 @@ export async function applyInlineDirectiveOverrides(params: {
   let { directives } = params;
   let { provider, model } = params;
   let { contextTokens } = params;
-  const canPersistStickyModelSelection = Array.isArray(ctx.GatewayClientScopes)
-    ? ctx.GatewayClientScopes.includes("operator.admin")
-    : command.senderIsOwner;
   const directiveModelState = {
     allowedModelKeys: modelState.allowedModelKeys,
     allowedModelCatalog: modelState.allowedModelCatalog,
@@ -211,7 +208,6 @@ export async function applyInlineDirectiveOverrides(params: {
     model,
     initialModelLabel,
     formatModelSwitchEvent,
-    canPersistStickyModelSelection,
   });
 
   let directiveAck: ReplyPayload | undefined;
@@ -392,7 +388,6 @@ export async function applyInlineDirectiveOverrides(params: {
           allowedModelKeys: modelState.allowedModelKeys,
           modelCatalog: modelState.allowedModelCatalog,
           thinkingCatalog: modelState.allowedModelCatalog,
-          canPersistStickyModelSelection,
           request: {
             ...modelSelection,
             profileOverride: modelResolution.profileOverride,
