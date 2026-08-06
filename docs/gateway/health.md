@@ -120,9 +120,15 @@ payloads, claim owners or tokens, recorded errors, or session and target identif
 Options:
 
 - `--json`: machine-readable JSON output
-- `--timeout <ms>`: override the default 10s probe timeout
+- `--timeout <ms>`: set an explicit overall client response deadline
 - `--verbose`: force a live probe and print gateway connection details
 - `--debug`: alias for `--verbose`
+
+Cached health uses a 10-second response deadline when `--timeout` is omitted.
+Verbose/debug health and `status --deep` instead keep connection startup bounded,
+then wait for the account-dependent live probe set. The Gateway enforces a
+10-second deadline for every account probe—even when a plugin ignores the timeout
+hint—and runs at most five accounts for one channel concurrently.
 
 The health snapshot includes: `ok` (boolean), `ts` (timestamp), `durationMs` (probe time), per-channel status, agent availability, session-store summary, and optional delivery-queue warnings.
 
