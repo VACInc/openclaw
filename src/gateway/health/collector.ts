@@ -426,7 +426,7 @@ export async function collectGatewayHealthSnapshot(params: {
             error,
             runtime,
             skipped,
-            timedOut: result.kind === "timeout",
+            timedOut: result.kind === "timeout" && result.started !== false,
           }),
         ];
       }),
