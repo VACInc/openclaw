@@ -10,6 +10,7 @@ import {
   type GatewayClientMode,
   type GatewayClientName,
 } from "../../packages/gateway-protocol/src/client-info.js";
+import type { GatewayServerCapability } from "../../packages/gateway-protocol/src/server-capabilities.js";
 import {
   ConnectErrorDetailCodes,
   readConnectErrorDetailCode,
@@ -91,6 +92,8 @@ type CallGatewayBaseOptions = {
   params?: unknown;
   expectFinal?: boolean;
   timeoutMs?: number | null;
+  /** Required hello capability before a null request may shed its legacy wrapper deadline. */
+  unboundedRequestCapability?: GatewayServerCapability;
   signal?: AbortSignal;
   onAccepted?: GatewayClientRequestOptions["onAccepted"];
   onSignalAbort?: (request: GatewayRequestFunction) => Promise<void> | void;
@@ -950,7 +953,10 @@ async function executeGatewayRequestWithScopes<T>(params: {
       minProtocol: opts.minProtocol ?? MIN_CLIENT_PROTOCOL_VERSION,
       maxProtocol: opts.maxProtocol ?? PROTOCOL_VERSION,
       onHelloOk: (hello) => {
-        if (timeoutMs === null && timer) {
+        const unboundedCapabilitySatisfied =
+          !opts.unboundedRequestCapability ||
+          hello.features?.capabilities?.includes(opts.unboundedRequestCapability) === true;
+        if (timeoutMs === null && unboundedCapabilitySatisfied && timer) {
           clearTimeout(timer);
           timer = undefined;
         }
