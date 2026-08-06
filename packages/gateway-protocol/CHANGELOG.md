@@ -9,6 +9,8 @@ version and the additive schema surface. Dates are authoring dates (2026).
 
 - Add bounded `sessions.patchMany` session mutation orchestration.
 - Preserve required legacy agent-default fields while adding honest `ownership` and `selectionRequired` state to agent lists and initial snapshots.
+- Advertise bounded channel-hook ownership for live health through the optional
+  `health-bounded-channel-hooks` server capability.
 - Add semantic `agent` / `system` roster kinds negotiated through the `agent-kind` client capability.
 - Rename structured-question item `id` to `questionId` and flatten keyed answer arrays.
 - Slim worker and session-catalog payloads to the active wire contract.
