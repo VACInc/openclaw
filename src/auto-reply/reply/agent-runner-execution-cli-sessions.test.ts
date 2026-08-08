@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { prepareCliPromptImagePayload } from "../../agents/cli-runner/helpers.js";
+import type { RunCliAgentParams } from "../../agents/cli-runner/types.js";
+import { detectAndLoadPromptImages } from "../../agents/embedded-agent-runner/run/images.js";
 import { FailoverError } from "../../agents/failover-error.js";
 import { installSessionPlacementAdmissionProvider } from "../../agents/session-placement-admission.js";
 import type { SessionEntry } from "../../config/sessions.js";
@@ -23,7 +26,7 @@ const state = setupAgentRunnerExecutionTestState();
 afterEach(resetGeneratedMediaTaskActivityForTests);
 
 describe("executeAgentTurn: CLI session routing", () => {
-  it("does not rematerialize prepared current-turn images", async () => {
+  it("keeps prepared current-turn images aligned with CLI media facts", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
       result: await params.run("claude-cli", "claude-opus-5"),
@@ -31,20 +34,45 @@ describe("executeAgentTurn: CLI session routing", () => {
       model: "claude-opus-5",
       attempts: [],
     }));
-    state.runCliAgentMock.mockResolvedValueOnce({
-      payloads: [{ text: "described" }],
-      meta: {},
-    });
-    state.resolveCurrentTurnImagesMock.mockImplementationOnce(
-      async (params: { images?: unknown[]; imageOrder?: unknown[] }) => ({
-        images: [...(params.images ?? []), ...(params.images ?? [])],
-        imageOrder: [...(params.imageOrder ?? []), ...(params.imageOrder ?? [])],
-      }),
-    );
-
-    const images = [{ type: "image" as const, data: "aGVsbG8=", mimeType: "image/png" }];
+    const images = [
+      {
+        type: "image" as const,
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGP4z8Dwn4GBgYGJAQoAHxcCAr7cGDwAAAAASUVORK5CYII=",
+        mimeType: "image/png",
+      },
+    ];
     const imageOrder = ["inline" as const];
-    const media = [{ path: "/tmp/current.png", contentType: "image/png" }];
+    const media = [{ path: "/openclaw-test-missing/current.png", contentType: "image/png" }];
+    state.runCliAgentMock.mockImplementationOnce(async (params: RunCliAgentParams) => {
+      await expect(
+        prepareCliPromptImagePayload({
+          backend: { command: "claude" },
+          prompt: params.prompt,
+          imagePrompt: params.prompt,
+          workspaceDir: params.workspaceDir,
+          images: [...images, ...images],
+          imageOrder: [...imageOrder, ...imageOrder],
+          media,
+        }),
+      ).rejects.toThrow("failed to hydrate 1 structured image attachment");
+
+      const reconciled = await detectAndLoadPromptImages({
+        prompt: params.prompt,
+        media: params.media,
+        workspaceDir: params.workspaceDir,
+        model: { input: ["text", "image"] },
+        existingImages: params.images,
+        imageOrder: params.imageOrder,
+      });
+      expect(reconciled).toMatchObject({
+        failedMediaCount: 0,
+        images,
+      });
+      return {
+        payloads: [{ text: "described" }],
+        meta: {},
+      };
+    });
     const followupRun = createFollowupRun();
     followupRun.run.provider = "claude-cli";
     followupRun.run.model = "claude-opus-5";
@@ -65,7 +93,6 @@ describe("executeAgentTurn: CLI session routing", () => {
     );
 
     expect(result.kind).toBe("success");
-    expect(state.resolveCurrentTurnImagesMock).not.toHaveBeenCalled();
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
       images,
       imageOrder,
