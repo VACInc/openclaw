@@ -416,9 +416,7 @@ describe("runEmbeddedAgentViaCliBackendIfEligible execution", () => {
     const imageOrder = ["inline" as const];
     const media = [{ path: "/tmp/recall.png", contentType: "image/png" }];
 
-    await runEmbeddedAgentViaCliBackendIfEligible(
-      baseRunParams({ images, imageOrder, media }),
-    );
+    await runEmbeddedAgentViaCliBackendIfEligible(baseRunParams({ images, imageOrder, media }));
 
     expect(runCliAgent.mock.calls[0]?.[0]).toMatchObject({
       prompt: "recall prompt",
