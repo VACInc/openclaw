@@ -23,6 +23,56 @@ const state = setupAgentRunnerExecutionTestState();
 afterEach(resetGeneratedMediaTaskActivityForTests);
 
 describe("executeAgentTurn: CLI session routing", () => {
+  it("does not rematerialize prepared current-turn images", async () => {
+    state.isCliProviderMock.mockReturnValue(true);
+    state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
+      result: await params.run("claude-cli", "claude-opus-5"),
+      provider: "claude-cli",
+      model: "claude-opus-5",
+      attempts: [],
+    }));
+    state.runCliAgentMock.mockResolvedValueOnce({
+      payloads: [{ text: "described" }],
+      meta: {},
+    });
+    state.resolveCurrentTurnImagesMock.mockImplementationOnce(
+      async (params: { images?: unknown[]; imageOrder?: unknown[] }) => ({
+        images: [...(params.images ?? []), ...(params.images ?? [])],
+        imageOrder: [...(params.imageOrder ?? []), ...(params.imageOrder ?? [])],
+      }),
+    );
+
+    const images = [{ type: "image" as const, data: "aGVsbG8=", mimeType: "image/png" }];
+    const imageOrder = ["inline" as const];
+    const media = [{ path: "/tmp/current.png", contentType: "image/png" }];
+    const followupRun = createFollowupRun();
+    followupRun.run.provider = "claude-cli";
+    followupRun.run.model = "claude-opus-5";
+    followupRun.images = images;
+    followupRun.imageOrder = imageOrder;
+    followupRun.media = media;
+
+    const executeAgentTurn = await getExecuteAgentTurnForTest();
+    const result = await executeAgentTurn(
+      createMinimalRunAgentTurnParams({
+        followupRun,
+        sessionCtx: {
+          Provider: "telegram",
+          MessageSid: "msg",
+          media,
+        } as unknown as TemplateContext,
+      }),
+    );
+
+    expect(result.kind).toBe("success");
+    expect(state.resolveCurrentTurnImagesMock).not.toHaveBeenCalled();
+    expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
+      images,
+      imageOrder,
+      media,
+    });
+  });
+
   it("forwards the static extra system prompt to CLI backends", async () => {
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
