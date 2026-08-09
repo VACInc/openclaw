@@ -1,0 +1,274 @@
+title: Codex quiet native tool result topic isolation
+
+scenario:
+  id: codex-quiet-native-tool-result-topic-isolation
+  surface: model-provider
+  coverage:
+    secondary:
+      - openai.codex-harness-codex-cli
+  plugins:
+    - codex
+  objective: Verify a quiet Codex commandExecution can outlive the attempt idle budget while a second topic-like session continues on the same pinned app-server client.
+  successCriteria:
+    - Session A starts one silent native command whose completion arrives after the configured attempt idle budget.
+    - Session A persists the exact native output in its own transcript with no synthesized missing tool result.
+    - Session B emits periodic native ticks concurrently and completes with output isolated to its own transcript.
+    - Gateway evidence orders item/started before item/completed before turn/completed for session A.
+    - Gateway logs contain no attempt-idle timeout or synthesized missing-result diagnostic.
+  docsRefs:
+    - docs/concepts/qa-e2e-automation.md
+    - docs/channels/qa-channel.md
+    - docs/help/testing.md
+  codeRefs:
+    - extensions/codex/src/app-server/attempt-timeouts.ts
+    - extensions/codex/src/app-server/run-attempt-turn-state.ts
+    - extensions/codex/src/app-server/attempt-turn-watches.ts
+    - extensions/codex/src/app-server/attempt-notifications.ts
+    - extensions/codex/src/app-server/event-projector-tool-transcript.ts
+  gatewayConfigPatch:
+    agents:
+      defaults:
+        timeoutSeconds: 5
+    logging:
+      level: trace
+      consoleLevel: trace
+      consoleStyle: json
+    skills:
+      workshop:
+        autonomous:
+          mode: "off"
+    plugins:
+      entries:
+        codex:
+          config:
+            appServer:
+              homeScope: user
+  execution:
+    kind: flow
+    runtime: codex
+    providerMode: live-frontier
+    channel: qa-channel
+    suiteIsolation: isolated
+    isolationReason: The scenario lowers the agent timeout and needs two concurrent topic-like sessions on one shared Codex app-server client.
+    timeoutMs: 180000
+    summary: Run the live Codex app-server through an ephemeral QA gateway with one quiet topic and one ticking sibling topic.
+    config:
+      requiredProviderMode: live-frontier
+      requiredProvider: openai
+      harnessRuntime: codex
+      attemptIdleBudgetMs: 5000
+      quietSleepSeconds: 8
+      quietCommand: "sleep 8; printf 'QA_TOPIC_A_NATIVE_RESULT\\n'"
+      tickingCommand: "printf 'QA_TOPIC_B_TICK_1\\n'; sleep 0.5; printf 'QA_TOPIC_B_TICK_2\\n'; sleep 0.5; printf 'QA_TOPIC_B_TICK_3\\n'; sleep 0.5; printf 'QA_TOPIC_B_TICK_4\\n'; sleep 0.5; printf 'QA_TOPIC_B_TICK_5\\n'; sleep 0.5; printf 'QA_TOPIC_B_TICK_6\\n'; sleep 0.5; printf 'QA_TOPIC_B_TICK_7\\n'; sleep 0.5; printf 'QA_TOPIC_B_TICK_8\\n'; sleep 0.5; printf 'QA_TOPIC_B_NATIVE_RESULT\\n'"
+      expectedQuietOutput: QA_TOPIC_A_NATIVE_RESULT
+      expectedTickingOutput: |-
+        QA_TOPIC_B_TICK_1
+        QA_TOPIC_B_TICK_2
+        QA_TOPIC_B_TICK_3
+        QA_TOPIC_B_TICK_4
+        QA_TOPIC_B_TICK_5
+        QA_TOPIC_B_TICK_6
+        QA_TOPIC_B_TICK_7
+        QA_TOPIC_B_TICK_8
+        QA_TOPIC_B_NATIVE_RESULT
+      expectedQuietReply: QA_TOPIC_A_DONE
+      expectedTickingReply: QA_TOPIC_B_DONE
+
+flow:
+  steps:
+    - name: preserves quiet native completion across concurrent topic-like sessions
+      actions:
+        - set: selected
+          value:
+            expr: splitModelRef(env.primaryModel)
+        - assert:
+            expr: "env.providerMode === config.requiredProviderMode && selected?.provider === config.requiredProvider"
+            message:
+              expr: "`expected ${config.requiredProviderMode} ${config.requiredProvider}, got mode=${env.providerMode} model=${env.primaryModel}`"
+        - assert:
+            expr: "env.runtimeId === config.harnessRuntime"
+            message:
+              expr: "`expected suite runtime ${config.harnessRuntime}, got ${env.runtimeId}`"
+        - call: waitForGatewayHealthy
+          args:
+            - ref: env
+            - 60000
+        - call: waitForQaChannelReady
+          args:
+            - ref: env
+            - 60000
+        - call: reset
+        - set: gatewayLogCursor
+          value:
+            expr: markGatewayLogCursor()
+        - set: quietSessionKey
+          value:
+            expr: "'agent:qa:telegram:group:-1000000000119835:topic:101'"
+        - set: tickingSessionKey
+          value:
+            expr: "'agent:qa:telegram:group:-1000000000119835:topic:202'"
+        - call: startAgentRun
+          saveAs: quietStarted
+          args:
+            - ref: env
+            - sessionKey:
+                ref: quietSessionKey
+              to: dm:qa-topic-a
+              provider:
+                expr: selected?.provider
+              model:
+                expr: selected?.model
+              taskTracking: false
+              timeoutMs:
+                expr: resolveQaLiveTurnTimeoutMs(env, 120000, env.primaryModel)
+              message:
+                expr: |-
+                  `Use the native shell command tool exactly once. Run exactly this command and do not alter it:
+                  ${config.quietCommand}
+
+                  The command intentionally emits no output until after its sleep. Do not send progress or use another tool while it runs. After it completes, reply with exactly:
+                  ${config.expectedQuietReply}`
+        - call: waitForCondition
+          saveAs: quietToolStarted
+          args:
+            - lambda:
+                async: true
+                expr: 'Promise.resolve(String(readGatewayLogs() ?? '''').slice(gatewayLogCursor)).then((log) => { const hookIndex = log.lastIndexOf(''"method":"hook/completed"''); const commandStartedIndex = log.indexOf(''"method":"item/started"'', hookIndex); return hookIndex >= 0 && commandStartedIndex > hookIndex ? commandStartedIndex : undefined; })'
+            - expr: resolveQaLiveTurnTimeoutMs(env, 60000, env.primaryModel)
+            - 50
+        - call: startAgentRun
+          saveAs: tickingStarted
+          args:
+            - ref: env
+            - sessionKey:
+                ref: tickingSessionKey
+              to: dm:qa-topic-b
+              provider:
+                expr: selected?.provider
+              model:
+                expr: selected?.model
+              taskTracking: false
+              timeoutMs:
+                expr: resolveQaLiveTurnTimeoutMs(env, 120000, env.primaryModel)
+              message:
+                expr: |-
+                  `Use the native shell command tool exactly once. Run exactly this command and do not alter it:
+                  ${config.tickingCommand}
+
+                  Do not use another tool. After it completes, reply with exactly:
+                  ${config.expectedTickingReply}`
+        - set: waited
+          value:
+            expr: "await Promise.all([waitForAgentRun(env, quietStarted.runId, resolveQaLiveTurnTimeoutMs(env, 120000, env.primaryModel)), waitForAgentRun(env, tickingStarted.runId, resolveQaLiveTurnTimeoutMs(env, 120000, env.primaryModel))])"
+        - assert:
+            expr: "waited.every((result) => ['ok', 'completed', 'succeeded'].includes(String(result?.status)) || (result?.status === 'error' && String(result?.error).trim().toLowerCase() === 'completed'))"
+            message:
+              expr: "`concurrent Codex runs did not both complete: ${JSON.stringify(waited)}`"
+        - set: transcripts
+          value:
+            expr: "await Promise.all([readSessionTranscriptSummary(env, quietSessionKey), readSessionTranscriptSummary(env, tickingSessionKey)])"
+        - set: owned
+          value:
+            expr: >-
+              await (async () => {
+                const store = await readRawQaSessionStore(env);
+                const sqlite = await qaImport('node:sqlite');
+                const databasePath = path.join(env.gateway.tempRoot, 'state', 'agents', 'qa', 'agent', 'openclaw-agent.sqlite');
+                const database = new sqlite.DatabaseSync(databasePath, { readOnly: true });
+                const readOwned = async (sessionKey) => {
+                  const sessionId = store[sessionKey]?.sessionId;
+                  if (typeof sessionId !== 'string' || !sessionId) throw new Error(`missing session id for ${sessionKey}`);
+                  const rows = database.prepare('SELECT event_json FROM transcript_events WHERE session_id = ? ORDER BY seq ASC').all(sessionId);
+                  const events = rows.map((row) => JSON.parse(String(row.event_json)));
+                  const messages = events.map((event) => event?.message).filter(Boolean);
+                  const calls = messages.flatMap((message) => message?.role === 'assistant' && Array.isArray(message.content) ? message.content.filter((block) => block?.type === 'toolCall' && block?.name === 'bash').map((block) => ({ message, block })) : []);
+                  const results = messages.filter((message) => message?.role === 'toolResult' && message?.toolName === 'bash');
+                  if (calls.length !== 1 || results.length !== 1) throw new Error(`expected one bash call/result for ${sessionKey}, got calls=${calls.length} results=${results.length}`);
+                  const call = calls[0];
+                  const result = results[0];
+                  if (call.block.id !== result.toolCallId) throw new Error(`tool ownership mismatch for ${sessionKey}: call=${call.block.id} result=${result.toolCallId}`);
+                  const identity = String(result?.__openclaw?.mirrorIdentity ?? '');
+                  const turnId = identity.includes(':tool:') ? identity.slice(0, identity.indexOf(':tool:')) : '';
+                  const resultText = (Array.isArray(result.content) ? result.content : []).map((block) => typeof block === 'string' ? block : String(block?.content ?? block?.text ?? '')).join('\n').trim();
+                  return { sessionKey, sessionId, turnId, callId: result.toolCallId, command: JSON.stringify(call.block.arguments ?? call.block.input ?? {}), callTimestamp: Number(call.message.timestamp), resultTimestamp: Number(result.timestamp), resultText, raw: JSON.stringify(events) };
+                };
+                try {
+                  const [quiet, ticking] = await Promise.all([readOwned(quietSessionKey), readOwned(tickingSessionKey)]);
+                  return { quiet, ticking };
+                } finally {
+                  database.close();
+                }
+              })()
+        - set: quietIntervalMs
+          value:
+            expr: "owned.quiet.resultTimestamp - owned.quiet.callTimestamp"
+        - set: gatewayLog
+          value:
+            expr: "String(readGatewayLogs() ?? '').slice(gatewayLogCursor)"
+        - set: bindingProof
+          value:
+            expr: >-
+              await (async () => {
+                const sqlite = await qaImport('node:sqlite');
+                const databasePath = path.join(env.gateway.tempRoot, 'state', 'state', 'openclaw.sqlite');
+                const database = new sqlite.DatabaseSync(databasePath, { readOnly: true });
+                try {
+                  const rows = database.prepare("SELECT value_json FROM plugin_state_entries WHERE plugin_id = ? AND namespace = ?").all('codex', 'app-server-thread-bindings');
+                  const bindings = rows.map((row) => JSON.parse(String(row.value_json))).filter((row) => row?.state === 'active' && [owned.quiet.sessionId, owned.ticking.sessionId].includes(row?.sessionId)).map((row) => ({ sessionId: row.sessionId, threadId: row.binding?.threadId, clientId: row.binding?.clientId }));
+                  return { databasePath, bindings };
+                } finally {
+                  database.close();
+                }
+              })()
+        - set: protocolLines
+          value:
+            expr: >-
+              (() => {
+                const lines = gatewayLog.split(/\r?\n/u);
+                const forTurn = lines.filter((line) => line.includes(owned.quiet.turnId));
+                const outputIndex = forTurn.findIndex((line) => line.includes('item/commandExecution/outputDelta'));
+                const startedIndex = forTurn.findLastIndex((line, index) => index < outputIndex && line.includes('item/started'));
+                const completedIndex = forTurn.findIndex((line, index) => index > outputIndex && line.includes('item/completed'));
+                const turnCompletedIndex = forTurn.findIndex((line, index) => index > completedIndex && line.includes('turn/completed'));
+                return {
+                  startedIndex,
+                  outputIndex,
+                  completedIndex,
+                  turnCompletedIndex,
+                  excerpt: [forTurn[startedIndex], `quiet interval ${quietIntervalMs}ms > attempt budget ${config.attemptIdleBudgetMs}ms`, forTurn[completedIndex], forTurn[turnCompletedIndex]].filter(Boolean),
+                };
+              })()
+        - assert:
+            expr: "quietIntervalMs > config.attemptIdleBudgetMs"
+            message:
+              expr: "`quiet command interval ${quietIntervalMs}ms did not exceed attempt budget ${config.attemptIdleBudgetMs}ms`"
+        - assert:
+            expr: "owned.quiet.command.includes(`sleep ${config.quietSleepSeconds}`) && owned.quiet.resultText === config.expectedQuietOutput"
+            message:
+              expr: "`session A native ownership failed: ${JSON.stringify(owned.quiet)}`"
+        - assert:
+            # The pinned Codex app-server can omit its first commandExecution chunk;
+            # persisted tool output proves that behavior predates this PR.
+            expr: "owned.ticking.resultText.split(/\\r?\\n/u).some((line) => /^QA_TOPIC_B_TICK_[1-8]$/u.test(line)) && owned.ticking.resultText.split(/\\r?\\n/u).includes(config.expectedTickingOutput.split(/\\r?\\n/u).at(-1)) && owned.ticking.command.includes('QA_TOPIC_B_TICK_')"
+            message:
+              expr: "`session B native ownership failed: ${JSON.stringify(owned.ticking)}`"
+        - assert:
+            expr: "!owned.quiet.raw.includes(config.expectedTickingOutput) && !owned.ticking.raw.includes(config.expectedQuietOutput)"
+            message: native tool output crossed topic-like session ownership
+        - assert:
+            expr: "String(transcripts[0].finalText ?? '').trim() === config.expectedQuietReply && String(transcripts[1].finalText ?? '').trim() === config.expectedTickingReply"
+            message:
+              expr: "`unexpected final replies: A=${JSON.stringify(transcripts[0].finalText)} B=${JSON.stringify(transcripts[1].finalText)}`"
+        - assert:
+            expr: "protocolLines.startedIndex >= 0 && protocolLines.outputIndex > protocolLines.startedIndex && protocolLines.completedIndex > protocolLines.outputIndex && protocolLines.turnCompletedIndex > protocolLines.completedIndex"
+            message:
+              expr: "`missing ordered Codex protocol evidence for ${owned.quiet.turnId}: ${JSON.stringify(protocolLines)}`"
+        - assert:
+            expr: "bindingProof.bindings.length === 2 && bindingProof.bindings[0]?.clientId && bindingProof.bindings[0].clientId === bindingProof.bindings[1]?.clientId && bindingProof.bindings[0]?.threadId !== bindingProof.bindings[1]?.threadId"
+            message:
+              expr: "`topic-like sessions did not bind distinct threads to one pinned client: ${JSON.stringify(bindingProof.bindings)}`"
+        - assert:
+            expr: "(() => { const timeoutNeedle = ['turn_progress', 'idle_timeout'].join('_'); const missingNeedle = ['matching tool', 'result'].join('.'); return !gatewayLog.includes(timeoutNeedle) && !gatewayLog.includes(missingNeedle) && !owned.quiet.raw.includes(missingNeedle) && !owned.ticking.raw.includes(missingNeedle); })()"
+            message:
+              expr: "(() => { const timeoutNeedle = ['turn_progress', 'idle_timeout'].join('_'); const missingNeedle = ['matching tool', 'result'].join('.'); return `timeout or synthesized missing result found: ${gatewayLog.split(/\\r?\\n/u).filter((line) => line.includes(timeoutNeedle) || line.includes(missingNeedle)).join('\\n')}`; })()"
+      detailsExpr: "`sessionA=${quietSessionKey} sessionB=${tickingSessionKey} sharedClient=${bindingProof.bindings[0].clientId} threads=${bindingProof.bindings.map((binding) => binding.threadId).join(',')}\\n${protocolLines.excerpt.join('\\n')}\\nA tool.result=${JSON.stringify(owned.quiet.resultText)}\\nB tool.result=${JSON.stringify(owned.ticking.resultText)}`"
