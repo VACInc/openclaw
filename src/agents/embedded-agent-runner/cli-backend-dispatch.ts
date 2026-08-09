@@ -103,6 +103,10 @@ async function runEmbeddedAgentViaCliBackend(
     admittedRunContext: params.admittedRunContext,
     preparedRunAdmission: params.preparedRunAdmission,
   });
+  // The embedded surface keeps this CLI-only marker private. Owning either
+  // image field means admission already ran, including an empty result.
+  const currentTurnImagesPrepared =
+    Object.hasOwn(params, "images") || Object.hasOwn(params, "imageOrder");
   // The dispatch gate guarantees a non-empty named allowlist; translate it to
   // the selectable-backend surface: no native tools, only the listed loopback
   // MCP tools. The MCP list also bounds the loopback grant server-side (tools
@@ -224,7 +228,7 @@ async function runEmbeddedAgentViaCliBackend(
       config: params.config,
       prompt: params.prompt,
       imagePrompt: params.prompt,
-      currentTurnImagesPrepared: params.currentTurnImagesPrepared,
+      currentTurnImagesPrepared: currentTurnImagesPrepared || undefined,
       images: params.images,
       imageOrder: params.imageOrder,
       media: params.media,

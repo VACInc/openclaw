@@ -417,7 +417,7 @@ describe("runEmbeddedAgentViaCliBackendIfEligible execution", () => {
     const media = [{ path: "/tmp/recall.png", contentType: "image/png" }];
 
     await runEmbeddedAgentViaCliBackendIfEligible(
-      baseRunParams({ currentTurnImagesPrepared: true, images, imageOrder, media }),
+      baseRunParams({ images, imageOrder, media }),
     );
 
     expect(runCliAgent.mock.calls[0]?.[0]).toMatchObject({
