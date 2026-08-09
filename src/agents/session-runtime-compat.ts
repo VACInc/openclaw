@@ -104,9 +104,15 @@ export function resolveManualCompactionCliTarget(params: {
   entry?: ManualCompactionRuntimeEntry;
   cfg?: OpenClawConfig;
 }): ManualCompactionCliTarget {
+  const runtimeOverride = normalizeOptionalAgentRuntimeId(params.entry?.agentRuntimeOverride);
+  const runtimeConfig =
+    runtimeOverride && getCliSessionBinding(params.entry, runtimeOverride) ? params.cfg : undefined;
   const selectedRuntime = resolveSessionRuntimeOverrideForProvider({
     provider: params.provider,
     entry: params.entry,
+    // Setup discovery is only relevant when this runtime owns a native transcript.
+    // Model-picker overrides without a binding must stay on the generic compaction path.
+    cfg: runtimeConfig,
   });
   const persistedRuntime =
     params.entry?.modelSelectionLocked === true

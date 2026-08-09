@@ -217,8 +217,11 @@ describe("resolveCliBackendConfig", () => {
 
   it("preserves backend-owned execution hooks", () => {
     const prepareExecution = vi.fn(async () => ({ env: { ACME_HOME: "/tmp/acme" } }));
-    const buildManualCompactionPrompt = vi.fn(() => "/shrink");
-    const validateManualCompactionOutput = vi.fn(() => ({ ok: true as const }));
+    const manualCompaction = {
+      buildPrompt: vi.fn(() => "/shrink"),
+      input: "arg" as const,
+      validateOutput: vi.fn(() => ({ ok: true as const })),
+    };
     const resolveExecutionArgs = vi.fn(({ baseArgs }: { baseArgs: readonly string[] }) => [
       ...baseArgs,
       "--effort",
@@ -230,9 +233,7 @@ describe("resolveCliBackendConfig", () => {
           prepareExecution,
           resolveExecutionArgs: resolveExecutionArgs as never,
           ownsNativeCompaction: true,
-          buildManualCompactionPrompt,
-          manualCompactionInput: "arg",
-          validateManualCompactionOutput,
+          manualCompaction,
           nativeToolMode: "selectable",
           toolAvailabilityEnforcement: "execution-args",
           sideQuestionToolMode: "disabled",
@@ -246,9 +247,7 @@ describe("resolveCliBackendConfig", () => {
     expect(resolved.prepareExecution).toBe(prepareExecution);
     expect(resolved.resolveExecutionArgs).toBe(resolveExecutionArgs);
     expect(resolved.ownsNativeCompaction).toBe(true);
-    expect(resolved.buildManualCompactionPrompt).toBe(buildManualCompactionPrompt);
-    expect(resolved.manualCompactionInput).toBe("arg");
-    expect(resolved.validateManualCompactionOutput).toBe(validateManualCompactionOutput);
+    expect(resolved.manualCompaction).toBe(manualCompaction);
     expect(resolved.nativeToolMode).toBe("selectable");
     expect(resolved.toolAvailabilityEnforcement).toBe("execution-args");
     expect(resolved.sideQuestionToolMode).toBe("disabled");

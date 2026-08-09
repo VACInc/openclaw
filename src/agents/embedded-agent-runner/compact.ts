@@ -85,7 +85,8 @@ export async function compactNativeCliSession(params: {
   if (!backend?.ownsNativeCompaction) {
     return undefined;
   }
-  if (!backend.buildManualCompactionPrompt) {
+  const manualCompaction = backend.manualCompaction;
+  if (!manualCompaction) {
     return {
       ok: false,
       compacted: false,
@@ -111,7 +112,7 @@ export async function compactNativeCliSession(params: {
       cwd: params.compactParams.cwd,
       agentDir: params.compactParams.agentDir,
       config: params.compactParams.config,
-      prompt: backend.buildManualCompactionPrompt(params.compactParams.customInstructions),
+      prompt: manualCompaction.buildPrompt(params.compactParams.customInstructions),
       provider: runtime,
       modelProvider: params.compactParams.provider,
       model: params.compactParams.model,
@@ -122,7 +123,6 @@ export async function compactNativeCliSession(params: {
       trigger: "manual",
       controlOperation: "compact",
       disableCliLiveSession: true,
-      disableTools: true,
       allowEmptyAssistantReplyAsSilent: true,
       abortSignal: params.compactParams.abortSignal,
     });

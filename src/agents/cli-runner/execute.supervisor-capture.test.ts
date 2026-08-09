@@ -168,11 +168,15 @@ describe("executePreparedCliRun supervisor output capture", () => {
     context.params.prompt = "/compact";
     context.params.controlOperation = "compact";
     context.bootstrapPromptWarningLines = ["must not decorate the control command"];
-    context.backendResolved.manualCompactionInput = "arg";
-    context.backendResolved.validateManualCompactionOutput = (output) =>
-      output.includes('"subtype":"compacting"')
-        ? { ok: true }
-        : { ok: false, reason: "native compaction was not acknowledged" };
+    context.backendResolved.textTransforms = { input: [{ from: "/compact", to: "mutated" }] };
+    context.backendResolved.manualCompaction = {
+      input: "arg",
+      buildPrompt: () => "/compact",
+      validateOutput: (output) =>
+        output.includes('"subtype":"compacting"')
+          ? { ok: true }
+          : { ok: false, reason: "native compaction was not acknowledged" },
+    };
 
     const result = await executePreparedCliRun(context);
 
@@ -201,11 +205,14 @@ describe("executePreparedCliRun supervisor output capture", () => {
     const context = buildPreparedCliRunContext({ output: "jsonl", provider: "claude-cli" });
     context.params.prompt = "/compact";
     context.params.controlOperation = "compact";
-    context.backendResolved.manualCompactionInput = "arg";
-    context.backendResolved.validateManualCompactionOutput = () => ({
-      ok: false,
-      reason: "native compaction was not acknowledged",
-    });
+    context.backendResolved.manualCompaction = {
+      input: "arg",
+      buildPrompt: () => "/compact",
+      validateOutput: () => ({
+        ok: false,
+        reason: "native compaction was not acknowledged",
+      }),
+    };
 
     await expect(executePreparedCliRun(context)).rejects.toThrow(
       "native compaction was not acknowledged",

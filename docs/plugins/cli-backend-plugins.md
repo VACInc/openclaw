@@ -238,9 +238,7 @@ only for behavior that really belongs to the backend.
 | `sideQuestionToolMode`             | Declare disabled native tools for `/btw` side questions                     |
 | `bundleMcp` / `bundleMcpMode`      | Opt into OpenClaw's loopback MCP tool bridge                                |
 | `ownsNativeCompaction`             | Backend owns its own automatic compaction - OpenClaw defers                 |
-| `buildManualCompactionPrompt`      | Builds the backend's in-place manual compaction command                     |
-| `manualCompactionInput`            | Selects argument or stdin transport for that control command                |
-| `validateManualCompactionOutput`   | Positively confirms the backend actually compacted                          |
+| `manualCompaction`                 | Atomic command, transport, and positive-acknowledgement contract            |
 | `subscriptionAuthDispatch`         | Opted-in embedded runs on subscription credentials execute via this backend |
 | `runtimeArtifact`                  | Bound a script launcher to its complete bundled package tree                |
 | `liveSessionRequirement`           | Require an init capability before trusting long-lived session output        |
@@ -339,7 +337,7 @@ If your backend runs an agent that compacts its **own** transcript, set
 against its sessions - automatic CLI compaction defers to the backend and the
 turn proceeds. `claude-cli` declares it because Claude Code compacts
 internally with no harness endpoint. It also declares
-`buildManualCompactionPrompt`, so an explicit OpenClaw `/compact` resumes the
+`manualCompaction`, so an explicit OpenClaw `/compact` resumes the
 bound Claude Code session and invokes its native `/compact` command without
 recording a conversation turn. Native-harness sessions such as Codex keep
 routing to their harness compaction endpoint instead.
@@ -359,19 +357,21 @@ If the backend supports an in-place manual command, declare it alongside the
 ownership flag:
 
 ```typescript
-buildManualCompactionPrompt: (instructions) =>
-  instructions ? `/compact ${instructions}` : "/compact",
-manualCompactionInput: "arg",
-validateManualCompactionOutput: (rawOutput) =>
-  rawOutput.includes('"type":"compaction_complete"')
-    ? { ok: true }
-    : { ok: false, reason: "CLI did not confirm compaction." },
+manualCompaction: {
+  buildPrompt: (instructions) =>
+    instructions ? `/compact ${instructions}` : "/compact",
+  input: "arg",
+  validateOutput: (rawOutput) =>
+    rawOutput.includes('"type":"compaction_complete"')
+      ? { ok: true }
+      : { ok: false, reason: "CLI did not confirm compaction." },
+},
 ```
 
 The builder receives optional `/compact` instructions. The validator receives
 the bounded raw process output and must require a backend-owned positive
 acknowledgement; a zero exit alone is not proof of compaction. Do not declare
-these hooks for a command that creates a separate session or requires an
+this capability for a command that creates a separate session or requires an
 ordinary model turn.
 
 ## MCP tool bridge
