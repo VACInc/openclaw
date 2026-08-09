@@ -425,6 +425,10 @@ export async function prepareCliRunContext(
   const started = Date.now();
   const executionMode = params.executionMode ?? "agent";
   const isSideQuestion = executionMode === "side-question";
+  const isControlOperation = params.controlOperation !== undefined;
+  // Control bytes must reach the resumed backend without turn hooks, prompts,
+  // tools, MCP, skills, or context-engine setup changing their execution.
+  const skipsTurnPreparation = isSideQuestion || isControlOperation;
   const admitPreparedParams = async (
     candidate: RunCliAgentParams,
   ): Promise<
@@ -757,7 +761,7 @@ export async function prepareCliRunContext(
     return openClawHistoryMessages;
   };
   const promptBuildHookResult = await (async () => {
-    if (isSideQuestion) {
+    if (skipsTurnPreparation) {
       return undefined;
     }
     const hookRunner = getGlobalHookRunner();
@@ -856,7 +860,7 @@ export async function prepareCliRunContext(
     : undefined;
 
   const sessionLabel = params.sessionKey ?? params.sessionId;
-  const { bootstrapFiles, contextFiles: resolvedContextFiles } = isSideQuestion
+  const { bootstrapFiles, contextFiles: resolvedContextFiles } = skipsTurnPreparation
     ? { bootstrapFiles: [], contextFiles: [] }
     : await prepareDeps.resolveBootstrapContextForRun({
         workspaceDir,
@@ -887,7 +891,7 @@ export async function prepareCliRunContext(
     selectedNativeToolsProvideFileAccess &&
     params.disableTools !== true;
   const bootstrapRouting =
-    isSideQuestion || !canTransportSystemPrompt(backendResolved.config)
+    skipsTurnPreparation || !canTransportSystemPrompt(backendResolved.config)
       ? undefined
       : await resolveWorkspaceBootstrapRouting({
           isWorkspaceBootstrapPending: prepareDeps.isWorkspaceBootstrapPending,
@@ -932,7 +936,7 @@ export async function prepareCliRunContext(
     : undefined;
   const bundleMcpEnabled =
     !nodeClaudePlacement &&
-    !isSideQuestion &&
+    !skipsTurnPreparation &&
     !systemAgentMcpConfig &&
     backendResolved.bundleMcp &&
     params.disableTools !== true;
@@ -958,7 +962,7 @@ export async function prepareCliRunContext(
   const shouldMaterializeRuntimePolicy =
     runtimeToolsAllowPolicy !== undefined &&
     !nodeClaudePlacement &&
-    !isSideQuestion &&
+    !skipsTurnPreparation &&
     !systemAgentMcpConfig &&
     params.disableTools !== true;
   const mcpContextBase =
@@ -1302,7 +1306,7 @@ export async function prepareCliRunContext(
           }
         : undefined;
     const claudeSkillsPlugin =
-      isSideQuestion || nodeClaudePlacement
+      skipsTurnPreparation || nodeClaudePlacement
         ? { args: [], cleanup: async () => {} }
         : await prepareDeps.prepareClaudeCliSkillsPlugin({
             backendId: backendResolved.id,
@@ -1436,14 +1440,15 @@ export async function prepareCliRunContext(
         `cli session reset: provider=${params.provider} reason=${invalidatedReason}`,
       );
     }
-    const heartbeatPrompt = isSideQuestion
-      ? undefined
-      : resolveHeartbeatPromptForSystemPrompt({
-          config: params.config,
-          agentId: sessionAgentId,
-          defaultAgentId,
-        });
-    const openClawReferences = isSideQuestion
+    const heartbeatPrompt =
+      skipsTurnPreparation || params.bootstrapContextRunKind === "commitment-only"
+        ? undefined
+        : resolveHeartbeatPromptForSystemPrompt({
+            config: params.config,
+            agentId: sessionAgentId,
+           defaultAgentId,
+         });
+    const openClawReferences = skipsTurnPreparation
       ? { docsPath: null, sourcePath: null }
       : await prepareDeps.resolveOpenClawReferencePaths({
           workspaceDir,
@@ -1452,7 +1457,7 @@ export async function prepareCliRunContext(
           moduleUrl: import.meta.url,
         });
     const systemPromptSkillsPrompt =
-      isSideQuestion || nodeClaudePlacement || claudeSkillsPlugin.args.length > 0
+      skipsTurnPreparation || nodeClaudePlacement || claudeSkillsPlugin.args.length > 0
         ? ""
         : await resolveCliSkillsPrompt({
             skillsSnapshot: params.skillsSnapshot,
@@ -1461,44 +1466,46 @@ export async function prepareCliRunContext(
             agentId: sessionAgentId,
             sessionKey: params.sessionKey?.trim() || params.sessionId,
           });
-    const runtimeChannel = isSideQuestion
+    const runtimeChannel = skipsTurnPreparation
       ? undefined
       : normalizeMessageChannel(params.messageChannel ?? params.messageProvider);
-    const runtimeCapabilities = isSideQuestion
+    const runtimeCapabilities = skipsTurnPreparation
       ? undefined
       : collectRuntimeChannelCapabilities({
           cfg: params.config,
           channel: runtimeChannel,
           accountId: params.agentAccountId,
         });
-    const builtSystemPrompt = isSideQuestion
-      ? extraSystemPrompt
-      : buildCliAgentSystemPrompt({
-          workspaceDir,
-          cwd,
-          config: params.config,
-          defaultThinkLevel: params.thinkLevel,
-          extraSystemPrompt,
-          sourceReplyDeliveryMode: bindingSourceReplyDeliveryMode,
-          requireExplicitMessageTarget: bindingRequireExplicitMessageTarget,
-          silentReplyPromptMode: params.silentReplyPromptMode,
-          runtimeChannel,
-          runtimeChatType,
-          runtimeCapabilities,
-          ownerNumbers: params.ownerNumbers,
-          heartbeatPrompt,
-          docsPath: openClawReferences.docsPath ?? undefined,
-          sourcePath: openClawReferences.sourcePath ?? undefined,
-          skillsPrompt: systemPromptSkillsPrompt,
-          tools: promptTools,
-          contextFiles,
-          bootstrapMode,
-          modelDisplay,
-          agentId: sessionAgentId,
-          sessionKey: params.sessionKey,
-          sessionId: params.sessionId,
-        });
-    const transformedSystemPrompt = !isSideQuestion
+    const builtSystemPrompt = isControlOperation
+      ? ""
+      : isSideQuestion
+        ? extraSystemPrompt
+        : buildCliAgentSystemPrompt({
+            workspaceDir,
+            cwd,
+            config: params.config,
+            defaultThinkLevel: params.thinkLevel,
+            extraSystemPrompt,
+            sourceReplyDeliveryMode: bindingSourceReplyDeliveryMode,
+            requireExplicitMessageTarget: bindingRequireExplicitMessageTarget,
+            silentReplyPromptMode: params.silentReplyPromptMode,
+            runtimeChannel,
+            runtimeChatType,
+            runtimeCapabilities,
+            ownerNumbers: params.ownerNumbers,
+            heartbeatPrompt,
+            docsPath: openClawReferences.docsPath ?? undefined,
+            sourcePath: openClawReferences.sourcePath ?? undefined,
+            skillsPrompt: systemPromptSkillsPrompt,
+            tools: promptTools,
+            contextFiles,
+            bootstrapMode,
+            modelDisplay,
+            agentId: sessionAgentId,
+            sessionKey: params.sessionKey,
+            sessionId: params.sessionId,
+          });
+    const transformedSystemPrompt = !skipsTurnPreparation
       ? (backendResolved.transformSystemPrompt?.({
           config: params.config,
           workspaceDir,
@@ -1514,12 +1521,13 @@ export async function prepareCliRunContext(
       params.finalizePromptForResolvedTools && params.transcriptPrompt === undefined
         ? params.prompt
         : params.transcriptPrompt;
-    let preparedPrompt =
-      params.finalizePromptForResolvedTools?.({
-        prompt: params.prompt,
-        messageToolAvailable,
-      }) ?? params.prompt;
-    if (!isSideQuestion) {
+    let preparedPrompt = isControlOperation
+      ? params.prompt
+      : (params.finalizePromptForResolvedTools?.({
+          prompt: params.prompt,
+          messageToolAvailable,
+        }) ?? params.prompt);
+    if (!skipsTurnPreparation) {
       try {
         const hookResult = promptBuildHookResult;
         if (hookResult?.prependContext) {
@@ -1553,7 +1561,7 @@ export async function prepareCliRunContext(
       }
     }
     let historyPromptCurrentTurn = preparedPrompt;
-    if (!isSideQuestion) {
+    if (!skipsTurnPreparation) {
       const currentInboundContext = prependCliSessionDriftUserContext(
         params.currentInboundContext,
         reusableCliSession,
@@ -1584,7 +1592,7 @@ export async function prepareCliRunContext(
     // gateway-side OpenClaw transcript, so a fresh remote CLI session still
     // receives prior conversation context via stdin.
     const shouldPrepareOpenClawHistoryPrompt =
-      !isSideQuestion && (!reusableCliSessionId || allowRawTranscriptReseed);
+      !skipsTurnPreparation && (!reusableCliSessionId || allowRawTranscriptReseed);
     const openClawHistoryPrompt = shouldPrepareOpenClawHistoryPrompt
       ? buildCliSessionHistoryPrompt({
           messages: await loadCliSessionReseedMessages({
@@ -1600,15 +1608,14 @@ export async function prepareCliRunContext(
           maxHistoryChars: autoReseedHistoryChars,
         })
       : undefined;
-    const systemPromptWithReplacements = applyPluginTextReplacements(
-      systemPrompt,
-      backendResolved.textTransforms?.input,
-    );
+    const systemPromptWithReplacements = skipsTurnPreparation
+      ? systemPrompt
+      : applyPluginTextReplacements(systemPrompt, backendResolved.textTransforms?.input);
     // Ensure the cache boundary before appending the model identity so the identity lands in the
     // dynamic suffix, not the cached prefix, for marker-free hook overrides — otherwise an idle
     // turn's prefix (O + identity) diverges from an active media turn's prefix (O) and breaks
     // prompt caching. Skip empty prompts and turns with no identity line, which need no boundary.
-    systemPrompt = isSideQuestion
+    systemPrompt = skipsTurnPreparation
       ? systemPromptWithReplacements
       : appendModelIdentitySystemPrompt({
           systemPrompt:
@@ -1646,7 +1653,7 @@ export async function prepareCliRunContext(
       },
     });
     const contextEngineConfig = params.config ?? getRuntimeConfig();
-    if (isSideQuestion) {
+    if (skipsTurnPreparation) {
       const preparedParams = await admitPreparedParams({
         ...params,
         config: contextEngineConfig,

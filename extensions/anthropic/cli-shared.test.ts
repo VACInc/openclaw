@@ -85,6 +85,10 @@ describe("Claude CLI adapter equivalence", () => {
   it("builds Claude Code's native manual compaction command", () => {
     const backend = buildAnthropicCliBackend();
     const manualCompaction = backend.manualCompaction;
+    // Redacted fixtures preserve the control fields observed from Claude Code 2.0.76-2.1.226.
+    const compactingStatus = { type: "system", subtype: "status", status: "compacting" };
+    const compactResult = { compact_result: "success" };
+    const compactBoundary = { type: "system", subtype: "compact_boundary" };
 
     expect(manualCompaction?.buildPrompt()).toBe("/compact");
     expect(manualCompaction?.buildPrompt(" keep operator decisions ")).toBe(
@@ -93,12 +97,20 @@ describe("Claude CLI adapter equivalence", () => {
     expect(manualCompaction?.input).toBe("arg");
     expect(
       manualCompaction?.validateOutput(
-        `${JSON.stringify({ type: "system", subtype: "compacting" })}\n`,
+        [compactingStatus, compactResult, compactBoundary]
+          .map((event) => JSON.stringify(event))
+          .join("\n"),
       ),
     ).toEqual({ ok: true });
+    expect(manualCompaction?.validateOutput(`${JSON.stringify(compactResult)}\n`)).toEqual({
+      ok: true,
+    });
+    expect(manualCompaction?.validateOutput(`${JSON.stringify(compactBoundary)}\n`)).toEqual({
+      ok: true,
+    });
     expect(
       manualCompaction?.validateOutput(
-        `${JSON.stringify({ type: "system", subtype: "local_command" })}\n`,
+        `${JSON.stringify(compactingStatus)}\n${JSON.stringify({ type: "system", subtype: "local_command" })}\n`,
       ),
     ).toEqual({
       ok: false,

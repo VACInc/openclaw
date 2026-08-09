@@ -203,8 +203,15 @@ export async function compactEmbeddedAgentSessionDirect(
 ): Promise<EmbeddedAgentCompactResult> {
   const paramsBase = applyAgentRunSessionTargetIdentity(paramsInput);
   const lockedHarnessRuntime = normalizeOptionalAgentRuntimeId(paramsBase.agentHarnessId);
-  const deferLockedHarnessFailure =
-    paramsBase.trigger === "manual" && Boolean(paramsBase.cliSessionId?.trim());
+  const lockedCliBackend =
+    paramsBase.trigger === "manual" && lockedHarnessRuntime
+      ? resolveCliBackendConfig(lockedHarnessRuntime, paramsBase.config, {
+          agentId: paramsBase.agentId,
+        })
+      : undefined;
+  // An owning CLI backend must report its capability or binding failure before
+  // the generic model-lock guard; otherwise the operator gets the wrong remedy.
+  const deferLockedHarnessFailure = lockedCliBackend?.ownsNativeCompaction === true;
   if (
     paramsBase.modelSelectionLocked === true &&
     lockedHarnessRuntime !== "openclaw" &&
