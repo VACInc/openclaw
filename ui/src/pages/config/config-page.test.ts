@@ -11,6 +11,11 @@ import type {
 } from "../../app/context.ts";
 import { changedServerUiPrefs, resetServerUiPrefsSync } from "../../app/server-prefs.ts";
 import { loadSettings } from "../../app/settings.ts";
+import {
+  installDialogPolyfill,
+  nextFrame,
+  waitForRenderedModalDialog,
+} from "../../test-helpers/modal-dialog.ts";
 import { createStorageMock } from "../../test-helpers/storage.ts";
 import * as chatModels from "../chat/models.ts";
 import * as realtimeTalk from "../chat/realtime-talk.ts";
@@ -534,7 +539,40 @@ describe("ConfigPage curated mutation eligibility", () => {
 });
 
 describe("ConfigPage Updates integration", () => {
-  it("stages policy changes through patchForm and delegates Update now to overlays", () => {
+  it("refreshes update status once when the page becomes active", () => {
+    const refreshUpdateStatus = vi.fn(async () => {});
+    const page = new ConfigPage();
+    const state = page as unknown as {
+      context: ApplicationContext;
+      syncUpdateStatusRefresh: () => void;
+    };
+    state.context = {
+      gateway: {
+        snapshot: {
+          client: {},
+          phase: "connected",
+          hello: {
+            auth: { role: "operator", scopes: ["operator.admin"] },
+            features: { methods: ["update.status"] },
+          },
+        },
+      },
+      overlays: { refreshUpdateStatus },
+    } as unknown as ApplicationContext;
+
+    page.pageId = "updates";
+    state.syncUpdateStatusRefresh();
+    state.syncUpdateStatusRefresh();
+    expect(refreshUpdateStatus).toHaveBeenCalledOnce();
+
+    page.pageId = "advanced";
+    state.syncUpdateStatusRefresh();
+    page.pageId = "updates";
+    state.syncUpdateStatusRefresh();
+    expect(refreshUpdateStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("stages policy changes through patchForm and confirms Update now before overlays", async () => {
     const patchForm = vi.fn();
     const runUpdate = vi.fn();
     const page = new ConfigPage();
@@ -578,6 +616,8 @@ describe("ConfigPage Updates integration", () => {
       },
     } as unknown as ApplicationContext;
     const container = document.createElement("div");
+    document.body.append(container);
+    const restoreDialogPolyfill = installDialogPolyfill();
 
     render(page.render(), container);
 
@@ -596,10 +636,22 @@ describe("ConfigPage Updates integration", () => {
     [...container.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent?.includes("Update now"))
       ?.click();
+    await nextFrame();
 
     expect(patchForm).toHaveBeenCalledWith(["update", "channel"], "beta");
     expect(patchForm).toHaveBeenCalledWith(["update", "auto", "enabled"], true);
+    // Settings shares the sidebar card's confirmation gate: nothing runs on the click itself.
+    expect(runUpdate).not.toHaveBeenCalled();
+
+    const { modal } = await waitForRenderedModalDialog(document.body);
+    [...modal.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Update and restart")
+      ?.click();
+    await nextFrame();
+
     expect(runUpdate).toHaveBeenCalledOnce();
+    restoreDialogPolyfill();
+    container.remove();
   });
 });
 

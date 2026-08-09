@@ -11,6 +11,7 @@ import {
   CLI_FRESH_WATCHDOG_DEFAULTS,
   CLI_RESUME_WATCHDOG_DEFAULTS,
 } from "openclaw/plugin-sdk/cli-backend";
+import { parseClaudeCliJsonlEvent } from "./cli-output.js";
 import {
   CLAUDE_CLI_BACKEND_ID,
   CLAUDE_CLI_DEFAULT_MODEL_REF,
@@ -269,6 +270,7 @@ export function buildAnthropicCliBackend(): CliBackendPlugin {
           }
         : undefined;
     },
+    parseJsonlEvent: parseClaudeCliJsonlEvent,
     resolveExecutionArgs: resolveClaudeCliExecutionArgs,
   };
 }

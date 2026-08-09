@@ -34,6 +34,7 @@ import {
 } from "../../app/settings.ts";
 import { startThemeTransition } from "../../app/theme-transition.ts";
 import { resolveTheme, type ThemeMode, type ThemeName } from "../../app/theme.ts";
+import { confirmAndStartUpdate } from "../../app/update-confirmation.ts";
 import { CONTROL_UI_BUILD_INFO } from "../../build-info.ts";
 import {
   loadStoredHiddenSessionCatalogIds,
@@ -292,6 +293,7 @@ export class ConfigPage extends OpenClawLightDomElement {
   private runtimeConfigSource: ApplicationContext["runtimeConfig"] | null = null;
   private systemInfoGatewaySource: ApplicationContext["gateway"] | null = null;
   private systemInfoClient: GatewayBrowserClient | null = null;
+  private updateStatusClient: GatewayBrowserClient | null = null;
   private sessionObserverModelsClient: GatewayBrowserClient | null = null;
   private readonly sessionObserverModelLoads = new WeakMap<GatewayBrowserClient, Promise<void>>();
   private readonly systemInfoPolling = new PollController(
@@ -404,6 +406,7 @@ export class ConfigPage extends OpenClawLightDomElement {
     this.resetConfigViewState();
     this.systemInfoGatewaySource = null;
     this.systemInfoClient = null;
+    this.updateStatusClient = null;
     this.subscriptions.clear();
     super.disconnectedCallback();
   }
@@ -423,6 +426,7 @@ export class ConfigPage extends OpenClawLightDomElement {
       this.invalidateSystemInfoRequest();
     }
     this.syncSystemInfoPolling();
+    this.syncUpdateStatusRefresh();
     this.syncUpdateCountdownPolling();
     this.scrollToPendingRouteTarget();
     // Device labels stay hidden until the user grants media permission; each
@@ -551,6 +555,23 @@ export class ConfigPage extends OpenClawLightDomElement {
     this.updateCountdownPolling.stop();
   }
 
+  private syncUpdateStatusRefresh() {
+    const gateway = this.context.gateway.snapshot;
+    const client =
+      this.pageId === "updates" &&
+      gateway.phase === "connected" &&
+      canCallGatewayMethod(gateway, "update.status", "operator.admin")
+        ? gateway.client
+        : null;
+    if (client === this.updateStatusClient) {
+      return;
+    }
+    this.updateStatusClient = client;
+    if (client) {
+      void this.context.overlays.refreshUpdateStatus();
+    }
+  }
+
   private synchronizeRuntimeConfig(runtimeConfig: ApplicationContext["runtimeConfig"]) {
     if (runtimeConfig !== this.runtimeConfigSource) {
       if (this.runtimeConfigSource) {
@@ -587,6 +608,7 @@ export class ConfigPage extends OpenClawLightDomElement {
       this.systemInfoGatewaySource = gateway;
       this.resetConfigViewState();
       this.systemInfoClient = null;
+      this.updateStatusClient = null;
       this.systemInfo = null;
       this.systemInfoUnavailable = false;
       this.sessionObserverModelsClient = null;
@@ -594,6 +616,7 @@ export class ConfigPage extends OpenClawLightDomElement {
       this.sessionObserverModelsUnavailable = false;
     }
     this.handleSystemInfoGatewaySnapshot(gateway.snapshot);
+    this.syncUpdateStatusRefresh();
   }
 
   private resetConfigViewState() {
@@ -969,6 +992,8 @@ export class ConfigPage extends OpenClawLightDomElement {
           gatewaySnapshot.hello?.server?.version ??
           null,
         controlUiCommit: CONTROL_UI_BUILD_INFO.commit,
+        controlUiCommitAt: CONTROL_UI_BUILD_INFO.commitAt,
+        controlUiBuiltAt: CONTROL_UI_BUILD_INFO.builtAt,
         schedule: overlaySnapshot.updateSchedule,
         heldUpdateCampaignId: overlaySnapshot.heldUpdateCampaignId,
         updateAvailable: overlaySnapshot.updateAvailable,
@@ -981,7 +1006,15 @@ export class ConfigPage extends OpenClawLightDomElement {
         onChannelChange: (channel) => runtimeConfig.patchForm(["update", "channel"], channel),
         onAutomaticUpdatesChange: (enabled) =>
           runtimeConfig.patchForm(["update", "auto", "enabled"], enabled),
-        onUpdateNow: () => void this.context.overlays.runUpdate(),
+        onUpdateNow: () =>
+          void confirmAndStartUpdate({
+            startGatewayUpdate: () => void this.context.overlays.runUpdate(),
+            updateAvailable: overlaySnapshot.updateAvailable,
+            updateSchedule: overlaySnapshot.updateSchedule,
+            // This row has no native-decline listener, so a handoff the Mac app
+            // refuses would end in silence. Keep it on the Gateway route.
+            viaNativeApp: false,
+          }),
         onHoldUpdate: () => this.context.overlays.holdUpdate(),
       });
     }
