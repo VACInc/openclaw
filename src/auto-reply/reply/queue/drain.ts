@@ -190,6 +190,7 @@ export function resolveFollowupDeliveryContextKey(run: FollowupRun): string {
       accountId: run.originatingAccountId,
       threadId: run.originatingThreadId,
     }),
+    run.currentTurnImagesPrepared === true,
     run.originatingChatId ?? "",
     resolveFollowupReplyAnchor(run) ?? "",
     run.originatingReplyToMode ?? "",
@@ -290,10 +291,11 @@ function renderCollectItemPrompt(item: FollowupRun, idx: number, prompt: string)
 
 function collectQueuedPromptMedia(
   items: FollowupRun[],
-): Pick<FollowupRun, "images" | "imageOrder" | "media"> {
+): Pick<FollowupRun, "currentTurnImagesPrepared" | "images" | "imageOrder" | "media"> {
   const images: NonNullable<FollowupRun["images"]> = [];
   const imageOrder: NonNullable<FollowupRun["imageOrder"]> = [];
   const media: NonNullable<FollowupRun["media"]> = [];
+  const currentTurnImagesPrepared = items.every((item) => item.currentTurnImagesPrepared === true);
   for (const item of items) {
     if (item.images) {
       images.push(...item.images);
@@ -306,8 +308,9 @@ function collectQueuedPromptMedia(
     }
   }
   return {
-    ...(images.length > 0 ? { images } : {}),
-    ...(imageOrder.length > 0 ? { imageOrder } : {}),
+    ...(currentTurnImagesPrepared ? { currentTurnImagesPrepared: true as const } : {}),
+    ...(currentTurnImagesPrepared || images.length > 0 ? { images } : {}),
+    ...(currentTurnImagesPrepared || imageOrder.length > 0 ? { imageOrder } : {}),
     ...(media.length > 0 ? { media } : {}),
   };
 }

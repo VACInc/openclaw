@@ -111,6 +111,8 @@ export type FollowupRun = {
   /** Preserve priority runs when old-item queue overflow eviction runs before drain. */
   protectFromQueueOverflow?: boolean;
   enqueuedAt: number;
+  /** Admission already resolved current-turn images, including an intentionally empty result. */
+  currentTurnImagesPrepared?: true;
   images?: Array<{ type: "image"; data: string; mimeType: string }>;
   imageOrder?: PromptImageOrderEntry[];
   /** Ordered facts represented by attachment text in this prompt. */
