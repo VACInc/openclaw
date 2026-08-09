@@ -197,9 +197,13 @@ async function executeAgentTurnInternalWithRetryState(
           requesterSenderE164: params.followupRun.run.senderE164,
         }),
       );
+    const hasQueuedCurrentTurnImages =
+      params.followupRun.currentTurnImagesPrepared === true ||
+      Object.hasOwn(params.followupRun, "images") ||
+      Object.hasOwn(params.followupRun, "imageOrder");
     // Queue admission owns current-turn materialization, including empty results.
     // Re-scanning here can resurrect suppressed media or duplicate loaded images.
-    currentTurnImages = params.followupRun.currentTurnImagesPrepared
+    currentTurnImages = hasQueuedCurrentTurnImages
       ? {
           images: params.followupRun.images,
           imageOrder: params.followupRun.imageOrder,
