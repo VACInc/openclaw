@@ -224,6 +224,7 @@ async function runEmbeddedAgentViaCliBackend(
       config: params.config,
       prompt: params.prompt,
       imagePrompt: params.prompt,
+      currentTurnImagesPrepared: params.currentTurnImagesPrepared,
       images: params.images,
       imageOrder: params.imageOrder,
       media: params.media,

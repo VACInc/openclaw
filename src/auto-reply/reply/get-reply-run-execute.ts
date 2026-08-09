@@ -340,6 +340,7 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
     messageId: sessionCtx.MessageSidFull ?? sessionCtx.MessageSid,
     summaryLine: baseBodyTrimmedRaw,
     enqueuedAt: Date.now(),
+    currentTurnImagesPrepared: true as const,
     images: currentTurnImages.images,
     imageOrder: currentTurnImages.imageOrder,
     media: promptMediaForRun,

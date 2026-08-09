@@ -1659,6 +1659,7 @@ describe("runPreparedReply media-only handling", () => {
       imageOrder: undefined,
       extractedFileImages: undefined,
     });
+    expect(call.followupRun.currentTurnImagesPrepared).toBe(true);
   });
 
   it("does not copy prior session media onto text-only followups", async () => {

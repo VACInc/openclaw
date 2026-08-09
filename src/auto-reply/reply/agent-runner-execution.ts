@@ -204,12 +204,9 @@ async function executeAgentTurnInternalWithRetryState(
           requesterSenderE164: params.followupRun.run.senderE164,
         }),
       );
-    // Queue admission owns current-turn materialization. Re-scanning the same
-    // inbound context here duplicates images and breaks media-fact alignment.
-    const hasPreparedCurrentTurnImages =
-      Object.hasOwn(params.followupRun, "images") ||
-      Object.hasOwn(params.followupRun, "imageOrder");
-    currentTurnImages = hasPreparedCurrentTurnImages
+    // Queue admission owns current-turn materialization, including empty results.
+    // Re-scanning here can resurrect suppressed media or duplicate loaded images.
+    currentTurnImages = params.followupRun.currentTurnImagesPrepared
       ? {
           images: params.followupRun.images,
           imageOrder: params.followupRun.imageOrder,

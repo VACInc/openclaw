@@ -674,7 +674,7 @@ describe("runCliAgent spawn path", () => {
     expect(invokeNode).not.toHaveBeenCalled();
   });
 
-  it("allows non-hydratable image facts on a text-only node turn", async () => {
+  it("allows prepared empty image state on a text-only node turn", async () => {
     const invokeNode = vi.fn(async (params: Parameters<typeof invokeNodeClaudeCliRun>[0]) => {
       params.onProgress(
         [
@@ -701,10 +701,10 @@ describe("runCliAgent spawn path", () => {
         execNode: "node-a",
       },
     });
-    context.params.media = [
-      { kind: "image" },
-      { kind: "image", url: "https://example.test/described.png" },
-    ];
+    context.params.currentTurnImagesPrepared = true;
+    context.params.images = [];
+    context.params.imageOrder = [];
+    context.params.media = [{ kind: "image", path: "/tmp/already-handled.png" }];
 
     await expect(executePreparedCliRun(context)).resolves.toMatchObject({ text: "ok" });
     expect(invokeNode).toHaveBeenCalledOnce();

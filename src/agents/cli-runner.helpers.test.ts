@@ -224,6 +224,25 @@ describe("prepareCliPromptImagePayload prompt references", () => {
     }
   });
 
+  it("does not rehydrate media after current-turn image admission resolved empty", async () => {
+    const detectAndLoadPromptImagesSpy = vi.spyOn(promptImageUtils, "detectAndLoadPromptImages");
+
+    await expect(
+      prepareCliPromptImagePayload({
+        backend: { command: "claude" },
+        prompt: "describe the attachment",
+        imagePrompt: "describe the attachment",
+        workspaceDir: "/workspace",
+        currentTurnImagesPrepared: true,
+        images: [],
+        imageOrder: [],
+        media: [{ path: "/openclaw-test-missing/current.png", contentType: "image/png" }],
+      }),
+    ).resolves.toEqual({ prompt: "describe the attachment" });
+
+    expect(detectAndLoadPromptImagesSpy).not.toHaveBeenCalled();
+  });
+
   it("surfaces inline sanitization failure when a preceding image fact is suppressed", async () => {
     await expect(
       prepareCliPromptImagePayload({

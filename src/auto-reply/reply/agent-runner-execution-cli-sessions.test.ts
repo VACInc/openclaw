@@ -76,6 +76,7 @@ describe("executeAgentTurn: CLI session routing", () => {
     const followupRun = createFollowupRun();
     followupRun.run.provider = "claude-cli";
     followupRun.run.model = "claude-opus-5";
+    followupRun.currentTurnImagesPrepared = true;
     followupRun.images = images;
     followupRun.imageOrder = imageOrder;
     followupRun.media = media;
@@ -94,6 +95,7 @@ describe("executeAgentTurn: CLI session routing", () => {
 
     expect(result.kind).toBe("success");
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
+      currentTurnImagesPrepared: true,
       images,
       imageOrder,
       media,

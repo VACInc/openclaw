@@ -2017,6 +2017,43 @@ describe("followup queue collect routing", () => {
     expect(calls[0]?.imageOrder).toEqual(["inline", "inline"]);
   });
 
+  it("preserves prepared empty image state across collected batches", async () => {
+    const key = `test-collect-prepared-empty-images-${Date.now()}`;
+    const { calls, done, runFollowup } = createDrainRecorder();
+    const settings = createQueueSettings();
+    const missingMedia = {
+      path: "/openclaw-test-missing/current.png",
+      contentType: "image/png",
+    };
+
+    for (const prompt of ["one", "two"]) {
+      enqueueFollowupRun(
+        key,
+        {
+          ...createRun({
+            prompt,
+            originatingChannel: "slack",
+            originatingTo: "channel:A",
+          }),
+          currentTurnImagesPrepared: true,
+          images: [],
+          imageOrder: [],
+          media: [missingMedia],
+        },
+        settings,
+      );
+    }
+
+    scheduleFollowupDrain(key, runFollowup);
+    await done.promise;
+
+    const collected = calls[0];
+    expect(collected?.currentTurnImagesPrepared).toBe(true);
+    expect(collected?.images).toEqual([]);
+    expect(collected?.imageOrder).toEqual([]);
+    expect(collected?.media).toEqual([missingMedia, missingMedia]);
+  });
+
   it("splits collect batches when sender authorization changes", async () => {
     const { key, calls, done, runFollowup, settings } = createQueueCase(
       `test-collect-auth-split-${Date.now()}`,

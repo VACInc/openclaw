@@ -260,6 +260,7 @@ export async function runEmbeddedFallbackCandidate(params: {
         forceHeartbeatTool: turn.opts?.forceHeartbeatTool,
         bootstrapContextMode: turn.opts?.bootstrapContextMode,
         bootstrapContextRunKind: params.bootstrapContextRunKind,
+        currentTurnImagesPrepared: true,
         images: params.currentTurnImages.images,
         imageOrder: params.currentTurnImages.imageOrder,
         abortSignal: params.runAbortSignal,

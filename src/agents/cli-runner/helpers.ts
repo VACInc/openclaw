@@ -392,6 +392,7 @@ export async function prepareCliPromptImagePayload(params: {
   images?: ImageContent[];
   imageOrder?: PromptImageOrderEntry[];
   media?: MediaFact[];
+  currentTurnImagesPrepared?: true;
 }): Promise<{
   prompt: string;
   imagePaths?: string[];
@@ -400,9 +401,10 @@ export async function prepareCliPromptImagePayload(params: {
   let prompt = params.prompt;
   const imagePrompt = params.imagePrompt ?? prompt;
   const needsHydration =
-    params.imagePrompt !== undefined ||
-    Boolean(params.media?.length) ||
-    (!params.images?.length && detectImageReferences(imagePrompt).length > 0);
+    params.currentTurnImagesPrepared !== true &&
+    (params.imagePrompt !== undefined ||
+      Boolean(params.media?.length) ||
+      (!params.images?.length && detectImageReferences(imagePrompt).length > 0));
   const imageResult = needsHydration
     ? await detectAndLoadPromptImages({
         prompt: imagePrompt,

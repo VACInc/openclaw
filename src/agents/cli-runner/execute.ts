@@ -163,8 +163,9 @@ export async function executePreparedCliRun(
   if (
     nodePlacement &&
     ((params.images?.length ?? 0) > 0 ||
-      hasHydratableMediaImages(params.media) ||
-      (params.imagePrompt ? detectImageReferences(params.imagePrompt).length > 0 : false))
+      (params.currentTurnImagesPrepared !== true &&
+        (hasHydratableMediaImages(params.media) ||
+          (params.imagePrompt ? detectImageReferences(params.imagePrompt).length > 0 : false))))
   ) {
     throw new Error("paired-node Claude CLI sessions do not support attachments or images");
   }
@@ -179,6 +180,7 @@ export async function executePreparedCliRun(
         images: params.images,
         imageOrder: params.imageOrder,
         media: params.media,
+        currentTurnImagesPrepared: params.currentTurnImagesPrepared,
       });
   prompt = imagePayload.prompt;
   const { argsPrompt, stdin } = resolvePromptInput({ backend, prompt });
