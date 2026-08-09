@@ -365,7 +365,7 @@ export async function prepareEmbeddedRunRuntime(input: {
   });
   authStages?.mark("controller");
   const advancePluginHarnessAuthAttempt = async (): Promise<boolean> => {
-    if (!pluginHarnessOwnsTransport || lockedProfileId) {
+    if (!pluginHarnessOwnsTransport) {
       return false;
     }
     let nextIndex = profileIndex + 1;
@@ -426,8 +426,6 @@ export async function prepareEmbeddedRunRuntime(input: {
 
   if (!pluginHarnessOwnsTransport || pluginHarnessNeedsOpenClawAuthBootstrap) {
     await authController.initializeAuthProfile();
-  } else if (lockedProfileId) {
-    lastProfileId = lockedProfileId;
   } else if (forwardedPluginHarnessProfileId) {
     const initialAttempt = preparedAuthAttempts[profileIndex];
     const initialProfileInCooldown =
