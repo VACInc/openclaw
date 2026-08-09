@@ -84,19 +84,20 @@ describe("Claude CLI adapter equivalence", () => {
 
   it("builds Claude Code's native manual compaction command", () => {
     const backend = buildAnthropicCliBackend();
+    const manualCompaction = backend.manualCompaction;
 
-    expect(backend.buildManualCompactionPrompt?.()).toBe("/compact");
-    expect(backend.buildManualCompactionPrompt?.(" keep operator decisions ")).toBe(
+    expect(manualCompaction?.buildPrompt()).toBe("/compact");
+    expect(manualCompaction?.buildPrompt(" keep operator decisions ")).toBe(
       "/compact keep operator decisions",
     );
-    expect(backend.manualCompactionInput).toBe("arg");
+    expect(manualCompaction?.input).toBe("arg");
     expect(
-      backend.validateManualCompactionOutput?.(
+      manualCompaction?.validateOutput(
         `${JSON.stringify({ type: "system", subtype: "compacting" })}\n`,
       ),
     ).toEqual({ ok: true });
     expect(
-      backend.validateManualCompactionOutput?.(
+      manualCompaction?.validateOutput(
         `${JSON.stringify({ type: "system", subtype: "local_command" })}\n`,
       ),
     ).toEqual({
@@ -228,6 +229,31 @@ describe("Claude CLI model aliases", () => {
 });
 
 describe("resolveClaudeCliExecutionArgs", () => {
+  it("keeps the real resumed manual-compaction command enabled", () => {
+    const backend = buildAnthropicCliBackend();
+    const manualCompaction = backend.manualCompaction;
+    const baseArgs = backend.config.resumeArgs?.map((arg) =>
+      arg.replaceAll("{sessionId}", "native-session"),
+    );
+    if (!manualCompaction || !baseArgs) {
+      throw new Error("Anthropic CLI backend must expose resumed manual compaction");
+    }
+
+    const argv = [
+      ...resolveClaudeCliExecutionArgs({
+        workspaceDir: "/tmp",
+        provider: "claude-cli",
+        modelId: "claude-opus-4-8",
+        useResume: true,
+        baseArgs,
+      }),
+      manualCompaction.buildPrompt(),
+    ];
+
+    expect(argv).toContain("/compact");
+    expect(argv).not.toContain("--disable-slash-commands");
+  });
+
   it("isolates OpenClaw from Claude user customizations while preserving exact MCP", () => {
     expect(
       resolveClaudeCliExecutionArgs({

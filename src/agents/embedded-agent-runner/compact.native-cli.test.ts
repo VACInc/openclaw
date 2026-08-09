@@ -33,8 +33,12 @@ function registerBackend(overrides: Partial<CliBackendPlugin> = {}) {
           bundleMcp: false,
           pluginId: "anthropic",
           ownsNativeCompaction: true,
-          buildManualCompactionPrompt: (instructions?: string) =>
-            instructions ? `/compact ${instructions}` : "/compact",
+          manualCompaction: {
+            buildPrompt: (instructions?: string) =>
+              instructions ? `/compact ${instructions}` : "/compact",
+            input: "arg",
+            validateOutput: () => ({ ok: true }),
+          },
           ...overrides,
         },
       ] as never,
@@ -94,7 +98,6 @@ describe("native CLI manual compaction", () => {
         cliSessionId: "native-session",
         controlOperation: "compact",
         disableCliLiveSession: true,
-        disableTools: true,
         allowEmptyAssistantReplyAsSilent: true,
       }),
     );

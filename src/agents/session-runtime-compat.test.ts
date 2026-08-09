@@ -132,6 +132,41 @@ describe("resolveManualCompactionCliTarget", () => {
     });
   });
 
+  it("passes config when resolving an explicit setup-registered runtime binding", () => {
+    const cfg = { plugins: { entries: { anthropic: { enabled: true } } } } as OpenClawConfig;
+    cliBackendsTesting.setDepsForTest({
+      resolveRuntimeCliBackends: () => [],
+      resolvePluginSetupCliBackend: ({ backend, config }) =>
+        backend === "claude-cli" && config === cfg
+          ? ({
+              pluginId: "anthropic",
+              backend: {
+                id: "claude-cli",
+                modelProvider: "anthropic",
+                config: { command: "claude" },
+                bundleMcp: false,
+              },
+            } as never)
+          : undefined,
+    });
+
+    expect(
+      resolveManualCompactionCliTarget({
+        provider: "anthropic",
+        cfg,
+        entry: {
+          agentRuntimeOverride: "claude-cli",
+          cliSessionBindings: {
+            "claude-cli": { sessionId: "native-claude-session" },
+          },
+        },
+      }),
+    ).toEqual({
+      agentHarnessId: "claude-cli",
+      cliSessionId: "native-claude-session",
+    });
+  });
+
   it("does not infer a CLI runtime without its native binding", () => {
     expect(
       resolveManualCompactionCliTarget({

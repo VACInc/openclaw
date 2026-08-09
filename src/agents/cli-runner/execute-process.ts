@@ -513,11 +513,14 @@ export async function executeCliProcess(params: {
       },
     );
   }
-  if (
-    runParams.controlOperation === "compact" &&
-    context.backendResolved.validateManualCompactionOutput
-  ) {
-    const validation = context.backendResolved.validateManualCompactionOutput(stdout);
+  if (runParams.controlOperation === "compact") {
+    const manualCompaction = context.backendResolved.manualCompaction;
+    if (!manualCompaction) {
+      throw new Error(
+        `CLI backend ${context.backendResolved.id} does not support manual compaction`,
+      );
+    }
+    const validation = manualCompaction.validateOutput(stdout);
     if (!validation.ok) {
       throw new FailoverError(validation.reason, {
         reason: "unknown",

@@ -3121,7 +3121,11 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
     resolveCliBackendConfigMock.mockReturnValue({
       id: "claude-cli",
       ownsNativeCompaction: true,
-      buildManualCompactionPrompt: () => "/compact",
+      manualCompaction: {
+        buildPrompt: () => "/compact",
+        input: "arg",
+        validateOutput: () => ({ ok: true }),
+      },
     });
     runCliAgentMock.mockClear();
 
