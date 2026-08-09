@@ -191,7 +191,11 @@ describe("executePreparedCliRun supervisor output capture", () => {
     const result = await executePreparedCliRun(context);
 
     expect(requireSupervisorSpawnInput()).toEqual(
-      expect.objectContaining({ argv: ["agent-cli", "/compact"], input: "" }),
+      expect.objectContaining({
+        argv: ["agent-cli", "/compact"],
+        input: "",
+        noOutputTimeoutMs: context.params.timeoutMs,
+      }),
     );
     expect(result).toMatchObject({ text: "", rawText: "", finalPromptText: "/compact" });
   });

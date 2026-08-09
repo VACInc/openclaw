@@ -530,6 +530,7 @@ export async function executePreparedCliRun(
       const noOutputTimeoutMs = resolveCliNoOutputTimeoutMs({
         backend,
         timeoutMs: params.timeoutMs,
+        expectedQuiet: params.controlOperation === "compact",
         runTimeoutOverrideMs,
         useResume,
         trigger: params.trigger,

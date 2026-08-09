@@ -3822,6 +3822,46 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
     },
   );
 
+  it("reports a locked CLI backend's missing native binding from the public entry point", async () => {
+    resolveCliBackendConfigMock.mockReturnValue({
+      id: "claude-cli",
+      ownsNativeCompaction: true,
+      manualCompaction: {
+        buildPrompt: () => "/compact",
+        input: "arg",
+        validateOutput: () => ({ ok: true }),
+      },
+      config: {
+        command: "claude",
+        args: ["-p"],
+        resumeArgs: ["-p", "--resume", "{sessionId}"],
+        input: "arg",
+        output: "jsonl",
+        sessionMode: "existing",
+      },
+    });
+
+    const result = await compactEmbeddedAgentSessionDirect(
+      wrappedCompactionArgs({
+        provider: "anthropic",
+        model: "opus",
+        trigger: "manual",
+        agentHarnessId: "claude-cli",
+        modelSelectionLocked: true,
+        cliSessionId: undefined,
+        currentTokenCount: 333,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      compacted: false,
+      reason: expect.stringContaining("without a resumable native session"),
+    });
+    expect(runCliAgentMock).not.toHaveBeenCalled();
+    expect(contextEngineCompactMock).not.toHaveBeenCalled();
+  });
+
   it("fails a model-locked native session when its harness returns no result", async () => {
     maybeCompactAgentHarnessSessionMock.mockResolvedValueOnce(undefined);
 

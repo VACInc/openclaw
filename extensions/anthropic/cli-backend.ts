@@ -158,8 +158,17 @@ export function buildAnthropicCliBackend(): CliBackendPlugin {
       validateOutput: (rawOutput) => {
         for (const line of rawOutput.split("\n")) {
           try {
-            const event = JSON.parse(line) as { type?: unknown; subtype?: unknown };
-            if (event.type === "system" && event.subtype === "compacting") {
+            const event = JSON.parse(line) as {
+              compact_result?: unknown;
+              type?: unknown;
+              subtype?: unknown;
+            };
+            // Claude Code 2.0.76, 2.1.225, and 2.1.226 emit these terminal
+            // records; system/status with status=compacting is progress only.
+            if (
+              event.compact_result === "success" ||
+              (event.type === "system" && event.subtype === "compact_boundary")
+            ) {
               return { ok: true };
             }
           } catch {
