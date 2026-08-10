@@ -14,6 +14,7 @@ import {
 } from "./auth-profiles.js";
 import { ensureAuthProfileStore, saveAuthProfileStore } from "./auth-profiles/store.js";
 import type { EmbeddedRunAttemptResult } from "./embedded-agent-runner/run/types.js";
+import type { AgentHarness } from "./harness/types.js";
 import {
   buildEmbeddedRunnerAssistant as buildAssistant,
   makeEmbeddedRunnerAttempt as makeAttempt,
@@ -55,26 +56,32 @@ const installRunEmbeddedMocks = () => {
   // The model resolver stays deterministic so retry assertions only observe
   // profile selection, cooldowns, and provider auth preparation.
   vi.doMock("./embedded-agent-runner/model.js", () => ({
-    resolveModelAsync: async (provider: string, modelId: string) => ({
-      model: {
-        id: modelId,
-        name: modelId,
-        api: "openai-responses",
-        provider,
-        baseUrl:
-          provider === "github-copilot" ? "https://api.copilot.example" : "https://example.com",
-        reasoning: false,
-        input: ["text"],
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 16_000,
-        maxTokens: 2048,
-      },
-      error: undefined,
-      authStorage: {
-        setRuntimeApiKey: vi.fn(),
-      },
-      modelRegistry: {},
-    }),
+    resolveModelAsync: async (provider: string, modelId: string) => {
+      const subscriptionModel = modelId === "chatgpt-mock";
+      return {
+        model: {
+          id: modelId,
+          name: modelId,
+          api: subscriptionModel ? "openai-chatgpt-responses" : "openai-responses",
+          provider,
+          baseUrl: subscriptionModel
+            ? "https://chatgpt.com/backend-api/codex"
+            : provider === "github-copilot"
+              ? "https://api.copilot.example"
+              : "https://example.com",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 16_000,
+          maxTokens: 2048,
+        },
+        error: undefined,
+        authStorage: {
+          setRuntimeApiKey: vi.fn(),
+        },
+        modelRegistry: {},
+      };
+    },
   }));
   installEmbeddedRunnerBackoffE2eMocks({
     computeBackoff: (policy, attempt) => computeBackoffMock(policy, attempt),
@@ -103,6 +110,7 @@ let createDiagnosticLogRecordCaptureFn: typeof import("../logging/test-helpers/d
 let cleanupLogCapture: (() => void) | undefined;
 let resetLoggerFn: typeof import("../logging/logger.js").resetLogger;
 let setLoggerOverrideFn: typeof import("../logging/logger.js").setLoggerOverride;
+let registerAgentHarnessFn: typeof import("./harness/registry.js").registerAgentHarness;
 const originalFetch = globalThis.fetch;
 
 beforeAll(async () => {
@@ -115,6 +123,7 @@ beforeAll(async () => {
     await import("../logging/test-helpers/diagnostic-log-capture.js"));
   ({ resetLogger: resetLoggerFn, setLoggerOverride: setLoggerOverrideFn } =
     await import("../logging/logger.js"));
+  ({ registerAgentHarness: registerAgentHarnessFn } = await import("./harness/registry.js"));
 });
 
 type RunEmbeddedAgentTestParams = Parameters<typeof runEmbeddedAgent>[0] & {
@@ -471,6 +480,10 @@ async function runAutoPinnedRotationCase(params: {
     });
 
     expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(2);
+    await vi.waitFor(async () => {
+      const usageStats = await readUsageStats(agentDir);
+      expect(typeof usageStats["openai:p1"]?.cooldownUntil).toBe("number");
+    });
     const usageStats = await readUsageStats(agentDir);
     return { usageStats };
   });
@@ -497,10 +510,6 @@ async function runAutoPinnedPromptErrorRotationCase(params: {
     });
 
     expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(2);
-    await vi.waitFor(async () => {
-      const usageStats = await readUsageStats(agentDir);
-      expect(typeof usageStats["openai:p1"]?.cooldownUntil).toBe("number");
-    });
     const usageStats = await readUsageStats(agentDir);
     return { usageStats };
   });
@@ -1258,6 +1267,77 @@ describe("runEmbeddedAgent auth profile rotation", () => {
       expect(firstAttempt.authProfileIdSource).toBe("user");
       expect(secondAttempt.authProfileId).toBe("openai:backup");
       expect(secondAttempt.authProfileIdSource).toBe("auto");
+    });
+  });
+
+  it("preserves a transient plugin-harness probe after a billing-disabled user pin", async () => {
+    await withTimedAgentWorkspace(async ({ agentDir, workspaceDir, now }) => {
+      saveAuthProfileStore(
+        {
+          version: 1,
+          profiles: {
+            "openai:pinned": {
+              type: "token",
+              provider: "openai",
+              token: "subscription-pinned",
+            },
+            "openai:backup": {
+              type: "token",
+              provider: "openai",
+              token: "subscription-backup",
+            },
+          },
+          order: { openai: ["openai:pinned", "openai:backup"] },
+          usageStats: {
+            "openai:pinned": {
+              disabledUntil: now + 60 * 60 * 1000,
+              disabledReason: "billing",
+            },
+            "openai:backup": {
+              cooldownUntil: now + 60 * 60 * 1000,
+              failureCounts: { rate_limit: 1 },
+            },
+          },
+        },
+        agentDir,
+      );
+      const harness: AgentHarness = {
+        id: "probe-harness",
+        label: "Probe harness",
+        authBootstrap: "harness",
+        supports: (ctx) =>
+          ctx.requestedRuntime === "probe-harness"
+            ? { supported: true, priority: 100 }
+            : { supported: false, reason: "test harness requires an explicit runtime" },
+        runAttempt: async (attemptParams) => await runEmbeddedAttemptMock(attemptParams),
+      };
+      registerAgentHarnessFn(harness);
+      mockSingleSuccessfulAttempt();
+
+      await runEmbeddedAgentInline({
+        sessionId: "session:test",
+        sessionKey: "agent:test:plugin-harness-mixed-cooldown",
+        workspaceDir,
+        agentDir,
+        config: makeConfig(),
+        prompt: "hello",
+        provider: "openai",
+        model: "chatgpt-mock",
+        agentHarnessId: "probe-harness",
+        authProfileId: "openai:pinned",
+        authProfileIdSource: "user",
+        allowTransientCooldownProbe: true,
+        timeoutMs: 5_000,
+        runId: "run:plugin-harness-mixed-cooldown",
+      });
+
+      expect(runEmbeddedAttemptMock).toHaveBeenCalledOnce();
+      const attemptParams = requireRecord(
+        runEmbeddedAttemptMock.mock.calls[0]?.[0],
+        "plugin harness attempt params",
+      );
+      expect(attemptParams.authProfileId).toBe("openai:backup");
+      expect(attemptParams.authProfileIdSource).toBe("auto");
     });
   });
 

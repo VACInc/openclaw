@@ -64,7 +64,7 @@ export function resolveEmbeddedAuthCooldownProbePolicy(params: {
   lockedProfileId?: string;
   modelId: string;
   allowTransientCooldownProbe: boolean;
-}): { allowProbe: boolean; unavailableReason: FailoverReason | null } {
+}): { probeProfileIds: ReadonlySet<string>; unavailableReason: FailoverReason | null } {
   const autoProfileCandidates = params.profileCandidates.filter(
     (candidate): candidate is string =>
       typeof candidate === "string" && candidate.length > 0 && candidate !== params.lockedProfileId,
@@ -80,13 +80,24 @@ export function resolveEmbeddedAuthCooldownProbePolicy(params: {
         profileIds: autoProfileCandidates,
       }) ?? "unknown")
     : null;
-  return {
-    allowProbe:
-      params.allowTransientCooldownProbe &&
-      allAutoProfilesInCooldown &&
-      shouldUseTransientCooldownProbeSlot(unavailableReason),
-    unavailableReason,
-  };
+  const probeProfileIds = new Set<string>();
+  if (
+    params.allowTransientCooldownProbe &&
+    allAutoProfilesInCooldown &&
+    shouldUseTransientCooldownProbeSlot(unavailableReason)
+  ) {
+    for (const candidate of autoProfileCandidates) {
+      const candidateReason =
+        resolveProfilesUnavailableReason({
+          store: params.authStore,
+          profileIds: [candidate],
+        }) ?? "unknown";
+      if (shouldUseTransientCooldownProbeSlot(candidateReason)) {
+        probeProfileIds.add(candidate);
+      }
+    }
+  }
+  return { probeProfileIds, unavailableReason };
 }
 
 /**
@@ -614,14 +625,7 @@ export function createEmbeddedRunAuthController(params: {
           candidate && isProfileInCooldown(params.authStore, candidate, undefined, modelId);
         if (inCooldown) {
           const canProbeCandidate =
-            cooldownProbePolicy.allowProbe &&
-            !didTransientCooldownProbe &&
-            shouldUseTransientCooldownProbeSlot(
-              resolveProfilesUnavailableReason({
-                store: params.authStore,
-                profileIds: [candidate],
-              }) ?? "unknown",
-            );
+            !didTransientCooldownProbe && cooldownProbePolicy.probeProfileIds.has(candidate);
           // Spend the single probe slot only on a transiently cooled candidate;
           // persistent failures must leave it available for later profiles.
           if (canProbeCandidate) {

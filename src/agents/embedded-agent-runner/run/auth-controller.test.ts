@@ -536,29 +536,44 @@ describe("createEmbeddedRunAuthController", () => {
         allowTransientCooldownProbe: true,
       });
 
-    expect(
-      resolve(
-        createStore({
-          first: { disabledUntil: now + 60_000, disabledReason: "rate_limit" },
-        }),
-      ),
-    ).toEqual({ allowProbe: false, unavailableReason: null });
-    expect(
-      resolve(
-        createStore({
-          first: { disabledUntil: now + 60_000, disabledReason: "billing" },
-          second: { disabledUntil: now + 60_000, disabledReason: "billing" },
-        }),
-      ),
-    ).toEqual({ allowProbe: false, unavailableReason: "billing" });
-    expect(
-      resolve(
-        createStore({
-          first: { disabledUntil: now + 60_000, disabledReason: "rate_limit" },
-          second: { disabledUntil: now + 60_000, disabledReason: "rate_limit" },
-        }),
-      ),
-    ).toEqual({ allowProbe: true, unavailableReason: "rate_limit" });
+    const partiallyAvailable = resolve(
+      createStore({
+        first: { disabledUntil: now + 60_000, disabledReason: "rate_limit" },
+      }),
+    );
+    expect([...partiallyAvailable.probeProfileIds]).toEqual([]);
+    expect(partiallyAvailable.unavailableReason).toBeNull();
+
+    const billingDisabled = resolve(
+      createStore({
+        first: { disabledUntil: now + 60_000, disabledReason: "billing" },
+        second: { disabledUntil: now + 60_000, disabledReason: "billing" },
+      }),
+    );
+    expect([...billingDisabled.probeProfileIds]).toEqual([]);
+    expect(billingDisabled.unavailableReason).toBe("billing");
+
+    const rateLimited = resolve(
+      createStore({
+        first: { disabledUntil: now + 60_000, disabledReason: "rate_limit" },
+        second: { disabledUntil: now + 60_000, disabledReason: "rate_limit" },
+      }),
+    );
+    expect([...rateLimited.probeProfileIds]).toEqual(["first", "second"]);
+    expect(rateLimited.unavailableReason).toBe("rate_limit");
+
+    const mixedPinnedState = resolveEmbeddedAuthCooldownProbePolicy({
+      authStore: createStore({
+        first: { disabledUntil: now + 60_000, disabledReason: "billing" },
+        second: { disabledUntil: now + 60_000, disabledReason: "rate_limit" },
+      }),
+      profileCandidates: ["first", "second"],
+      lockedProfileId: "first",
+      modelId: "test-model",
+      allowTransientCooldownProbe: true,
+    });
+    expect([...mixedPinnedState.probeProfileIds]).toEqual(["second"]);
+    expect(mixedPinnedState.unavailableReason).toBe("rate_limit");
   });
 
   it("preserves the transient cooldown probe for a rate-limited backup after a billing-disabled pin", async () => {
