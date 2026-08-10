@@ -96,8 +96,8 @@ async function runEmbeddedAgentViaCliBackend(
   dispatch: EmbeddedCliBackendDispatch,
 ): Promise<EmbeddedAgentRunResult> {
   const { runCliAgent } = await import("../cli-runner.runtime.js");
-  // The embedded surface keeps this CLI-only marker private. Owning either
-  // image field means admission already ran, including an empty result.
+  // Owning either field means admission already ran. Normalize that private
+  // fact to the pair the CLI boundary recognizes, including an empty result.
   const currentTurnImagesPrepared =
     Object.hasOwn(params, "images") || Object.hasOwn(params, "imageOrder");
   // The dispatch gate guarantees a non-empty named allowlist; translate it to
@@ -207,9 +207,9 @@ async function runEmbeddedAgentViaCliBackend(
       config: params.config,
       prompt: params.prompt,
       imagePrompt: params.prompt,
-      currentTurnImagesPrepared: currentTurnImagesPrepared || undefined,
-      images: params.images,
-      imageOrder: params.imageOrder,
+      ...(currentTurnImagesPrepared
+        ? { images: params.images, imageOrder: params.imageOrder }
+        : {}),
       media: params.media,
       provider: dispatch.provider,
       model: params.model,
