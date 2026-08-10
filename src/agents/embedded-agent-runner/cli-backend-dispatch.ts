@@ -24,6 +24,10 @@ import type { EmbeddedAgentRunResult } from "./types.js";
 
 const log = createSubsystemLogger("agents/embedded-cli-dispatch");
 
+type RunCliAgentInternalParams = import("../cli-runner/types.js").RunCliAgentParams & {
+  currentTurnImagesPrepared?: true;
+};
+
 type EmbeddedCliBackendDispatch = {
   provider: string;
   sessionFile: string;
@@ -195,7 +199,7 @@ async function runEmbeddedAgentViaCliBackend(
   );
   let finalAssistantText: string | undefined;
   try {
-    const result = await runCliAgent({
+    const cliParams: RunCliAgentInternalParams = {
       sessionId: params.sessionId,
       sessionKey: params.sessionKey,
       chatType: params.chatType,
@@ -207,9 +211,9 @@ async function runEmbeddedAgentViaCliBackend(
       config: params.config,
       prompt: params.prompt,
       imagePrompt: params.prompt,
-      ...(currentTurnImagesPrepared
-        ? { images: params.images, imageOrder: params.imageOrder }
-        : {}),
+      currentTurnImagesPrepared: currentTurnImagesPrepared || undefined,
+      images: params.images,
+      imageOrder: params.imageOrder,
       media: params.media,
       provider: dispatch.provider,
       model: params.model,
@@ -236,7 +240,8 @@ async function runEmbeddedAgentViaCliBackend(
       // runner it closes the process-wide loopback MCP server, which a
       // concurrent main turn or overlapping recall may still be using.
       // Session-scoped MCP runtimes are retired below instead.
-    });
+    };
+    const result = await runCliAgent(cliParams);
     finalAssistantText = result.payloads?.find(
       (payload) => payload.isReasoning !== true && typeof payload.text === "string",
     )?.text;

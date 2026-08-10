@@ -392,6 +392,7 @@ export async function runCliFallbackCandidate(params: {
               params.bootstrapPromptWarningSignaturesSeen[
                 params.bootstrapPromptWarningSignaturesSeen.length - 1
               ],
+            currentTurnImagesPrepared: true,
             images: params.currentTurnImages.images,
             imageOrder: params.currentTurnImages.imageOrder,
             skillsSnapshot: turn.followupRun.run.skillsSnapshot,

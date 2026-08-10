@@ -65,6 +65,7 @@ describe("executeAgentTurn: CLI session routing", () => {
 
     expect(result.kind).toBe("success");
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
+      currentTurnImagesPrepared: true,
       images,
       imageOrder,
     });
@@ -139,6 +140,7 @@ describe("executeAgentTurn: CLI session routing", () => {
 
     expect(result.kind).toBe("success");
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
+      currentTurnImagesPrepared: true,
       images,
       imageOrder,
       media,

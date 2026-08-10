@@ -130,13 +130,17 @@ type ExecutePreparedCliRunOptions = {
   onPhase?: (phase: "send" | "resolve" | "cleanup") => void;
 };
 
+type PreparedCliRunInternalParams = PreparedCliRunContext["params"] & {
+  currentTurnImagesPrepared?: true;
+};
+
 /** Executes a prepared CLI run context and returns normalized CLI output. */
 export async function executePreparedCliRun(
   context: PreparedCliRunContext,
   cliSessionIdToUse?: string,
   options?: ExecutePreparedCliRunOptions,
 ): Promise<CliOutput> {
-  const params = context.params;
+  const params = context.params as PreparedCliRunInternalParams;
   if (params.abortSignal?.aborted) {
     throw createCliAbortError();
   }
@@ -173,14 +177,10 @@ export async function executePreparedCliRun(
     }),
     context.backendResolved.textTransforms?.input,
   );
-  // Admission owns the image pair, including an empty result. Preserve that
-  // private distinction so stale media facts are not rehydrated.
-  const currentTurnImagesPrepared =
-    Object.hasOwn(params, "images") && Object.hasOwn(params, "imageOrder");
   if (
     nodePlacement &&
     ((params.images?.length ?? 0) > 0 ||
-      (!currentTurnImagesPrepared &&
+      (params.currentTurnImagesPrepared !== true &&
         (hasHydratableMediaImages(params.media) ||
           (params.imagePrompt ? detectImageReferences(params.imagePrompt).length > 0 : false))))
   ) {
@@ -193,9 +193,9 @@ export async function executePreparedCliRun(
         prompt,
         imagePrompt: params.imagePrompt,
         workspaceDir: context.workspaceDir,
-        currentTurnImagesPrepared: currentTurnImagesPrepared || undefined,
-        ...(Object.hasOwn(params, "images") ? { images: params.images } : {}),
-        ...(Object.hasOwn(params, "imageOrder") ? { imageOrder: params.imageOrder } : {}),
+        currentTurnImagesPrepared: params.currentTurnImagesPrepared,
+        images: params.images,
+        imageOrder: params.imageOrder,
         media: params.media,
       });
   prompt = imagePayload.prompt;
