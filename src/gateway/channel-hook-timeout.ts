@@ -6,10 +6,11 @@ type ChannelHookTimeoutResult<T> =
 
 // Timed-out plugin work is not cancellable. Keep it charged to its channel until
 // it really settles so later health requests cannot exceed the advertised cap.
-const activeChannelHookTasks = new Map<string, Set<Promise<unknown>>>();
+const activeChannelHookTasks = new Map<string, Map<string, Promise<unknown>>>();
 
 function createChannelHookRun<T>(params: {
   capacityKey?: string;
+  taskKey?: string;
   run: () => Promise<T> | T;
 }): Promise<ChannelHookTimeoutResult<T>> {
   const run = Promise.resolve()
@@ -18,17 +19,20 @@ function createChannelHookRun<T>(params: {
       (value) => ({ kind: "value" as const, value }),
       (error: unknown) => ({ kind: "error" as const, error }),
     );
-  if (!params.capacityKey) {
+  if (!params.capacityKey || !params.taskKey) {
     return run;
   }
   const capacityKey = params.capacityKey;
-  const active = activeChannelHookTasks.get(capacityKey) ?? new Set<Promise<unknown>>();
+  const taskKey = params.taskKey;
+  const active = activeChannelHookTasks.get(capacityKey) ?? new Map<string, Promise<unknown>>();
   activeChannelHookTasks.set(capacityKey, active);
-  active.add(run);
+  active.set(taskKey, run);
   void run.then(() => {
-    active.delete(run);
-    if (active.size === 0) {
-      activeChannelHookTasks.delete(capacityKey);
+    if (active.get(taskKey) === run) {
+      active.delete(taskKey);
+      if (active.size === 0) {
+        activeChannelHookTasks.delete(capacityKey);
+      }
     }
   });
   return run;
@@ -69,7 +73,7 @@ export async function runChannelHookTasksWithTimeout<T>(params: {
   capacityKey: string;
   limit: number;
   timeoutMs: number;
-  tasks: Array<() => Promise<T> | T>;
+  tasks: Array<{ taskKey: string; run: () => Promise<T> | T }>;
 }): Promise<Array<ChannelHookTimeoutResult<T>>> {
   const results: Array<ChannelHookTimeoutResult<T>> = Array.from({ length: params.tasks.length });
   if (params.tasks.length === 0) {
@@ -79,8 +83,16 @@ export async function runChannelHookTasksWithTimeout<T>(params: {
   const active = activeChannelHookTasks.get(params.capacityKey);
   const limit = Number.isFinite(params.limit) ? Math.max(1, Math.floor(params.limit)) : 1;
   const available = Math.max(0, limit - (active?.size ?? 0));
-  const queue = params.tasks.map((run, index) => ({ index, run }));
-  const workers = Array.from({ length: Math.min(available, params.tasks.length) }, async () => {
+  const queue = params.tasks
+    .map((task, index) => ({ ...task, index }))
+    .filter((task) => {
+      if (!active?.has(task.taskKey)) {
+        return true;
+      }
+      results[task.index] = { kind: "timeout", started: false };
+      return false;
+    });
+  const workers = Array.from({ length: Math.min(available, queue.length) }, async () => {
     while (true) {
       const task = queue.shift();
       if (!task) {
@@ -90,6 +102,7 @@ export async function runChannelHookTasksWithTimeout<T>(params: {
         timeoutMs: params.timeoutMs,
         run: createChannelHookRun({
           capacityKey: params.capacityKey,
+          taskKey: task.taskKey,
           run: task.run,
         }),
       });

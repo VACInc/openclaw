@@ -1,5 +1,6 @@
 // Status command section tests cover footer, health, and report section rendering.
 import { describe, expect, it } from "vitest";
+import { formatHealthChannelLines } from "./health-format.js";
 import type { HealthSummary } from "./health.js";
 import {
   buildStatusFooterLines,
@@ -14,6 +15,22 @@ import {
   buildStatusSystemEventsTrailer,
   statusHealthColumns,
 } from "./status.command-sections.ts";
+
+const createHealthSummary = (
+  params: Pick<HealthSummary, "durationMs"> &
+    Partial<Pick<HealthSummary, "channels" | "channelOrder" | "channelLabels">>,
+): HealthSummary => ({
+  ok: true,
+  ts: 0,
+  durationMs: params.durationMs,
+  heartbeatSeconds: 60,
+  defaultAgentId: "main",
+  agents: [],
+  sessions: { path: "/tmp/sessions.json", count: 0, recent: [] },
+  channels: params.channels ?? {},
+  channelOrder: params.channelOrder ?? [],
+  channelLabels: params.channelLabels ?? {},
+});
 
 describe("status.command-sections", () => {
   it("shows when heartbeat is waiting for a delivery route", () => {
@@ -234,7 +251,7 @@ describe("status.command-sections", () => {
 
   it("maps health channel detail lines into status rows", () => {
     const rows = buildStatusHealthRows({
-      health: { durationMs: 42 } as HealthSummary,
+      health: createHealthSummary({ durationMs: 42 }),
       formatHealthChannelLines: () => [
         "QuietChat: OK · ready",
         "WorkChat: failed · auth",
@@ -255,6 +272,36 @@ describe("status.command-sections", () => {
       { Item: "Matrix", Status: "ok(LINKED)", Detail: "linked" },
       { Item: "Pager", Status: "warn(UNLINKED)", Detail: "not linked" },
     ]);
+  });
+
+  it("maps formatted partial channel health to WARN", () => {
+    const health = createHealthSummary({
+      durationMs: 42,
+      channels: {
+        workchat: {
+          accountId: "main",
+          configured: true,
+          accounts: {
+            main: { accountId: "main", configured: true, skipped: true },
+          },
+        },
+      },
+      channelOrder: ["workchat"],
+      channelLabels: { workchat: "WorkChat" },
+    });
+    const rows = buildStatusHealthRows({
+      health,
+      formatHealthChannelLines,
+      ok: (value) => `ok(${value})`,
+      warn: (value) => `warn(${value})`,
+      muted: (value) => `muted(${value})`,
+    });
+
+    expect(rows.at(-1)).toEqual({
+      Item: "WorkChat",
+      Status: "warn(WARN)",
+      Detail: "failed - skipped",
+    });
   });
 
   it("adds degraded event-loop health to status rows", () => {
