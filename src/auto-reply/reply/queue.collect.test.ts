@@ -26,6 +26,8 @@ import {
 import { resolveFollowupDeliveryContextKey } from "./queue/drain.js";
 import { clearFollowupQueue, getExistingFollowupQueue } from "./queue/state.js";
 
+type InternalFollowupRun = FollowupRun & { currentTurnImagesPrepared?: true };
+
 installQueueRuntimeErrorSilencer();
 
 function createQueueSettings(overrides: Partial<QueueSettings> = {}): QueueSettings {
@@ -2027,27 +2029,24 @@ describe("followup queue collect routing", () => {
     };
 
     for (const prompt of ["one", "two"]) {
-      enqueueFollowupRun(
-        key,
-        {
-          ...createRun({
-            prompt,
-            originatingChannel: "slack",
-            originatingTo: "channel:A",
-          }),
-          currentTurnImagesPrepared: true,
-          images: [],
-          imageOrder: [],
-          media: [missingMedia],
-        },
-        settings,
-      );
+      const preparedRun: InternalFollowupRun = {
+        ...createRun({
+          prompt,
+          originatingChannel: "slack",
+          originatingTo: "channel:A",
+        }),
+        currentTurnImagesPrepared: true,
+        images: [],
+        imageOrder: [],
+        media: [missingMedia],
+      };
+      enqueueFollowupRun(key, preparedRun, settings);
     }
 
     scheduleFollowupDrain(key, runFollowup);
     await done.promise;
 
-    const collected = calls[0] as (FollowupRun & { currentTurnImagesPrepared?: true }) | undefined;
+    const collected = calls[0] as InternalFollowupRun | undefined;
     expect(collected?.currentTurnImagesPrepared).toBe(true);
     expect(collected?.images).toEqual([]);
     expect(collected?.imageOrder).toEqual([]);
