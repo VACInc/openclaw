@@ -364,6 +364,14 @@ export async function prepareEmbeddedRunRuntime(input: {
     log,
   });
   authStages?.mark("controller");
+  const cooldownProbePolicy = resolveEmbeddedAuthCooldownProbePolicy({
+    authStore: attemptAuthProfileStore,
+    profileCandidates,
+    lockedProfileId,
+    modelId,
+    allowTransientCooldownProbe: params.allowTransientCooldownProbe === true,
+  });
+  let didTransientCooldownProbe = false;
   const advancePluginHarnessAuthAttempt = async (): Promise<boolean> => {
     if (!pluginHarnessOwnsTransport) {
       return false;
@@ -380,8 +388,14 @@ export async function prepareEmbeddedRunRuntime(input: {
         candidate &&
         isProfileInCooldown(attemptAuthProfileStore, candidate, undefined, modelId)
       ) {
-        nextIndex += 1;
-        continue;
+        if (didTransientCooldownProbe || !cooldownProbePolicy.probeProfileIds.has(candidate)) {
+          nextIndex += 1;
+          continue;
+        }
+        didTransientCooldownProbe = true;
+        log.warn(
+          `probing cooldowned auth profile for ${provider}/${modelId} due to ${cooldownProbePolicy.unavailableReason ?? "transient"} unavailability`,
+        );
       }
       if (
         !canRunPreparedAgentRuntimeAuthAttempt({
@@ -431,14 +445,12 @@ export async function prepareEmbeddedRunRuntime(input: {
     const initialProfileInCooldown =
       initialAttempt?.kind === "profile" &&
       isProfileInCooldown(attemptAuthProfileStore, initialAttempt.profileId, undefined, modelId);
-    const cooldownProbePolicy = resolveEmbeddedAuthCooldownProbePolicy({
-      authStore: attemptAuthProfileStore,
-      profileCandidates,
-      lockedProfileId,
-      modelId,
-      allowTransientCooldownProbe: params.allowTransientCooldownProbe === true,
-    });
-    if (initialProfileInCooldown && !cooldownProbePolicy.allowProbe) {
+    const initialProfileId = initialAttempt?.profileId;
+    const canProbeInitialProfile =
+      initialProfileInCooldown &&
+      initialProfileId !== undefined &&
+      cooldownProbePolicy.probeProfileIds.has(initialProfileId);
+    if (initialProfileInCooldown && !canProbeInitialProfile) {
       if (!(await advancePluginHarnessAuthAttempt())) {
         throw new Error(
           `Prepared auth profiles are temporarily unavailable for ${provider}/${modelId}.`,
@@ -446,6 +458,7 @@ export async function prepareEmbeddedRunRuntime(input: {
       }
     } else {
       if (initialProfileInCooldown) {
+        didTransientCooldownProbe = true;
         log.warn(
           `probing cooldowned auth profile for ${provider}/${modelId} due to ${cooldownProbePolicy.unavailableReason ?? "transient"} unavailability`,
         );
