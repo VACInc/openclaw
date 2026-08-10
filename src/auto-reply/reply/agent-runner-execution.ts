@@ -77,6 +77,11 @@ import {
 } from "./reply-operation-abort.js";
 import { isReplyProfilerEnabled } from "./reply-timing-tracker.js";
 
+type InternalFollowupRun = FollowupRun & {
+  /** Keep admission state out of the public plugin-facing FollowupRun contract. */
+  currentTurnImagesPrepared?: true;
+};
+
 function resolveRunStartupPhase(
   phase: EmbeddedAgentExecutionPhase,
 ): ChatRunStartupPhase | undefined {
@@ -204,8 +209,9 @@ async function executeAgentTurnInternalWithRetryState(
           requesterSenderE164: params.followupRun.run.senderE164,
         }),
       );
+    const internalFollowupRun = params.followupRun as InternalFollowupRun;
     const hasQueuedCurrentTurnImages =
-      params.followupRun.currentTurnImagesPrepared === true ||
+      internalFollowupRun.currentTurnImagesPrepared === true ||
       Object.hasOwn(params.followupRun, "images") ||
       Object.hasOwn(params.followupRun, "imageOrder");
     // Queue admission owns current-turn materialization, including empty results.

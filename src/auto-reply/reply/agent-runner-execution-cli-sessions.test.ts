@@ -121,7 +121,11 @@ describe("executeAgentTurn: CLI session routing", () => {
     const followupRun = createFollowupRun();
     followupRun.run.provider = "claude-cli";
     followupRun.run.model = "claude-opus-5";
-    followupRun.currentTurnImagesPrepared = true;
+    (
+      followupRun as typeof followupRun & {
+        currentTurnImagesPrepared?: true;
+      }
+    ).currentTurnImagesPrepared = true;
     followupRun.images = images;
     followupRun.imageOrder = imageOrder;
     followupRun.media = media;
