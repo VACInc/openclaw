@@ -47,7 +47,7 @@ function enqueueTestRun(
 }
 
 function createDrainRecorder(expectedCalls = 1) {
-  const calls: FollowupRun[] = [];
+  const calls: Array<FollowupRun & { currentTurnImagesPrepared?: true }> = [];
   const done = createDeferred<void>();
   const runFollowup = async (run: FollowupRun) => {
     calls.push(run);

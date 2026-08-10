@@ -1397,7 +1397,13 @@ describe("runPreparedReply media-only handling", () => {
     });
     expect(call.followupRun.images?.[0]?.data).toHaveLength(92);
     expect(call.followupRun.imageOrder).toEqual(["inline"]);
-    expect(call.followupRun.currentTurnImagesPrepared).toBe(true);
+    expect(
+      (
+        call.followupRun as typeof call.followupRun & {
+          currentTurnImagesPrepared?: true;
+        }
+      ).currentTurnImagesPrepared,
+    ).toBe(true);
   });
 
   it("does not copy prior session media onto text-only followups", async () => {

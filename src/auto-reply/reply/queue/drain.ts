@@ -40,6 +40,15 @@ import {
   type FollowupRun,
 } from "./types.js";
 
+type InternalFollowupRun = FollowupRun & {
+  /** Keep admission state out of the public plugin-facing FollowupRun contract. */
+  currentTurnImagesPrepared?: true;
+};
+
+function hasPreparedCurrentTurnImages(run: FollowupRun): boolean {
+  return (run as InternalFollowupRun).currentTurnImagesPrepared === true;
+}
+
 // Persists the most recent runFollowup callback per queue key so that
 // enqueueFollowupRun can restart a drain that finished and deleted the queue.
 const FOLLOWUP_DRAIN_CALLBACKS_KEY = Symbol.for("openclaw.followupDrainCallbacks");
@@ -190,7 +199,7 @@ export function resolveFollowupDeliveryContextKey(run: FollowupRun): string {
       accountId: run.originatingAccountId,
       threadId: run.originatingThreadId,
     }),
-    run.currentTurnImagesPrepared === true,
+    hasPreparedCurrentTurnImages(run),
     run.originatingChatId ?? "",
     resolveFollowupReplyAnchor(run) ?? "",
     run.originatingReplyToMode ?? "",
@@ -291,11 +300,12 @@ function renderCollectItemPrompt(item: FollowupRun, idx: number, prompt: string)
 
 function collectQueuedPromptMedia(
   items: FollowupRun[],
-): Pick<FollowupRun, "currentTurnImagesPrepared" | "images" | "imageOrder" | "media"> {
+): Pick<FollowupRun, "images" | "imageOrder" | "media"> &
+  Pick<InternalFollowupRun, "currentTurnImagesPrepared"> {
   const images: NonNullable<FollowupRun["images"]> = [];
   const imageOrder: NonNullable<FollowupRun["imageOrder"]> = [];
   const media: NonNullable<FollowupRun["media"]> = [];
-  const currentTurnImagesPrepared = items.every((item) => item.currentTurnImagesPrepared === true);
+  const currentTurnImagesPrepared = items.every(hasPreparedCurrentTurnImages);
   for (const item of items) {
     if (item.images) {
       images.push(...item.images);
