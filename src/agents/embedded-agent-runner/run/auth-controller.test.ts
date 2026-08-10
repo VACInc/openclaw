@@ -101,6 +101,8 @@ function createMutableEmbeddedRunAuthController(params: {
   profileCandidates?: string[];
   authStore?: AuthProfileStore;
   fallbackConfigured?: boolean;
+  lockedProfileId?: string;
+  allowTransientCooldownProbe?: boolean;
   warn?: (message: string) => void;
   prepareModelForAuthProfile?: Parameters<
     typeof createEmbeddedRunAuthController
@@ -118,10 +120,11 @@ function createMutableEmbeddedRunAuthController(params: {
       } as AuthProfileStore),
     authStorage: { setRuntimeApiKey: params.setRuntimeApiKey },
     profileCandidates: params.profileCandidates ?? ["default"],
+    lockedProfileId: params.lockedProfileId,
     initialThinkLevel: "medium",
     attemptedThinking: new Set(),
     fallbackConfigured: params.fallbackConfigured ?? false,
-    allowTransientCooldownProbe: false,
+    allowTransientCooldownProbe: params.allowTransientCooldownProbe ?? false,
     getProvider: () => "custom-openai",
     getModelId: () => "test-model",
     getRuntimeModel: () => params.harness.runtimeModel,
@@ -556,6 +559,46 @@ describe("createEmbeddedRunAuthController", () => {
         }),
       ),
     ).toEqual({ allowProbe: true, unavailableReason: "rate_limit" });
+  });
+
+  it("preserves the transient cooldown probe for a rate-limited backup after a billing-disabled pin", async () => {
+    const harness = createMutableAuthControllerHarness();
+    const now = Date.now();
+    mocks.getApiKeyForModel.mockImplementation(async ({ profileId }) => ({
+      apiKey: `${String(profileId)}-key`,
+      mode: "api-key" as const,
+      profileId,
+      source: `profile:${String(profileId)}`,
+    }));
+    mocks.prepareProviderRuntimeAuth.mockResolvedValue(undefined);
+
+    const controller = createMutableEmbeddedRunAuthController({
+      harness,
+      setRuntimeApiKey: vi.fn(),
+      profileCandidates: ["pinned", "backup"],
+      lockedProfileId: "pinned",
+      allowTransientCooldownProbe: true,
+      authStore: {
+        version: 1,
+        profiles: {
+          pinned: { type: "api_key", provider: "custom-openai", key: "pinned-key" },
+          backup: { type: "api_key", provider: "custom-openai", key: "backup-key" },
+        },
+        usageStats: {
+          pinned: { disabledUntil: now + 60_000, disabledReason: "billing" },
+          backup: { blockedUntil: now + 60_000 },
+        },
+      },
+    });
+
+    await controller.initializeAuthProfile();
+
+    expect(mocks.getApiKeyForModel).toHaveBeenCalledOnce();
+    expect(mocks.getApiKeyForModel).toHaveBeenCalledWith(
+      expect.objectContaining({ profileId: "backup" }),
+    );
+    expect(harness.profileIndex).toBe(1);
+    expect(harness.lastProfileId).toBe("backup");
   });
 
   it("rejects privileged runtime transport overrides on the first auth exchange", async () => {

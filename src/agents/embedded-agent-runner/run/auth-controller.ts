@@ -613,7 +613,18 @@ export function createEmbeddedRunAuthController(params: {
         const inCooldown =
           candidate && isProfileInCooldown(params.authStore, candidate, undefined, modelId);
         if (inCooldown) {
-          if (cooldownProbePolicy.allowProbe && !didTransientCooldownProbe) {
+          const canProbeCandidate =
+            cooldownProbePolicy.allowProbe &&
+            !didTransientCooldownProbe &&
+            shouldUseTransientCooldownProbeSlot(
+              resolveProfilesUnavailableReason({
+                store: params.authStore,
+                profileIds: [candidate],
+              }) ?? "unknown",
+            );
+          // Spend the single probe slot only on a transiently cooled candidate;
+          // persistent failures must leave it available for later profiles.
+          if (canProbeCandidate) {
             didTransientCooldownProbe = true;
             params.log.warn(
               `probing cooldowned auth profile for ${params.getProvider()}/${modelId} due to ${cooldownProbePolicy.unavailableReason ?? "transient"} unavailability`,
