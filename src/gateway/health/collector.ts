@@ -303,7 +303,11 @@ export async function collectGatewayHealthSnapshot(params: {
       const probeAccountHook = plugin.status?.probeAccount;
       if (enabled && configured && params.probe && probeAccountHook) {
         try {
-          probe = await probeAccountHook({ account: probeAccount, timeoutMs: cappedTimeout, cfg });
+          probe = await probeAccountHook({
+            account: probeAccount,
+            timeoutMs: cappedTimeout,
+            cfg,
+          });
         } catch (error) {
           probe = { ok: false, error: formatErrorMessage(error) };
         }
@@ -387,7 +391,10 @@ export async function collectGatewayHealthSnapshot(params: {
     const accountConcurrency = params.probe ? HEALTH_ACCOUNT_PIPELINE_CONCURRENCY : 1;
     const accountRun = await runChannelHookTasksWithTimeout({
       capacityKey: `health:${plugin.id}`,
-      tasks: accountTasks,
+      tasks: accountTasks.map((run, index) => ({
+        taskKey: expectDefined(accountIdsToProbe[index], `health account id at ${index}`),
+        run,
+      })),
       limit: accountConcurrency,
       timeoutMs: cappedTimeout,
     });

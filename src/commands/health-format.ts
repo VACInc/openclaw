@@ -140,6 +140,13 @@ const isProbeFailure = (summary: ChannelAccountHealthSummary): boolean => {
   return ok === false;
 };
 
+const formatPartialFailure = (summary: ChannelAccountHealthSummary): string | null => {
+  const lastError = typeof summary.lastError === "string" ? summary.lastError.trim() : "";
+  const marker =
+    summary.timedOut === true ? "timed out" : summary.skipped === true ? "skipped" : "";
+  return lastError || marker ? `failed - ${lastError || marker}` : null;
+};
+
 /** Formats one terse health line per channel, optionally including every account. */
 export const formatHealthChannelLines = (
   summary: HealthSummary,
@@ -212,6 +219,14 @@ export const formatHealthChannelLines = (
             : null;
     if (preProbeState) {
       lines.push(`${label}: ${preProbeState}`);
+      continue;
+    }
+
+    const partialFailure =
+      formatPartialFailure(selectedSummary) ??
+      listSummaries.map((account) => formatPartialFailure(account)).find(Boolean);
+    if (partialFailure) {
+      lines.push(`${label}: ${partialFailure}`);
       continue;
     }
 

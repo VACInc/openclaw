@@ -172,6 +172,56 @@ describe("formatHealthChannelLines", () => {
     ]);
   });
 
+  it.each([
+    ["timeout marker", { healthState: "healthy", timedOut: true }, "failed - timed out"],
+    [
+      "last error",
+      { healthState: "healthy", lastError: "  account snapshot failed  " },
+      "failed - account snapshot failed",
+    ],
+  ])("surfaces a selected account's partial %s", (_name, account, expected) => {
+    const summary = createHealthSummary({
+      channels: {
+        test: { accountId: "default", configured: true, ...account },
+      },
+      channelOrder: ["test"],
+      channelLabels: { test: "Test" },
+    });
+
+    expect(formatHealthChannelLines(summary)).toStrictEqual([`Test: ${expected}`]);
+  });
+
+  it("surfaces a skipped sibling over the selected account's successful probe", () => {
+    const summary = createHealthSummary({
+      channels: {
+        matrix: {
+          accountId: "main",
+          configured: true,
+          probe: { ok: true, elapsedMs: 12 },
+          accounts: {
+            main: {
+              accountId: "main",
+              configured: true,
+              probe: { ok: true, elapsedMs: 12 },
+            },
+            alerts: {
+              accountId: "alerts",
+              configured: true,
+              skipped: true,
+              lastError: "Account health skipped because an earlier check is still running",
+            },
+          },
+        },
+      },
+      channelOrder: ["matrix"],
+      channelLabels: { matrix: "Matrix" },
+    });
+
+    expect(formatHealthChannelLines(summary, { accountMode: "all" })).toStrictEqual([
+      "Matrix: failed - Account health skipped because an earlier check is still running",
+    ]);
+  });
+
   it("formats iMessage probe failures as failed health lines", () => {
     const summary = createHealthSummary({
       channels: {

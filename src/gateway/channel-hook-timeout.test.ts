@@ -44,13 +44,16 @@ describe("raceChannelHookWithTimeout", () => {
     vi.useFakeTimers();
     const releases: Array<() => void> = [];
     let started = 0;
-    const tasks = Array.from({ length: 6 }, () => async () => {
-      started += 1;
-      await new Promise<void>((resolve) => {
-        releases.push(resolve);
-      });
-      return started;
-    });
+    const tasks = Array.from({ length: 6 }, (_, index) => ({
+      taskKey: `account-${index + 1}`,
+      run: async () => {
+        started += 1;
+        await new Promise<void>((resolve) => {
+          releases.push(resolve);
+        });
+        return started;
+      },
+    }));
 
     const run = runChannelHookTasksWithTimeout({
       capacityKey: "test:retained-capacity",
@@ -77,5 +80,59 @@ describe("raceChannelHookWithTimeout", () => {
       release();
     }
     await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it("skips an active task key while healthy siblings run, then re-admits it after cleanup", async () => {
+    vi.useFakeTimers();
+    let releaseHung: (() => void) | undefined;
+    const hung = new Promise<void>((resolve) => {
+      releaseHung = resolve;
+    });
+    let hungStarts = 0;
+    let healthyStarts = 0;
+    const tasks = [
+      {
+        taskKey: "hung",
+        run: async () => {
+          hungStarts += 1;
+          await hung;
+          return "hung";
+        },
+      },
+      {
+        taskKey: "healthy",
+        run: async () => {
+          healthyStarts += 1;
+          return "healthy";
+        },
+      },
+    ];
+    const run = () =>
+      runChannelHookTasksWithTimeout({
+        capacityKey: "test:task-identity",
+        limit: 2,
+        timeoutMs: 100,
+        tasks,
+      });
+
+    const first = run();
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(first).resolves.toEqual([
+      { kind: "timeout", started: true },
+      { kind: "value", value: "healthy" },
+    ]);
+    await expect(run()).resolves.toEqual([
+      { kind: "timeout", started: false },
+      { kind: "value", value: "healthy" },
+    ]);
+    expect({ hungStarts, healthyStarts }).toEqual({ hungStarts: 1, healthyStarts: 2 });
+
+    releaseHung?.();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(run()).resolves.toEqual([
+      { kind: "value", value: "hung" },
+      { kind: "value", value: "healthy" },
+    ]);
+    expect({ hungStarts, healthyStarts }).toEqual({ hungStarts: 2, healthyStarts: 3 });
   });
 });

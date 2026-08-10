@@ -243,4 +243,65 @@ describe("collectGatewayHealthSnapshot hook deadlines", () => {
     }
     await vi.advanceTimersByTimeAsync(0);
   });
+
+  it("does not re-admit a hanging account while healthy siblings remain probeable", async () => {
+    vi.useFakeTimers();
+    const pluginId = "account-identity";
+    let releaseHung: (() => void) | undefined;
+    const hung = new Promise<void>((resolve) => {
+      releaseHung = resolve;
+    });
+    let hungStarts = 0;
+    let healthyStarts = 0;
+    healthPluginsForTest = [
+      {
+        ...createChannelTestPluginBase({ id: pluginId, label: pluginId }),
+        config: {
+          listAccountIds: () => ["hung", "healthy"],
+          resolveAccount: (_cfg, accountId) => ({
+            accountId: accountId ?? "default",
+            enabled: true,
+            configured: true,
+          }),
+          inspectAccount: (_cfg, accountId) => ({
+            accountId: accountId ?? "default",
+            enabled: true,
+            configured: true,
+          }),
+          isConfigured: () => true,
+        },
+        status: {
+          probeAccount: async ({ account }) => {
+            if ((account as { accountId?: string }).accountId === "hung") {
+              hungStarts += 1;
+              await hung;
+            } else {
+              healthyStarts += 1;
+            }
+            return { ok: true };
+          },
+        },
+      },
+    ];
+
+    const first = collectHealth();
+    await vi.advanceTimersByTimeAsync(100);
+    expect((await first).channels[pluginId]?.accounts).toMatchObject({
+      hung: { timedOut: true },
+      healthy: { probe: { ok: true } },
+    });
+    expect((await collectHealth()).channels[pluginId]?.accounts).toMatchObject({
+      hung: { skipped: true },
+      healthy: { probe: { ok: true } },
+    });
+    expect({ hungStarts, healthyStarts }).toEqual({ hungStarts: 1, healthyStarts: 2 });
+
+    releaseHung?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await collectHealth()).channels[pluginId]?.accounts).toMatchObject({
+      hung: { probe: { ok: true } },
+      healthy: { probe: { ok: true } },
+    });
+    expect({ hungStarts, healthyStarts }).toEqual({ hungStarts: 2, healthyStarts: 3 });
+  });
 });
