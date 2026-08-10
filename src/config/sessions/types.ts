@@ -259,6 +259,11 @@ export interface QuotaSuspension {
   summary?: string;
   /** Opaque pointer to an external snapshot blob (path/key); not the briefing text itself. */
   snapshotRef?: string;
+  /**
+   * @deprecated Lane suspension was removed; nothing writes this anymore. Kept only to
+   * hold the shipped SDK surface stable; drop at the next surface window.
+   */
+  laneId?: string;
   expectedResumeBy?: number; // Reaper TTL (e.g. 30min)
   state: LaneExecutionState; // State machine check for hot-path
 }
