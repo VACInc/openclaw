@@ -1,6 +1,7 @@
 import "./session-suspension.js";
 
 type SessionSuspensionTestApi = {
+  isSessionSuspensionWriteCleanupActiveForTest(): boolean;
   resetSessionSuspensionStateForTest(): void;
 };
 
@@ -16,4 +17,8 @@ function getTestApi(): SessionSuspensionTestApi {
 
 export function resetSessionSuspensionStateForTest(): void {
   getTestApi().resetSessionSuspensionStateForTest();
+}
+
+export function isSessionSuspensionWriteCleanupActiveForTest(): boolean {
+  return getTestApi().isSessionSuspensionWriteCleanupActiveForTest();
 }

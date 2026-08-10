@@ -196,7 +196,7 @@ it("clears named plugin runtime slots between files", async () => {
   }
 });
 
-it("clears session suspension state between files", async () => {
+it("clears the session suspension shutdown fence between files", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-session-suspension-runner-"));
   try {
     const write = (name: string, content: string) =>
@@ -218,16 +218,12 @@ it("clears session suspension state between files", async () => {
     await write(
       "a-seed.test.ts",
       [
-        `import { getSuspendedLaneIdsForGatewayPublication } from ${sessionSuspensionPath};`,
-        `import { seedClearedLaneResumeForTest } from ${sessionSuspensionTestSupportPath};`,
+        `import { fenceSessionSuspensionWritesForGatewayShutdown } from ${sessionSuspensionPath};`,
+        `import { isSessionSuspensionWriteCleanupActiveForTest } from ${sessionSuspensionTestSupportPath};`,
         'import { expect, it } from "vitest";',
-        'const laneId = "plugin:test:session-suspension";',
-        'it("seeds real process-global suspension state", () => {',
-        "  seedClearedLaneResumeForTest(laneId, {",
-        "    resumeConcurrency: 1,",
-        "    resumeAtMs: Date.now() + 10_000,",
-        "  });",
-        "  expect(getSuspendedLaneIdsForGatewayPublication()).toContain(laneId);",
+        'it("seeds the real process-global shutdown fence", () => {',
+        "  fenceSessionSuspensionWritesForGatewayShutdown();",
+        "  expect(isSessionSuspensionWriteCleanupActiveForTest()).toBe(true);",
         "});",
         "",
       ].join("\n"),
@@ -235,10 +231,10 @@ it("clears session suspension state between files", async () => {
     await write(
       "b-observe.test.ts",
       [
-        `import { getSuspendedLaneIdsForGatewayPublication } from ${sessionSuspensionPath};`,
+        `import { isSessionSuspensionWriteCleanupActiveForTest } from ${sessionSuspensionTestSupportPath};`,
         'import { expect, it } from "vitest";',
         'it("starts without real suspension state from the previous file", () => {',
-        "  expect(getSuspendedLaneIdsForGatewayPublication()).toEqual(new Set());",
+        "  expect(isSessionSuspensionWriteCleanupActiveForTest()).toBe(false);",
         "});",
         "",
       ].join("\n"),
