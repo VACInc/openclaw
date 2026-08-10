@@ -1,9 +1,8 @@
-import type {
-  ChatCommandDefinition,
-  NativeCommandSpec,
-} from "openclaw/plugin-sdk/command-auth-native";
+import type { ChatCommandDefinition } from "openclaw/plugin-sdk/command-auth-native";
 // Slack tests cover slash plugin behavior.
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
+import type { NativeCommandSpec } from "openclaw/plugin-sdk/native-command-registry";
 import {
   clearRuntimeConfigSnapshot,
   setRuntimeConfigSnapshot,
@@ -117,6 +116,14 @@ const slashCommandFixtures = vi.hoisted(() => {
   };
 });
 
+const pluginCommandFixtures = vi.hoisted(() => ({
+  specs: [] as NativeCommandSpec[],
+}));
+
+const skillCommandFixtures = vi.hoisted(() => ({
+  commands: [] as Array<{ name: string; skillName: string; description: string }>,
+}));
+
 vi.mock("./slash-commands.runtime.js", async () => {
   const actual = await vi.importActual<typeof import("./slash-commands.runtime.js")>(
     "./slash-commands.runtime.js",
@@ -145,6 +152,26 @@ vi.mock("./slash-commands.runtime.js", async () => {
   };
 });
 
+vi.mock("./slash-plugin-commands.runtime.js", async () => {
+  const actual = await vi.importActual<typeof import("./slash-plugin-commands.runtime.js")>(
+    "./slash-plugin-commands.runtime.js",
+  );
+  return {
+    ...actual,
+    listProviderPluginCommandSpecs: () => pluginCommandFixtures.specs,
+  };
+});
+
+vi.mock("./slash-skill-commands.runtime.js", async () => {
+  const actual = await vi.importActual<typeof import("./slash-skill-commands.runtime.js")>(
+    "./slash-skill-commands.runtime.js",
+  );
+  return {
+    ...actual,
+    listSkillCommandsForAgents: () => skillCommandFixtures.commands,
+  };
+});
+
 type RegisterFn = (params: {
   ctx: unknown;
   account: unknown;
@@ -156,11 +183,15 @@ const { registerSlackMonitorSlashCommands } = (await import("./slash.js")) as {
 const { dispatchMock } = getSlackSlashMocks();
 
 beforeEach(() => {
+  pluginCommandFixtures.specs = [];
+  skillCommandFixtures.commands = [];
   clearRuntimeConfigSnapshot();
   resetSlackSlashMocks();
 });
 
 afterEach(() => {
+  pluginCommandFixtures.specs = [];
+  skillCommandFixtures.commands = [];
   clearRuntimeConfigSnapshot();
 });
 
@@ -188,21 +219,11 @@ function findFirstActionsBlock(payload: { blocks?: Array<{ type: string }> }) {
     | undefined;
 }
 
-function createDeferred<T>() {
-  let resolve: ((value: T | PromiseLike<T>) => void) | undefined;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  if (!resolve) {
-    throw new Error("Expected Slack slash deferred resolver to be initialized");
-  }
-  return { promise, resolve };
-}
-
 function createArgMenusHarness(
   cfg: OpenClawConfig = { commands: { native: true, nativeSkills: false } },
 ) {
   const commands = new Map<string | RegExp, (args: unknown) => Promise<void>>();
+  const commandRegistrations: Array<string | RegExp> = [];
   const actions = new Map<string | RegExp, (args: unknown) => Promise<void>>();
   const options = new Map<string, (args: unknown) => Promise<void>>();
   const optionsReceiverContexts: unknown[] = [];
@@ -211,6 +232,7 @@ function createArgMenusHarness(
   const app = {
     client: { chat: { postEphemeral } },
     command: (name: string | RegExp, handler: (args: unknown) => Promise<void>) => {
+      commandRegistrations.push(name);
       commands.set(name, handler);
     },
     action: (id: string | RegExp, handler: (args: unknown) => Promise<void>) => {
@@ -256,6 +278,7 @@ function createArgMenusHarness(
   } as unknown;
 
   return {
+    commandRegistrations,
     commands,
     actions,
     options,
@@ -734,6 +757,50 @@ describe("Slack native command argument menus", () => {
     ).toBe(true);
     expect(testHarness.options.has("openclaw_cmdarg")).toBe(true);
     expect(testHarness.optionsReceiverContexts[0]).toBe(testHarness.app);
+  });
+
+  it("registers unique plugin commands and silently keeps primary names on collision", async () => {
+    pluginCommandFixtures.specs = [
+      { name: "slackplugin", description: "Unique plugin command", acceptsArgs: false },
+      { name: "reportlong", description: "Colliding plugin command", acceptsArgs: false },
+    ];
+    const testHarness = createArgMenusHarness();
+    const runtimeLog = vi.fn();
+    const runtimeError = vi.fn();
+    (
+      testHarness.ctx as { runtime: { log: typeof runtimeLog; error: typeof runtimeError } }
+    ).runtime = { log: runtimeLog, error: runtimeError };
+
+    await registerCommands(testHarness.ctx, testHarness.account);
+
+    expect(testHarness.commands.has("/slackplugin")).toBe(true);
+    expect(testHarness.commandRegistrations.filter((name) => name === "/slackplugin")).toHaveLength(
+      1,
+    );
+    expect(testHarness.commandRegistrations.filter((name) => name === "/reportlong")).toHaveLength(
+      1,
+    );
+    expect(runtimeLog).not.toHaveBeenCalled();
+    expect(runtimeError).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates a skill after the Slack status native rename", async () => {
+    skillCommandFixtures.commands = [
+      {
+        name: "agentstatus",
+        skillName: "Agent Status Skill",
+        description: "Skill agent status",
+      },
+    ];
+    const config: OpenClawConfig = { commands: { native: true, nativeSkills: true } };
+    const testHarness = createArgMenusHarness(config);
+    (testHarness.account as { config: OpenClawConfig }).config = config;
+
+    await registerCommands(testHarness.ctx, testHarness.account);
+
+    expect(testHarness.commandRegistrations.filter((name) => name === "/agentstatus")).toHaveLength(
+      1,
+    );
   });
 
   it.each([
@@ -1394,41 +1461,51 @@ describe("slack slash commands channel policy", () => {
     expect(respond).not.toHaveBeenCalled();
   });
 
-  it("allows unlisted channels when groupPolicy is open", async () => {
-    const harness = createPolicyHarness({
-      groupPolicy: "open",
-      channelsConfig: { C_LISTED: { requireMention: true } },
-      channelId: "C_UNLISTED",
-      channelName: "unlisted",
-    });
+  it.each<{
+    name: string;
+    policy: NonNullable<Parameters<typeof createPolicyHarness>[0]>;
+    blocked: boolean;
+  }>([
+    {
+      name: "allows unlisted channels when groupPolicy is open",
+      policy: {
+        groupPolicy: "open",
+        channelsConfig: { C_LISTED: { requireMention: true } },
+        channelId: "C_UNLISTED",
+        channelName: "unlisted",
+      },
+      blocked: false,
+    },
+    {
+      name: "blocks explicitly denied channels when groupPolicy is open",
+      policy: {
+        groupPolicy: "open",
+        channelsConfig: { C_DENIED: { enabled: false } },
+        channelId: "C_DENIED",
+        channelName: "denied",
+      },
+      blocked: true,
+    },
+    {
+      name: "blocks unlisted channels when groupPolicy is allowlist",
+      policy: {
+        groupPolicy: "allowlist",
+        channelsConfig: { C_LISTED: { requireMention: true } },
+        channelId: "C_UNLISTED",
+        channelName: "unlisted",
+      },
+      blocked: true,
+    },
+  ])("$name", async ({ policy, blocked }) => {
+    const harness = createPolicyHarness(policy);
     const { respond } = await registerAndRunPolicySlash({ harness });
 
+    if (blocked) {
+      expectChannelBlockedResponse(respond);
+      return;
+    }
     expect(dispatchMock).toHaveBeenCalledTimes(1);
     expect(responseTexts(respond)).not.toContain("This channel is not allowed.");
-  });
-
-  it("blocks explicitly denied channels when groupPolicy is open", async () => {
-    const harness = createPolicyHarness({
-      groupPolicy: "open",
-      channelsConfig: { C_DENIED: { enabled: false } },
-      channelId: "C_DENIED",
-      channelName: "denied",
-    });
-    const { respond } = await registerAndRunPolicySlash({ harness });
-
-    expectChannelBlockedResponse(respond);
-  });
-
-  it("blocks unlisted channels when groupPolicy is allowlist", async () => {
-    const harness = createPolicyHarness({
-      groupPolicy: "allowlist",
-      channelsConfig: { C_LISTED: { requireMention: true } },
-      channelId: "C_UNLISTED",
-      channelName: "unlisted",
-    });
-    const { respond } = await registerAndRunPolicySlash({ harness });
-
-    expectChannelBlockedResponse(respond);
   });
 });
 
@@ -1508,38 +1585,38 @@ describe("slack slash commands access groups", () => {
     expect(dispatchArg?.ctx?.From).toBe("slack:group:G_MPIM");
   });
 
-  it("blocks MPIM slash commands from senders outside the configured allowFrom", async () => {
+  it.each([
+    {
+      name: "blocks MPIM slash commands from senders outside the configured allowFrom",
+      userId: "U_ATTACKER",
+      allowed: false,
+    },
+    {
+      name: "allows MPIM slash commands from senders in the configured allowFrom",
+      userId: "U_OWNER",
+      allowed: true,
+    },
+  ])("$name", async ({ userId, allowed }) => {
     const harness = createPolicyHarness({
       allowFrom: ["U_OWNER"],
       channelId: "G_MPIM",
       channelName: "group-dm",
       resolveChannelName: async () => ({ name: "group-dm", type: "mpim" }),
-      useAccessGroups: false,
+      ...(!allowed ? { useAccessGroups: false } : {}),
     });
     const { respond } = await registerAndRunPolicySlash({
       harness,
-      command: { user_id: "U_ATTACKER" },
+      command: { user_id: userId },
     });
 
-    expect(dispatchMock).not.toHaveBeenCalled();
-    expect(respond).toHaveBeenCalledWith({
-      text: "You are not authorized to use this command here.",
-      response_type: "ephemeral",
-    });
-  });
-
-  it("allows MPIM slash commands from senders in the configured allowFrom", async () => {
-    const harness = createPolicyHarness({
-      allowFrom: ["U_OWNER"],
-      channelId: "G_MPIM",
-      channelName: "group-dm",
-      resolveChannelName: async () => ({ name: "group-dm", type: "mpim" }),
-    });
-    const { respond } = await registerAndRunPolicySlash({
-      harness,
-      command: { user_id: "U_OWNER" },
-    });
-
+    if (!allowed) {
+      expect(dispatchMock).not.toHaveBeenCalled();
+      expect(respond).toHaveBeenCalledWith({
+        text: "You are not authorized to use this command here.",
+        response_type: "ephemeral",
+      });
+      return;
+    }
     expect(dispatchMock).toHaveBeenCalledTimes(1);
     expect(responseTexts(respond)).not.toContain(
       "You are not authorized to use this command here.",

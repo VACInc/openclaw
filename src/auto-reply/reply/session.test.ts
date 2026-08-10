@@ -111,29 +111,8 @@ vi.mock("../../infra/channel-summary.js", () => ({
   buildChannelSummary: channelSummaryMocks.buildChannelSummary,
 }));
 
-// Perf: session-store locks are exercised elsewhere; most session tests don't need FS lock files.
-vi.mock("../../agents/session-write-lock.js", async () => {
-  const actual = await vi.importActual<typeof import("../../agents/session-write-lock.js")>(
-    "../../agents/session-write-lock.js",
-  );
-  return {
-    ...actual,
-    acquireSessionWriteLock: vi.fn(async () => ({ release: async () => {} })),
-    resolveSessionLockMaxHoldFromTimeout: vi.fn(
-      ({
-        timeoutMs,
-        graceMs = 2 * 60 * 1000,
-        minMs = 5 * 60 * 1000,
-      }: {
-        timeoutMs: number;
-        graceMs?: number;
-        minMs?: number;
-      }) => Math.max(minMs, timeoutMs + graceMs),
-    ),
-  };
-});
-
 vi.mock("../../agents/prepared-model-catalog.js", () => ({
+  loadProviderScopedThinkingCatalog: vi.fn(async () => []),
   loadPreparedModelCatalog: vi.fn(async () => [
     { provider: "minimax", id: "m2.7", name: "M2.7" },
     { provider: "openai", id: "gpt-4o-mini", name: "GPT-4o mini" },
@@ -1291,6 +1270,7 @@ describe("initSessionState RawBody", () => {
     await expect(
       drainFormattedSystemEvents({
         cfg,
+        agentId: "main",
         sessionKey,
         isMainSession: false,
         isNewSession: true,
@@ -2141,6 +2121,7 @@ describe("initSessionState reset policy", () => {
     await expect(
       drainFormattedSystemEvents({
         cfg,
+        agentId: "main",
         sessionKey,
         isMainSession: false,
         isNewSession: true,
@@ -4326,6 +4307,7 @@ describe("drainFormattedSystemEvents", () => {
 
       const result = await drainFormattedSystemEvents({
         cfg: {} as OpenClawConfig,
+        agentId: "main",
         sessionKey: "agent:main:main",
         isMainSession: true,
         isNewSession: false,
@@ -4346,6 +4328,7 @@ describe("drainFormattedSystemEvents", () => {
 
     const result = await drainFormattedSystemEvents({
       cfg: { channels: {} } as OpenClawConfig,
+      agentId: "main",
       sessionKey: "agent:main:main",
       isMainSession: true,
       isNewSession: true,
@@ -4371,6 +4354,7 @@ describe("drainFormattedSystemEvents", () => {
 
       const result = await drainFormattedSystemEvents({
         cfg: {} as OpenClawConfig,
+        agentId: "main",
         sessionKey: "agent:main:main",
         isMainSession: true,
         isNewSession: false,
@@ -4395,6 +4379,7 @@ describe("drainFormattedSystemEvents", () => {
 
       const result = await drainFormattedSystemEvents({
         cfg: {} as OpenClawConfig,
+        agentId: "main",
         sessionKey: "agent:main:main",
         isMainSession: true,
         isNewSession: false,

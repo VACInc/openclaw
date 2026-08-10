@@ -21,7 +21,7 @@ import {
   validateSessionsCompanionStateParams,
   validateSessionsCreateParams,
   validateSessionsObserverVisibilityParams,
-  validateSessionsArchiveManyParams,
+  validateSessionsPatchManyParams,
   validateSessionsPatchParams,
   validateSessionsSearchParams,
   validateSessionsSendParams,
@@ -31,6 +31,7 @@ import {
   validateTasksRecoveryParams,
   validateTalkConfigResult,
   validateTalkClientCreateParams,
+  validateTalkClientCreateResult,
   validateTalkClientSteerParams,
   validateTalkClientToolCallParams,
   validateTalkSessionAppendAudioParams,
@@ -48,6 +49,7 @@ import type {
   ConfigSchemaLookupParams,
   ModelsListParams,
   SessionsCatalogListParams,
+  SessionsCatalogStartTerminalParams,
   TalkEvent,
 } from "./index.js";
 import * as schemaExportRegistry from "./schema-export-registry.js";
@@ -121,6 +123,7 @@ describe("protocol export registries", () => {
     expectTypeOf<ConfigSchemaLookupParams>().toEqualTypeOf<Schema.ConfigSchemaLookupParams>();
     expectTypeOf<ModelsListParams>().toEqualTypeOf<Schema.ModelsListParams>();
     expectTypeOf<SessionsCatalogListParams>().toEqualTypeOf<Schema.SessionsCatalogListParams>();
+    expectTypeOf<SessionsCatalogStartTerminalParams>().toEqualTypeOf<Schema.SessionsCatalogStartTerminalParams>();
     expectTypeOf<TalkEvent>().toEqualTypeOf<Schema.TalkEvent>();
   });
 
@@ -199,37 +202,77 @@ describe("lazy protocol validators", () => {
     ]);
   });
 
-  it("validates bounded closed bulk session archive requests", () => {
+  it("validates bounded closed bulk session patch requests", () => {
+    expect(protocol.SESSIONS_PATCH_MANY_MAX_TARGETS).toBe(100);
     const target = {
-      key: "agent:main:archive-me",
+      key: "agent:main:patch-me",
       agentId: "main",
-      expectedSessionId: "session-archive-me",
-      expectedLifecycleRevision: "revision-archive-me",
+      expectedSessionId: "session-patch-me",
+      expectedLifecycleRevision: "revision-patch-me",
     };
-    expectAccepted(validateSessionsArchiveManyParams, [
-      { targets: [target], archived: true },
+    const fullPatch = {
+      label: "Label",
+      category: "Category",
+      boardFace: "dashboard",
+      icon: "name:spark",
+      statusNote: "Working",
+      attention: "hand",
+      ttlMinutes: 30,
+      archived: false,
+      pinned: true,
+      unread: true,
+      thinkingLevel: "high",
+      fastMode: "auto",
+      toolOverrides: null,
+      verboseLevel: "full",
+      traceLevel: "full",
+      reasoningLevel: "high",
+      responseUsage: "full",
+      elevatedLevel: "on",
+      execHost: "gateway",
+      execSecurity: "allowlist",
+      execAsk: "on-miss",
+      execNode: "node-1",
+      model: "openai/gpt-5.6-luna",
+      completionOwnerSessionKey: "agent:main:main",
+      inheritedToolPolicyVersion: 1,
+      inheritedToolAllow: ["read"],
+      inheritedToolDeny: ["write"],
+      sendPolicy: "allow",
+      groupActivation: "mention",
+    } as const;
+    expectAccepted(validateSessionsPatchManyParams, [
+      { targets: [target], patch: fullPatch },
       {
         targets: Array.from({ length: 100 }, (_, index) => ({
-          key: `agent:main:archive-${index}`,
+          key: `agent:main:patch-${index}`,
         })),
-        archived: false,
+        patch: { archived: false },
       },
     ]);
-    expectRejected(validateSessionsArchiveManyParams, [
-      { targets: [], archived: true },
+    expectRejected(validateSessionsPatchManyParams, [
+      { targets: [], patch: { archived: true } },
       {
         targets: Array.from({ length: 101 }, (_, index) => ({
-          key: `agent:main:archive-${index}`,
+          key: `agent:main:patch-${index}`,
         })),
-        archived: true,
+        patch: { archived: true },
       },
-      { targets: [{ key: "" }], archived: true },
-      { targets: [{ key: target.key, agentId: "" }], archived: true },
-      { targets: [{ key: target.key, expectedSessionId: "" }], archived: true },
-      { targets: [{ key: target.key, expectedLifecycleRevision: "" }], archived: true },
-      { targets: [{ key: target.key, extra: true }], archived: true },
-      { targets: [target], archived: "yes" },
-      { targets: [target], archived: true, extra: true },
+      { targets: [target], patch: {} },
+      { targets: [{ key: "" }], patch: { archived: true } },
+      { targets: [{ key: target.key, agentId: "" }], patch: { archived: true } },
+      { targets: [{ key: target.key, expectedSessionId: "" }], patch: { archived: true } },
+      {
+        targets: [{ key: target.key, expectedLifecycleRevision: "" }],
+        patch: { archived: true },
+      },
+      { targets: [{ key: target.key, extra: true }], patch: { archived: true } },
+      { targets: [target], patch: { key: target.key } },
+      { targets: [target], patch: { agentId: "main" } },
+      { targets: [target], patch: { expectedSessionId: "session" } },
+      { targets: [target], patch: { expectedLifecycleRevision: "revision" } },
+      { targets: [target], patch: { archived: true, extra: true } },
+      { targets: [target], patch: { archived: true }, extra: true },
     ]);
   });
 
@@ -444,6 +487,47 @@ describe("lazy protocol validators", () => {
     ]);
   });
 
+  it("validates worker desktop observer request and result contracts", () => {
+    expectAccepted(protocol.validateWorkerDesktopObserveParams, [
+      { environmentId: "worker:one" },
+      { environmentId: "worker:one", control: true },
+    ]);
+    expectRejected(protocol.validateWorkerDesktopObserveParams, [
+      { environmentId: "" },
+      { environmentId: "worker:one", control: "yes" },
+      { environmentId: "worker:one", extra: true },
+    ]);
+    expectAccepted(protocol.validateWorkerDesktopObserveResult, [
+      {
+        transport: "rfb",
+        wsPath: "/worker-desktop/observe?token=abc",
+        expiresAtMs: 60_000,
+        control: false,
+      },
+      {
+        transport: "rfb",
+        wsPath: "/worker-desktop/observe?token=abc",
+        expiresAtMs: 60_000,
+        control: true,
+        vncPassword: "secret",
+      },
+    ]);
+    expectRejected(protocol.validateWorkerDesktopObserveResult, [
+      {
+        transport: "vnc",
+        wsPath: "/worker-desktop/observe?token=abc",
+        expiresAtMs: 60_000,
+        control: false,
+      },
+      {
+        transport: "rfb",
+        wsPath: "",
+        expiresAtMs: -1,
+        control: false,
+      },
+    ]);
+  });
+
   it("validates chat sends that suppress command interpretation", () => {
     expectAccepted(validateChatSendParams, [
       {
@@ -648,7 +732,7 @@ describe("validateTalkClientCreateParams", () => {
         mode: "realtime",
         transport: "webrtc",
         brain: "agent-consult",
-        capabilities: ["camera-frame"],
+        capabilities: ["camera-frame", "gateway-control-v1"],
       }),
     ]);
   });
@@ -665,6 +749,28 @@ describe("validateTalkClientCreateParams", () => {
   it("rejects unknown browser capabilities", () => {
     expectRejected(validateTalkClientCreateParams, [
       talkClient({ capabilities: ["screen-frame"] }),
+    ]);
+  });
+
+  it("accepts only the Gateway-owned control descriptor", () => {
+    expectAccepted(validateTalkClientCreateResult, [
+      {
+        provider: "openai",
+        transport: "webrtc",
+        voiceSessionId: "voice-1",
+        clientSecret: "single-use-token",
+        offerUrl: "/plugins/openai/realtime/calls",
+        clientControl: { owner: "gateway" },
+      },
+    ]);
+    expectRejected(validateTalkClientCreateResult, [
+      {
+        provider: "openai",
+        transport: "webrtc",
+        voiceSessionId: "voice-1",
+        clientSecret: "provider-secret",
+        clientControl: { owner: "client" },
+      },
     ]);
   });
 });

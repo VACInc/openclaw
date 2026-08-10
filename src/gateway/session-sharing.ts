@@ -36,13 +36,12 @@ import {
   resolveGatewaySessionStoreTargetWithStore,
 } from "./session-utils.js";
 
-const ADMIN_SCOPE = "operator.admin";
-
 type SessionSharingTarget = {
   agentId: string;
   canonicalKey: string;
   entry: SessionEntry;
   storeKey: string;
+  storeKeys: string[];
   storePath: string;
 };
 
@@ -80,7 +79,7 @@ export function resolveSessionVisibility(
 export function isGatewayAdmin(client: Pick<GatewayClient, "connect"> | null): boolean {
   // Internal/plugin-runtime runs reach authorization with a client that has no
   // connect handshake; treat a connect-less client as a non-admin, never a crash.
-  return client?.connect?.scopes?.includes(ADMIN_SCOPE) === true;
+  return client?.connect?.scopes?.includes("operator.admin") === true;
 }
 
 export function allowedSessionVisibilities(cfg: OpenClawConfig): SessionVisibility[] {
@@ -124,6 +123,7 @@ export function resolveSessionSharingTarget(params: {
         canonicalKey: target.canonicalKey,
         entry: match.entry,
         storeKey: match.key,
+        storeKeys: target.storeKeys,
         storePath: target.storePath,
       }
     : null;
@@ -412,7 +412,7 @@ function resolveSessionMutationTargets(params: {
   context: GatewayRequestContext;
   getCfg: () => OpenClawConfig;
 }): SessionMutationTarget[] | undefined {
-  if (params.method === "sessions.archiveMany") {
+  if (params.method === "sessions.patchMany") {
     const targets = (params.requestParams as { targets?: unknown } | null)?.targets;
     return Array.isArray(targets)
       ? targets.slice(0, 101).flatMap((target): SessionMutationTarget[] => {
@@ -543,7 +543,7 @@ export function resolveSessionMutationAuthorization(params: {
       ...lookupCaches,
     });
     const error =
-      (params.method === "sessions.archiveMany"
+      (params.method === "sessions.patchMany"
         ? authorizeIncognitoSessionTarget({
             client: params.client,
             sessionKey: targetRef.sessionKey,
@@ -583,7 +583,7 @@ export function resolveSessionMutationAuthorization(params: {
           ...currentLookupCaches,
         });
         const sameResolvedTarget =
-          expected === undefined ||
+          expected !== undefined &&
           (current === null
             ? expected.resolved === null
             : expected.resolved !== null &&
@@ -610,7 +610,14 @@ export function resolveSessionMutationAuthorization(params: {
         if (!current) {
           return;
         }
-        const error = authorizeSessionSharingTarget({ client: params.client, target: current });
+        const error =
+          (params.method === "sessions.patchMany"
+            ? authorizeIncognitoSessionTarget({
+                client: params.client,
+                sessionKey: targetRef.sessionKey,
+                target: current,
+              })
+            : null) ?? authorizeSessionSharingTarget({ client: params.client, target: current });
         if (error) {
           throw new SessionMutationAuthorizationChangedError(error);
         }
@@ -624,11 +631,15 @@ export function resolveSessionMutationAuthorization(params: {
           }
         },
         assertTargetCurrent: (targetRef: SessionMutationTarget) => {
+          // Batch outcomes preserve caller identities, but authorization owns normalized targets.
+          // Resolve the same normalized identity so padded aliases cannot escape the snapshot fence.
+          const sessionKey = normalizeOptionalString(targetRef.sessionKey);
+          const agentId = normalizeOptionalString(targetRef.agentId);
+          const normalizedTarget = { sessionKey: sessionKey ?? targetRef.sessionKey, agentId };
           const expected = authorizedTargets.find(
-            (target) =>
-              target.sessionKey === targetRef.sessionKey && target.agentId === targetRef.agentId,
+            (target) => target.sessionKey === sessionKey && target.agentId === agentId,
           );
-          assertTargetCurrent(targetRef, expected, params.context.getRuntimeConfig());
+          assertTargetCurrent(normalizedTarget, expected, params.context.getRuntimeConfig());
         },
       };
     })(),

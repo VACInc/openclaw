@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { rawDataToString } from "@openclaw/gateway-client/websocket-data";
 /**
  * Session message event indexing and broadcast tests.
  */
@@ -25,12 +26,15 @@ import { appendAssistantMessageToSessionTranscript } from "../config/sessions/tr
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { claimAgentRunContext, clearAgentRunContext } from "../infra/agent-run-registry.js";
-import { rawDataToString } from "../infra/ws.js";
 import { emitSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 import * as transcriptEvents from "../sessions/transcript-events.js";
 import { emitSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { persistUserTurnTranscript } from "../sessions/user-turn-transcript.test-support.js";
 import { ensureProfileForEmail, setAvatar, setDisplayName } from "../state/user-profiles.js";
+import {
+  createOpenClawTestState,
+  type OpenClawTestState,
+} from "../test-utils/openclaw-test-state.js";
 import { resolveCurrentUserProfileDisplay } from "./current-user-profile-display.js";
 import { testState } from "./test-helpers.runtime-state.js";
 import {
@@ -50,6 +54,7 @@ import { createWorkerTranscriptCommitter } from "./worker-environments/transcrip
 installGatewayTestHooks({ scope: "suite" });
 
 const cleanupDirs: string[] = [];
+const cleanupTestStates: OpenClawTestState[] = [];
 const SETUP_RPC_TIMEOUT_MS = 30_000;
 let harness: Awaited<ReturnType<typeof createGatewaySuiteHarness>>;
 let subscribedOperatorWs:
@@ -78,6 +83,9 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
+  for (const state of cleanupTestStates.splice(0).toReversed()) {
+    await state.cleanup();
+  }
   await Promise.all(
     cleanupDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
   );
@@ -943,6 +951,11 @@ describe("session.message websocket events", () => {
 
   test("projects current revisioned sender avatars consistently across live events and RPC reads", async () => {
     const SHARED_REV = 1_800_000_000_000;
+    const profileState = await createOpenClawTestState({
+      label: "session-message-current-profile-display",
+      layout: "state-only",
+    });
+    cleanupTestStates.push(profileState);
     const storePath = await createSessionStoreFile();
     const sessionId = "sess-current-profile-display";
     const sessionKey = "agent:main:current-profile-display";

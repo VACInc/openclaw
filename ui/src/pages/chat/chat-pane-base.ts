@@ -254,6 +254,7 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
       }
     | undefined;
   protected readonly lastVisibleBoardDock = new Map<string, BoardVisibleChatDock>();
+  protected retainedBoardSessionKey = "";
   protected readonly observerDigestHistory = new ObserverDigestHistory();
   protected builtinBoardSnapshot: BoardViewSnapshot | null = null;
   protected builtinBoardSnapshotBase: BoardSnapshot | null = null;
@@ -294,6 +295,12 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
   protected readonly taskSuggestionBusyIds = new Set<string>();
   protected readonly taskSuggestionOperations = new Map<string, symbol>();
   protected taskSuggestionsRequestVersion = 0;
+  protected taskSuggestionCloudProfiles: Array<{ id: string }> = [];
+  protected taskSuggestionCloudProfileGeneration = -1;
+  protected resetTaskSuggestionCloudProfiles(): void {
+    this.taskSuggestionCloudProfiles = [];
+    this.taskSuggestionCloudProfileGeneration = -1;
+  }
   protected sessionSuggestions: SessionSuggestion[] = [];
   protected sessionSuggestionRole: SessionSharingRole | undefined;
   protected readonly sessionSuggestionBusyIds = new Set<string>();

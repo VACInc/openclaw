@@ -371,6 +371,16 @@ export const en: TranslationMap = {
       applying: "Applying update…",
     },
     holdOneHour: "Hold 1 h",
+    confirm: {
+      message: "Installs the available update on the connected Gateway and restarts it.",
+      macMessage:
+        "Hands this update to the OpenClaw Mac app, which installs it and restarts the Gateway it manages.",
+      impact:
+        "Running sessions are interrupted and this Control UI disconnects until the Gateway is back.",
+      versions: "Installed {installed} · Available {available}",
+      action: "Update and restart",
+      macAction: "Update Mac app and restart",
+    },
     target: {
       version: "v{version}",
       commitBehind: "{count} commit behind",
@@ -395,6 +405,10 @@ export const en: TranslationMap = {
       buildTitle: "Current build",
       gatewayVersion: "Gateway version",
       controlUiCommit: "Control UI commit",
+      builtAt: "Built",
+      installedAt: "Installed",
+      installedAtUnknown: "Unknown · recorded after the next successful update",
+      lastCommitAt: "Last commit",
       installKind: "Install type",
       policyTitle: "Update policy",
       channel: "Release channel",
@@ -412,6 +426,12 @@ export const en: TranslationMap = {
       available: "Update available {target}",
       upToDate: "Up to date",
       statusUnavailable: "Update status unavailable",
+      gitCommitAhead: "{count} commit ahead of tracked upstream",
+      gitCommitsAhead: "{count} commits ahead of tracked upstream",
+      gitDiverged: "Diverged · {ahead} ahead, {behind} behind",
+      gitFetchFailed: "Could not fetch the tracked upstream",
+      gitNoUpstream: "No tracked upstream is configured",
+      gitComparisonFailed: "Could not compare this checkout with its tracked upstream",
       updateNow: "Update now",
       updateNowDescription: "Install the available update and restart the Gateway.",
     },
@@ -423,6 +443,8 @@ export const en: TranslationMap = {
       "Update installed but running version did not change — restart may have been blocked.",
     verificationFailedWithVersions:
       "Update installed but running version did not change — restart may have been blocked. Expected v{expectedVersion}, running v{actualVersion}.",
+    verificationFailedWithIdentity:
+      "Update finished, but the running install does not match the expected revision. Expected {expected}, running {actual}.",
     handoffTimeout:
       "Update handoff started, but completion was not reported after reconnect. Run `openclaw update status` for the final result.",
     outcomeUnknown:
@@ -447,6 +469,11 @@ export const en: TranslationMap = {
         "This global install cannot be safely replaced while restarts are disabled and no supervisor is present.",
       restartUnhealthy:
         "The replacement process never became healthy. The previous process stayed up so you can recover.",
+      restartRevisionMismatch:
+        "The restarted Gateway is running a different revision. Check the service install root and retry.",
+      restartRevisionUnavailable:
+        "The restarted Gateway could not report its revision. Check the service install root and logs before retrying.",
+      alreadyCurrent: "This checkout is already at its tracked upstream revision.",
       managedServiceHandoffAlreadyRunning:
         "Another managed update is already running. Wait for it to complete, then refresh update status.",
       doctorFailed: "Doctor repair failed. Run `openclaw doctor --non-interactive` and retry.",
@@ -548,6 +575,11 @@ export const en: TranslationMap = {
       removeStalePromptTitle: "Remove {count} stale pairings?",
       removeStalePromptTitleOne: "Remove 1 stale pairing?",
       removeStalePromptBody: "Affected clients re-pair silently on their next connection.",
+      rejectDevicePromptTitle: "Reject this device pairing request?",
+      rejectNodePromptTitle: "Reject this node pairing request?",
+      rejectPromptBody: "The client must send a new pairing request before it can connect.",
+      revokePromptTitle: "Revoke the {role} token?",
+      revokePromptBody: "This token stops working immediately and cannot be restored.",
       gateway: "gateway",
       unpaired: "unpaired",
       unknownClient: "unknown client",
@@ -683,10 +715,16 @@ export const en: TranslationMap = {
     messagePlaceholder: "What should this session work on?",
     readingAttachment: "Reading attachment",
     start: "Start session",
+    startInTerminal: "Start in terminal",
     starting: "Starting…",
     createFailed: "Couldn't create the session.",
+    cloudOwnershipLost:
+      "Another window took over this cloud session. Check recent sessions before starting this task again.",
     createOutcomeUnknown:
       "The Gateway changed while this session was starting. Check recent sessions before starting this task again.",
+    cliAgentsGroup: "CLI agents",
+    cloudSetupInterrupted:
+      "This cloud session's setup was interrupted. Check recent sessions before starting this task again.",
     catalogUnavailable: "This session target is unavailable.",
   },
   dashboardsPage: {
@@ -866,9 +904,11 @@ export const en: TranslationMap = {
     archiveSession: "Archive session",
     archiveSessionCount: "Archive {count}",
     restoreSession: "Restore session",
+    restoreSessionCount: "Restore {count}",
     stopCloudWorker: "Stop cloud worker…",
     stopCloudWorkerConfirm: 'Stop the cloud worker for "{session}"?',
     stopCloudWorkerConfirmAction: "Stop worker",
+    cloudWorkerStopResult: 'Cloud worker for "{session}" is {state}.',
     deleteSessionMenu: "Delete…",
     deleteSessionCount: "Delete {count}…",
     deleteSessionConfirm: 'Delete "{session}" and its transcript?',
@@ -1817,6 +1857,8 @@ export const en: TranslationMap = {
     detached: "detached",
     dockBottom: "Dock to bottom",
     dockRight: "Dock to right",
+    dockMain: "Fill main content area",
+    dockMode: "Terminal panel position",
     unavailable: "The terminal is not available on this gateway.",
     uploadTooLarge: "File exceeds the 16 MiB terminal upload limit: {file}",
     uploadUnsafeCmdPath: "Cannot safely insert an uploaded path containing % or ! into cmd.exe",
@@ -1852,6 +1894,8 @@ export const en: TranslationMap = {
     start: "Start browser",
     empty: "No open tabs. Enter a URL above to browse.",
     noChatTarget: "Open a chat session first so the annotation has somewhere to go.",
+    annotationLimitReached:
+      "Remove a browser annotation before retrying (maximum 4 cards and 8,000 characters of generated context).",
     inspectUnavailable: "Element inspection is disabled (browser.evaluateEnabled=false).",
     annotationSent: "Annotation added to the chat composer.",
     errors: {
@@ -1876,6 +1920,35 @@ export const en: TranslationMap = {
       elementDetail:
         "Marked element (page-reported): {descriptor} — {width}×{height}px at ({x}, {y}).",
       outro: "Please look at the marked area and tell me what you make of it.",
+    },
+  },
+  desktop: {
+    title: "Desktop",
+    toggle: "Toggle desktop panel",
+    hide: "Hide desktop panel",
+    resize: "Resize desktop panel",
+    dockBottom: "Dock to bottom",
+    dockRight: "Dock to right",
+    pickerTitle: "Cloud worker desktops",
+    refresh: "Refresh",
+    refreshing: "Refreshing…",
+    loading: "Loading worker environments…",
+    empty:
+      "No desktop-capable worker environments exist. Enable one with desktop: true in a crabbox cloud-worker profile.",
+    connect: "Connect",
+    connecting: "Connecting to desktop…",
+    viewOnly: "View only",
+    takeControl: "Take control",
+    controlling: "Controlling · view-only for others",
+    disconnect: "Disconnect",
+    reconnect: "Reconnect",
+    controlTaken: "Another operator took control",
+    disconnected: "Desktop disconnected: {reason}",
+    closeCode: "connection closed with code {code}",
+    unknownReason: "unknown reason",
+    errors: {
+      listFailed: "Could not load worker environments: {error}",
+      securityFailed: "Desktop security negotiation failed: {reason}",
     },
   },
   routeTitles: {
@@ -1950,7 +2023,7 @@ export const en: TranslationMap = {
     lobsterdex: "Every lobster palette that has visited this browser.",
     automation: "Commands, hooks, automations, and plugins.",
     mcp: "MCP servers, auth, tools, and diagnostics.",
-    memory: "Memory engine, backend, search, and dreaming.",
+    memory: "Memory engine, search, and dreaming.",
     talk: "Realtime voice: provider, model, and speaker voice.",
     infrastructure: "Gateway, browser, node host, discovery, and ACP settings.",
     labs: "Experimental agent and tool capabilities.",
@@ -2450,18 +2523,6 @@ export const en: TranslationMap = {
         "The memory slot points at this plugin, but the plugin itself is disabled, so memory is not running.",
       enable: "Enable",
     },
-    backend: {
-      title: "Backend",
-      description: "How memory is stored and retrieved for the selected engine.",
-      rowTitle: "Retrieval backend",
-      builtin: "Built-in",
-      qmd: "QMD",
-      invalid: "Invalid configured value",
-      builtinHint: "Memory files are indexed and searched by OpenClaw itself.",
-      qmdHint: "Retrieval is delegated to QMD. Its settings appear below.",
-      invalidHint:
-        "The configured memory.backend value is invalid. Choose a backend or reset it to use the default.",
-    },
     addons: {
       title: "Add-ons",
       description:
@@ -2743,10 +2804,20 @@ export const en: TranslationMap = {
       description:
         "Drop heavyweight default tools that smaller local models handle poorly, leaving a shorter set they can use reliably.",
     },
+    cliAgents: {
+      title: "CLI agents",
+      description:
+        "Show external CLI session engines in the new-session model picker when their plugins support creating sessions.",
+    },
     auditMessages: {
       title: "Message audit metadata",
       description:
         "Record content-free metadata for direct conversations in the audit ledger. Message content is never stored.",
+    },
+    workerDesktop: {
+      title: "Cloud Worker Desktop",
+      description:
+        "Watch and control desktop-capable cloud worker environments live from a Desktop panel; requires crabbox profiles with desktop: true.",
     },
   },
   aboutPage: {
@@ -3595,6 +3666,7 @@ export const en: TranslationMap = {
       plugins: "Plugins",
       settings: "Settings",
       agents: "Agents",
+      desktop: "Desktop",
     },
     descriptions: {
       verboseMode: "Toggle verbose mode.",
@@ -4547,13 +4619,21 @@ export const en: TranslationMap = {
       terminalUnavailable: "Terminal opening is unavailable for this session.",
     },
     taskSuggestions: {
-      eyebrow: "Suggested follow-up",
+      eyebrow: "Suggested task · in {repo}",
       start: "Start in worktree",
+      startWorktree: "Start with worktree",
+      startLocal: "Start locally",
+      startCloud: "Send to cloud · {profile}",
+      startCloudGeneric: "Send to cloud",
+      fixInSession: "Fix in this session",
+      noCloudConfigured: "No cloud environment configured",
+      showInstructions: "Show instructions",
+      moreActions: "More ways to start this task",
       starting: "Starting…",
       dismiss: "Dismiss {title}",
       project: "Project",
       instructions: "Instructions",
-      adminRequired: "Administrator access is required to create a worktree from this project.",
+      adminRequired: "Administrator access is required to start suggested tasks.",
     },
     pullRequests: {
       linkLabel: "Pull request #{number}: {title}",
@@ -4826,6 +4906,7 @@ export const en: TranslationMap = {
       askInSideChat: "Ask in side chat",
       rewind: "Rewind",
       rewindConfirm: "Rewind to before this message?",
+      dontAskAgain: "Don't ask again",
       rewindToHere: "Rewind to here",
       rewindUnavailable: "Rewind is unavailable while the agent is working",
       forkUnavailable: "Fork is unavailable while the agent is working",
@@ -5010,8 +5091,17 @@ export const en: TranslationMap = {
       fallbackAttempts: "Attempts: {attempts}",
       cancelReply: "Cancel reply",
       attachmentPreview: "Attachment preview",
+      browserAnnotation: "Browser annotation",
+      browserAnnotationPreview: "Browser annotation preview",
+      browserAnnotationRegion: "{count} marked region",
+      browserAnnotationRegions: "{count} marked regions",
+      browserAnnotationInspectedElement: "Element inspected",
+      browserAnnotationRemoved: "Browser annotation removed.",
+      browserAnnotationUndoUnavailable:
+        "Undo is unavailable because the browser annotation limit has been reached.",
       compactRecommendedContext: "Compact recommended session context",
       removeAttachment: "Remove attachment",
+      removeBrowserAnnotation: "Remove browser annotation: {name}",
       addAttachment: "Add attachment",
       attachPhoto: "Photo",
       attachFile: "Attach file",
@@ -5071,7 +5161,7 @@ export const en: TranslationMap = {
         usageCredits: "Usage credits",
         budgetValue: "{used} of {limit}",
         limitFiveHour: "5-hour limit",
-        limitWeekly: "Weekly · all models",
+        limitWeekly: "Weekly",
         limitDaily: "Daily limit",
         limitHours: "{hours}-hour limit",
       },
@@ -5130,6 +5220,7 @@ export const en: TranslationMap = {
     },
     attachments: {
       attachedFile: "Attached file",
+      showInTextField: "Show in text field",
       outsideAllowedFolders: "Outside allowed folders",
       unavailable: "Unavailable",
       checking: "Checking...",
