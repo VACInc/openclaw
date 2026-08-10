@@ -188,8 +188,6 @@ export type RunCliAgentParams = {
   bootstrapPromptWarningSignature?: string;
   bootstrapContextMode?: BootstrapContextMode;
   bootstrapContextRunKind?: BootstrapContextRunKind;
-  /** Current-turn image admission already ran, even when it produced no native images. */
-  currentTurnImagesPrepared?: true;
   images?: ImageContent[];
   imageOrder?: PromptImageOrderEntry[];
   /** Ordered facts represented by attachment text in the current prompt. */
