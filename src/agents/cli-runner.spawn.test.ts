@@ -701,6 +701,11 @@ describe("runCliAgent spawn path", () => {
         execNode: "node-a",
       },
     });
+    (
+      context.params as typeof context.params & {
+        currentTurnImagesPrepared?: true;
+      }
+    ).currentTurnImagesPrepared = true;
     context.params.images = [];
     context.params.imageOrder = [];
     context.params.media = [{ kind: "image", path: "/tmp/already-handled.png" }];

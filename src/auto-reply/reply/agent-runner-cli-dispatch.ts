@@ -34,6 +34,10 @@ import {
 } from "./agent-event-bridge.js";
 import { resolveAgentLifecycleTerminalMetadata } from "./agent-lifecycle-terminal.js";
 
+type RunCliAgentInternalParams = RunCliAgentParams & {
+  currentTurnImagesPrepared?: true;
+};
+
 type AgentEventBridge = {
   unsubscribe: () => void;
   drain: () => Promise<void>;
@@ -422,7 +426,7 @@ type RunCliAgentWithLifecycleParams = {
   runId: string;
   lifecycleGeneration?: string;
   provider: string;
-  runParams: RunCliAgentParams;
+  runParams: RunCliAgentInternalParams;
   startedAt?: number;
   emitLifecycleTerminal?: boolean;
   onAgentRunStart?: () => void;

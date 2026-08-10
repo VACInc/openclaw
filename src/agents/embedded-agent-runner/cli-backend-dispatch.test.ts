@@ -420,6 +420,7 @@ describe("runEmbeddedAgentViaCliBackendIfEligible execution", () => {
 
     expect(runCliAgent.mock.calls[0]?.[0]).toMatchObject({
       prompt: "recall prompt",
+      currentTurnImagesPrepared: true,
       images,
       imageOrder,
       media,
