@@ -518,23 +518,6 @@ function mockSingleSuccessfulAttempt() {
   );
 }
 
-function mockSingleErrorAttempt(params: {
-  errorMessage: string;
-  provider?: string;
-  model?: string;
-}) {
-  runEmbeddedAttemptMock.mockResolvedValueOnce(
-    makeErrorAttempt(
-      {
-        errorMessage: params.errorMessage,
-        ...(params.provider ? { provider: params.provider } : {}),
-        ...(params.model ? { model: params.model } : {}),
-      },
-      { currentAttempt: true },
-    ),
-  );
-}
-
 function mockRepeatedErrorAttempts(params: {
   errorMessage: string;
   provider?: string;
