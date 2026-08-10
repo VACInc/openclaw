@@ -10,11 +10,11 @@ import {
   type GatewayClientMode,
   type GatewayClientName,
 } from "../../packages/gateway-protocol/src/client-info.js";
-import type { GatewayServerCapability } from "../../packages/gateway-protocol/src/server-capabilities.js";
 import {
   ConnectErrorDetailCodes,
   readConnectErrorDetailCode,
 } from "../../packages/gateway-protocol/src/connect-error-details.js";
+import type { GatewayServerCapability } from "../../packages/gateway-protocol/src/server-capabilities.js";
 import {
   MIN_CLIENT_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
