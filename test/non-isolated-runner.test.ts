@@ -204,9 +204,6 @@ it("clears the session suspension shutdown fence between files", async () => {
     const sessionSuspensionPath = JSON.stringify(
       path.join(repoRoot, "src", "agents", "session-suspension.ts"),
     );
-    const sessionSuspensionTestSupportPath = JSON.stringify(
-      path.join(repoRoot, "src", "agents", "session-suspension.test-support.ts"),
-    );
     const sharedVitestConfigPath = JSON.stringify(
       path.join(repoRoot, "test", "vitest", "vitest.shared.config.ts"),
     );
@@ -219,11 +216,11 @@ it("clears the session suspension shutdown fence between files", async () => {
       "a-seed.test.ts",
       [
         `import { fenceSessionSuspensionWritesForGatewayShutdown } from ${sessionSuspensionPath};`,
-        `import { isSessionSuspensionWriteCleanupActiveForTest } from ${sessionSuspensionTestSupportPath};`,
         'import { expect, it } from "vitest";',
+        'const testApi = (globalThis as Record<PropertyKey, { isSessionSuspensionWriteCleanupActiveForTest(): boolean }>)[Symbol.for("openclaw.sessionSuspensionTestApi")];',
         'it("seeds the real process-global shutdown fence", () => {',
         "  fenceSessionSuspensionWritesForGatewayShutdown();",
-        "  expect(isSessionSuspensionWriteCleanupActiveForTest()).toBe(true);",
+        "  expect(testApi?.isSessionSuspensionWriteCleanupActiveForTest()).toBe(true);",
         "});",
         "",
       ].join("\n"),
@@ -231,10 +228,11 @@ it("clears the session suspension shutdown fence between files", async () => {
     await write(
       "b-observe.test.ts",
       [
-        `import { isSessionSuspensionWriteCleanupActiveForTest } from ${sessionSuspensionTestSupportPath};`,
+        `import ${sessionSuspensionPath};`,
         'import { expect, it } from "vitest";',
+        'const testApi = (globalThis as Record<PropertyKey, { isSessionSuspensionWriteCleanupActiveForTest(): boolean }>)[Symbol.for("openclaw.sessionSuspensionTestApi")];',
         'it("starts without real suspension state from the previous file", () => {',
-        "  expect(isSessionSuspensionWriteCleanupActiveForTest()).toBe(false);",
+        "  expect(testApi?.isSessionSuspensionWriteCleanupActiveForTest()).toBe(false);",
         "});",
         "",
       ].join("\n"),
