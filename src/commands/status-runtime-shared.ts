@@ -1,7 +1,6 @@
 // Shared runtime probes used by status text and JSON commands.
 // Heavy modules stay lazily loaded so fast status output avoids security/provider/gateway costs.
 
-import { GATEWAY_SERVER_CAPS } from "../../packages/gateway-protocol/src/server-capabilities.js";
 import { resolveDefaultAgentDir } from "../agents/agent-scope.js";
 import { resolveAgentHarnessPolicy } from "../agents/harness/policy.js";
 import { resolveModelAuthLabel } from "../agents/model-auth-label.js";
@@ -16,6 +15,7 @@ import {
   shouldUseCodexSyntheticUsageForRuntime,
   resolveUsageCredentialType,
 } from "../status/codex-synthetic-usage.js";
+import { resolveLiveHealthGatewayCallOptions } from "./health-rpc.js";
 import type { HealthSummary } from "./health.js";
 import { getDaemonStatusSummary, getNodeDaemonStatusSummary } from "./status.daemon.js";
 
@@ -112,6 +112,12 @@ type StatusUsageSummaryOptions = {
   agentDir?: string;
 };
 
+type StatusGatewayCallOverrides = {
+  url: string;
+  token?: string;
+  password?: string;
+};
+
 /** Loads provider usage for status output, defaulting to the config's default agent directory. */
 export async function resolveStatusUsageSummary(params: StatusUsageSummaryOptions) {
   const { loadProviderUsageSummary } = await loadProviderUsage();
@@ -143,21 +149,17 @@ export async function loadStatusProviderUsageModule() {
 export async function resolveStatusGatewayHealth(params: {
   config: OpenClawConfig;
   timeoutMs?: number;
+  callOverrides?: StatusGatewayCallOverrides;
 }) {
   const { callGateway } = await loadGatewayCallModule();
-  const gatewayOwnsLiveHealthDeadline = params.timeoutMs === undefined;
   return await callGateway<HealthSummary>({
     method: "health",
     params: { probe: true },
     // Deep status requests the same variable-duration all-account health work as
     // verbose health. Rolling upgrades stay bounded until the Gateway advertises ownership.
-    timeoutMs: gatewayOwnsLiveHealthDeadline ? null : params.timeoutMs,
-    ...(gatewayOwnsLiveHealthDeadline
-      ? {
-          unboundedRequestCapability: GATEWAY_SERVER_CAPS.HEALTH_BOUNDED_CHANNEL_HOOKS,
-        }
-      : {}),
+    ...resolveLiveHealthGatewayCallOptions(params.timeoutMs),
     config: params.config,
+    ...params.callOverrides,
   });
 }
 
@@ -167,30 +169,13 @@ export async function resolveStatusGatewayHealthSafe(params: {
   timeoutMs?: number;
   gatewayReachable: boolean;
   gatewayProbeError?: string | null;
-  callOverrides?: {
-    url: string;
-    token?: string;
-    password?: string;
-  };
+  callOverrides?: StatusGatewayCallOverrides;
 }) {
   if (!params.gatewayReachable) {
     // Preserve the probe error so status-all can explain why health was not called.
     return { error: params.gatewayProbeError ?? "gateway unreachable" };
   }
-  const { callGateway } = await loadGatewayCallModule();
-  const gatewayOwnsLiveHealthDeadline = params.timeoutMs === undefined;
-  return await callGateway<HealthSummary>({
-    method: "health",
-    params: { probe: true },
-    timeoutMs: gatewayOwnsLiveHealthDeadline ? null : params.timeoutMs,
-    ...(gatewayOwnsLiveHealthDeadline
-      ? {
-          unboundedRequestCapability: GATEWAY_SERVER_CAPS.HEALTH_BOUNDED_CHANNEL_HOOKS,
-        }
-      : {}),
-    config: params.config,
-    ...params.callOverrides,
-  }).catch((err: unknown) => ({ error: String(err) }));
+  return await resolveStatusGatewayHealth(params).catch((err: unknown) => ({ error: String(err) }));
 }
 
 /** Reads gateway delivery diagnostics when reachable, returning null on failures. */
@@ -199,11 +184,7 @@ export async function resolveStatusGatewayDiagnosticsSafe(params: {
   timeoutMs?: number;
   gatewayReachable: boolean;
   type?: string;
-  callOverrides?: {
-    url: string;
-    token?: string;
-    password?: string;
-  };
+  callOverrides?: StatusGatewayCallOverrides;
 }) {
   if (!params.gatewayReachable) {
     return null;

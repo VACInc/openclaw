@@ -2195,41 +2195,7 @@ describe("callGateway error details", () => {
   it("disables the request and wrapper deadline when timeout is null", async () => {
     setLocalLoopbackGatewayConfig();
     vi.useFakeTimers();
-    let releaseRequest: (() => void) | undefined;
-
-    testing.setDepsForTests({
-      createGatewayClient: (opts) =>
-        ({
-          async request(
-            method: string,
-            params: unknown,
-            requestOpts?: { expectFinal?: boolean; timeoutMs?: number | null },
-          ) {
-            lastRequestOptions = { method, params, opts: requestOpts };
-            await new Promise<void>((resolve) => {
-              releaseRequest = resolve;
-            });
-            return { ok: true };
-          },
-          start() {
-            opts.onHelloOk?.({
-              features: {
-                methods: helloMethods ?? [],
-                events: [],
-              },
-            } as unknown as Parameters<NonNullable<typeof opts.onHelloOk>>[0]);
-          },
-          stop() {},
-          async stopAndWait() {},
-        }) as never,
-      getRuntimeConfig: getRuntimeConfig as unknown as () => OpenClawConfig,
-      loadOrCreateDeviceIdentity: () => deviceIdentityState.value,
-      loadDeviceAuthToken: loadDeviceAuthTokenMock,
-      resolveGatewayPort: resolveGatewayPort as unknown as (
-        cfg?: OpenClawConfig,
-        env?: NodeJS.ProcessEnv,
-      ) => number,
-    });
+    const releaseRequest = installDeferredRequestGateway([]);
 
     let settled = false;
     const promise = callGateway({ method: "health", timeoutMs: null }).then((result) => {
@@ -2243,9 +2209,6 @@ describe("callGateway error details", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(settled).toBe(false);
 
-    if (!releaseRequest) {
-      throw new Error("Expected request release callback to be initialized");
-    }
     releaseRequest();
     await expect(promise).resolves.toEqual({ ok: true });
   });

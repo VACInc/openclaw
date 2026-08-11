@@ -1,6 +1,5 @@
 /** Collects and renders gateway health for channels, agents, plugins, and sessions. */
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
-import { GATEWAY_SERVER_CAPS } from "../../packages/gateway-protocol/src/server-capabilities.js";
 import { styleHealthChannelLine } from "../../packages/terminal-core/src/health-style.js";
 import { isRich } from "../../packages/terminal-core/src/theme.js";
 import { resolveChannelDefaultAccountId } from "../channels/plugins/helpers.js";
@@ -45,6 +44,7 @@ import {
   gatewayProbeResultWasRateLimited,
 } from "./gateway-health-auth-diagnostic.js";
 import { formatHealthChannelLines } from "./health-format.js";
+import { resolveLiveHealthGatewayCallOptions } from "./health-rpc.js";
 import { logGatewayConnectionDetails } from "./status.gateway-connection.js";
 export { formatHealthChannelLines } from "./health-format.js";
 export type { HealthSummary } from "../gateway/health/types.js";
@@ -261,18 +261,14 @@ export async function healthCommand(
         enabled: opts.json !== true,
       },
       async () => {
-        const gatewayOwnsLiveHealthDeadline = opts.verbose && opts.timeoutMs === undefined;
         return await callGateway<HealthSummary>({
           method: "health",
           params: opts.verbose ? { probe: true } : undefined,
           // Live all-account work has account-dependent duration. Keep connection
           // startup and rolling upgrades bounded until the Gateway advertises ownership.
-          timeoutMs: gatewayOwnsLiveHealthDeadline ? null : opts.timeoutMs,
-          ...(gatewayOwnsLiveHealthDeadline
-            ? {
-                unboundedRequestCapability: GATEWAY_SERVER_CAPS.HEALTH_BOUNDED_CHANNEL_HOOKS,
-              }
-            : {}),
+          ...(opts.verbose
+            ? resolveLiveHealthGatewayCallOptions(opts.timeoutMs)
+            : { timeoutMs: opts.timeoutMs }),
           config: cfg,
           token: opts.token,
           password: opts.password,
