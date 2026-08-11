@@ -5,6 +5,7 @@ import { resolveAgentModelFallbackValues } from "../../config/model-input.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { withPluginRuntimeRegistryScope } from "../../plugins/runtime/gateway-request-scope.js";
 import { resolveUserPath } from "../../utils.js";
+import { prepareSystemAgentRunAdmission } from "../admitted-run-context.js";
 import { normalizeOptionalAgentRuntimeId } from "../agent-runtime-id.js";
 import {
   resolveAgentDir,
@@ -103,8 +104,21 @@ export async function compactNativeCliSession(params: {
     };
   }
   const { runCliAgent } = await import("../cli-runner.js");
+  const runId = `${params.compactParams.runId ?? params.compactParams.sessionId}:native-compact`;
+  const sessionAgentId = resolveSessionAgentIds({
+    sessionKey: params.compactParams.sessionKey,
+    config: params.compactParams.config,
+    agentId: params.compactParams.agentId,
+  }).sessionAgentId;
+  const preparedRunAdmission = prepareSystemAgentRunAdmission(
+    params.compactParams.config ?? {},
+    runId,
+    sessionAgentId,
+    "agents.native-compaction",
+  );
   try {
     await runCliAgent({
+      preparedRunAdmission,
       sessionId: params.compactParams.sessionId,
       sessionKey: params.compactParams.sessionKey,
       sessionFile: params.compactParams.sessionFile,
@@ -119,7 +133,7 @@ export async function compactNativeCliSession(params: {
       model: params.compactParams.model,
       thinkLevel: params.compactParams.thinkLevel,
       timeoutMs: resolveCompactionTimeoutMs(params.compactParams.config),
-      runId: `${params.compactParams.runId ?? params.compactParams.sessionId}:native-compact`,
+      runId,
       cliSessionId,
       ...(cliSessionBinding ? { cliSessionBinding } : {}),
       ...(cliSessionBinding?.authProfileId
@@ -142,6 +156,8 @@ export async function compactNativeCliSession(params: {
       compacted: false,
       reason: `CLI backend "${runtime}" failed to compact its native session: ${formatErrorMessage(err)}`,
     };
+  } finally {
+    preparedRunAdmission.close();
   }
   return {
     ok: true,

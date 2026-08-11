@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CliBackendPlugin } from "../../plugins/cli-backend.types.js";
+import type { PreparedAgentRunAdmission } from "../admitted-run-context.js";
 import { testing as cliBackendsTesting } from "../cli-backends.test-support.js";
 
 const { runCliAgentMock } = vi.hoisted(() => ({
-  runCliAgentMock: vi.fn(async () => ({
+  runCliAgentMock: vi.fn(async (_params: { preparedRunAdmission?: PreparedAgentRunAdmission }) => ({
     meta: {
       durationMs: 1,
       agentMeta: { sessionId: "native-session", provider: "claude-cli", model: "opus" },
@@ -99,6 +100,11 @@ describe("native CLI manual compaction", () => {
     });
     expect(runCliAgentMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        preparedRunAdmission: expect.objectContaining({
+          operationalRunInstance: expect.objectContaining({
+            runId: "openclaw-session:native-compact",
+          }),
+        }),
         prompt: "/compact keep decisions",
         provider: "claude-cli",
         modelProvider: "anthropic",
@@ -113,6 +119,13 @@ describe("native CLI manual compaction", () => {
         disableCliLiveSession: true,
         allowEmptyAssistantReplyAsSilent: true,
       }),
+    );
+    const preparedRunAdmission = runCliAgentMock.mock.calls[0]?.[0]?.preparedRunAdmission;
+    if (!preparedRunAdmission) {
+      throw new Error("native compaction did not prepare run admission");
+    }
+    await expect(preparedRunAdmission.admit("embedded")).rejects.toThrow(
+      "prepared execution context is already closed",
     );
   });
 
