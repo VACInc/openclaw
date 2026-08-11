@@ -923,8 +923,9 @@ test("sessions.compact targets the persisted native CLI session", async () => {
   });
   expect(
     resolveManualCompactionCliTarget({ provider: selectedModel.provider, entry: storedEntry, cfg }),
-  ).toEqual({
+  ).toMatchObject({
     agentHarnessId: "claude-cli",
+    cliSessionBinding: { sessionId: "native-claude-session" },
     cliSessionId: "native-claude-session",
   });
 
@@ -941,6 +942,7 @@ test("sessions.compact targets the persisted native CLI session", async () => {
     expect(embeddedRunMock.compactEmbeddedAgentSession).toHaveBeenCalledWith(
       expect.objectContaining({
         agentHarnessId: "claude-cli",
+        cliSessionBinding: expect.objectContaining({ sessionId: "native-claude-session" }),
         cliSessionId: "native-claude-session",
         trigger: "manual",
       }),
