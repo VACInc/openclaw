@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { expectDefined } from "@openclaw/normalization-core";
+import { MAX_TIMER_TIMEOUT_MS } from "@openclaw/normalization-core/number-coercion";
 import {
   type WorkerAdmissionHandshake,
   type WorkerConnectParams,
@@ -49,6 +50,10 @@ import {
   type WorkerCredentialBinding,
   type WorkerCredentialDeliveryClaim,
 } from "./credential.js";
+import {
+  registerWorkerInferenceSessionDrain,
+  type WorkerInferenceSessionDrain,
+} from "./inference-control-internal.js";
 import type { WorkerInferenceStore } from "./inference-store.js";
 import {
   createWorkerInferenceManager,
@@ -56,11 +61,8 @@ import {
   type WorkerInferenceSink,
 } from "./inference.js";
 import type { WorkerLiveEventApplicationResult, WorkerLiveEventReceiver } from "./live-events.js";
-import {
-  boundedWorkerError as boundedError,
-  inspectionStatus,
-  requireWorkerLease,
-} from "./service-validation.js";
+import type { WorkerDesktopLaunchResult, WorkerDesktopObserveResult } from "./service-contract.js";
+import { requireWorkerLeaseStatus, requireWorkerLease } from "./service-validation.js";
 import type { WorkerEnvironmentState } from "./state.js";
 import {
   type WorkerEnvironmentRecord,
@@ -70,6 +72,7 @@ import {
 } from "./store.js";
 import type { WorkerTunnelRequest } from "./tunnel-contract.js";
 import type { WorkerTunnelHandle, WorkerTunnelManager } from "./tunnel.js";
+import { boundedWorkerError as boundedError } from "./worker-error.js";
 
 type WorkerEnvironmentServiceErrorCode =
   | "profile_not_found"
@@ -77,6 +80,9 @@ type WorkerEnvironmentServiceErrorCode =
   | "environment_not_found"
   | "invalid_profile"
   | "invalid_state"
+  | "desktop_app_not_found"
+  | "unsupported_platform"
+  | "launcher_failure"
   | "provider_failure"
   | "bootstrap_failure";
 
@@ -92,6 +98,20 @@ class WorkerEnvironmentServiceError extends Error {
 const serviceError = (code: WorkerEnvironmentServiceErrorCode, message: string) =>
   new WorkerEnvironmentServiceError(code, message);
 const ORPHANED_LEASE_ERROR = "Worker provider no longer recognizes the lease";
+// One poisoned SSH attempt must not hold every later dispatch on the same owner epoch forever.
+const TUNNEL_START_TIMEOUT_MS = 3 * 60_000;
+
+function requireProviderProvisionTimeoutMs(timeoutMs: number | undefined): number | undefined {
+  if (timeoutMs === undefined) {
+    return undefined;
+  }
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMER_TIMEOUT_MS) {
+    throw new WorkerProviderError(
+      `Worker provider provision timeout must be an integer from 1 through ${MAX_TIMER_TIMEOUT_MS}ms`,
+    );
+  }
+  return timeoutMs;
+}
 
 function workerEnvironmentIdempotencyDigest(idempotencyKey: string): string {
   return createHash("sha256").update(idempotencyKey).digest("hex");
@@ -232,6 +252,9 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     now,
     ...(options.inferenceStore ? { store: options.inferenceStore } : {}),
   });
+  const inferenceWithDrain = inference as typeof inference & {
+    beginSessionDrain(sessionId: string): WorkerInferenceSessionDrain;
+  };
   let reconcileInFlight: Promise<void> | undefined;
   let interval: ReturnType<typeof setInterval> | undefined;
   let unsubscribeSessionIdentityMutation: (() => void) | undefined;
@@ -312,15 +335,27 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
 
   const isTerminalLiveEvent = (request: WorkerLiveEventParams): boolean =>
     request.event.kind === "lifecycle" &&
-    (request.event.payload.phase === "end" ||
+    (request.event.payload.phase === "finishing" ||
+      request.event.payload.phase === "end" ||
       (request.event.payload.phase === "error" &&
         (request.event.payload.aborted === true ||
           request.event.payload.fallbackExhaustedFailure === true)));
 
-  const project = (record: WorkerEnvironmentRecord) => ({
-    ...record,
-    tunnelStatus: tunnels?.status(record.environmentId) ?? ("stopped" as const),
-  });
+  const project = (record: WorkerEnvironmentRecord) => {
+    const desktopAvailable =
+      inState(record, "ready", "idle", "attached") && record.desktop !== null;
+    return {
+      ...record,
+      ...((record.state === "failed" || record.state === "orphaned") && record.lastError
+        ? { error: boundedError(record.lastError) }
+        : {}),
+      desktopAvailable,
+      desktopApps: desktopAvailable
+        ? (record.desktop?.apps?.map((app) => app.id).toSorted() ?? [])
+        : [],
+      tunnelStatus: tunnels?.status(record.environmentId) ?? ("stopped" as const),
+    };
+  };
 
   const move = (
     r: WorkerEnvironmentRecord,
@@ -362,7 +397,11 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
   const withLock = <T>(environmentId: string, task: () => Promise<T>) =>
     trackOperation(operations.enqueue(environmentId, task));
 
-  const callProvider = async <T>(environmentId: string, run: () => Promise<T>): Promise<T> => {
+  const callProvider = async <T>(
+    environmentId: string,
+    run: () => Promise<T>,
+    timeoutMs?: number,
+  ): Promise<T> => {
     let signalStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       signalStarted = resolve;
@@ -377,7 +416,7 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     // Timeout completion must not release provider ownership or permit replay/destroy overlap.
     return await withTimeout(
       operation,
-      options.providerCallTimeoutMs ?? 300_000,
+      options.providerCallTimeoutMs ?? timeoutMs ?? 300_000,
       "Worker provider operation",
     );
   };
@@ -515,6 +554,7 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     return move(destroying, "failed", {
       leaseId: null,
       sshEndpoint: null,
+      sharedHost: false,
       lastError: destroying.lastError ?? "Worker bootstrap failed after provider teardown",
     });
   };
@@ -546,10 +586,13 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
         destroying,
         new Error(`${detail}; provider teardown pending: ${boundedError(cleanupError)}`),
       );
-      throw serviceError("bootstrap_failure", "Worker bootstrap failed; teardown is pending");
+      throw serviceError(
+        "bootstrap_failure",
+        `Worker bootstrap failed; teardown is pending: ${detail}`,
+      );
     }
     finishProvenDestroy(destroying);
-    throw serviceError("bootstrap_failure", "Worker bootstrap failed");
+    throw serviceError("bootstrap_failure", `Worker bootstrap failed: ${detail}`);
   };
 
   const finishBootstrap = async (
@@ -605,24 +648,36 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     let lease: WorkerLease;
     try {
       const profile = requireWorkerProfile(record.profileSnapshot.settings);
+      const providerTimeoutMs =
+        options.providerCallTimeoutMs === undefined
+          ? requireProviderProvisionTimeoutMs(provider.resolveProvisionTimeoutMs?.(profile))
+          : undefined;
       lease = requireWorkerLease(
-        await callProvider(record.environmentId, () =>
-          provider.provision(profile, record.provisionOperationId),
+        await callProvider(
+          record.environmentId,
+          () => provider.provision(profile, record.provisionOperationId),
+          providerTimeoutMs,
         ),
       );
     } catch (error) {
+      const detail = boundedError(error);
       if (
         error instanceof WorkerProviderError ||
         (error instanceof WorkerEnvironmentServiceError && error.code === "invalid_profile")
       ) {
-        move(record, "failed", { lastError: boundedError(error) });
-        throw serviceError("invalid_profile", "Worker provider rejected profile");
+        move(record, "failed", { lastError: detail });
+        throw serviceError("invalid_profile", `Worker provider rejected profile: ${detail}`);
       }
       saveError(record, error);
-      throw serviceError("provider_failure", "Worker provider operation failed");
+      throw serviceError("provider_failure", `Worker provider operation failed: ${detail}`);
     }
     // A timeout can happen after allocation; retain the same operation id for safe replay.
-    const patch = { leaseId: lease.leaseId, sshEndpoint: lease.ssh };
+    const patch = {
+      leaseId: lease.leaseId,
+      sshEndpoint: lease.ssh,
+      sharedHost: lease.sharedHost === true,
+      desktop: lease.desktop ?? null,
+    };
     const bootstrapping = move(record, "bootstrapping", patch);
     if (record.destroyRequestedAtMs !== null) {
       return bootstrapping;
@@ -651,8 +706,12 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
         // must happen first because the previous response may have been lost after allocation.
         installation = await prepareInstallation(record);
       } catch (error) {
-        move(record, "failed", { lastError: boundedError(error) });
-        throw serviceError("bootstrap_failure", "Worker installation preparation failed");
+        const detail = boundedError(error);
+        move(record, "failed", { lastError: detail });
+        throw serviceError(
+          "bootstrap_failure",
+          `Worker installation preparation failed: ${detail}`,
+        );
       }
     }
     const provisioning = record.state === "requested" ? move(record, "provisioning") : record;
@@ -776,22 +835,32 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
       }
       return;
     }
-    const status = await callProvider(record.environmentId, () =>
+    const inspection = await callProvider(record.environmentId, () =>
       provider.inspect(lifecycleLease(record, leaseId)),
     )
-      .then(inspectionStatus)
+      .then(requireWorkerLeaseStatus)
       .catch((error: unknown) => {
         saveError(record, error);
         return undefined;
       });
-    if (!status) {
+    if (!inspection) {
       return;
     }
+    const { status } = inspection;
     const teardownExpected = record.destroyRequestedAtMs !== null || record.state === "destroying";
     if (status === "destroyed" || (status === "unknown" && teardownExpected)) {
       const requested =
         record.destroyRequestedAtMs === null
-          ? store.requestDestroy({ environmentId: record.environmentId, state: record.state })
+          ? store.requestDestroy({
+              environmentId: record.environmentId,
+              state: record.state,
+              ...(status === "destroyed" && !teardownExpected
+                ? {
+                    terminalState: "failed",
+                    lastError: "Worker environment disappeared before teardown was requested",
+                  }
+                : {}),
+            })
           : record;
       const draining = beginDrain(requested);
       await tunnels?.stop(record.environmentId);
@@ -807,6 +876,18 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
       move(draining, "orphaned", { lastError: ORPHANED_LEASE_ERROR });
       return;
     }
+    const inspectedSharedHost = inspection.sharedHost === true;
+    if (record.sharedHost !== null && record.sharedHost !== inspectedSharedHost) {
+      // Workspace actions capture isolation at tunnel creation. Fence the old actions before
+      // committing a provider-owned change so no reconciliation can use stale host scope.
+      await tunnels?.stop(record.environmentId);
+    }
+    record = store.reconcileSharedHost({
+      environmentId: record.environmentId,
+      state: record.state,
+      leaseId,
+      sharedHost: inspectedSharedHost,
+    });
     if (record.destroyRequestedAtMs !== null) {
       await finishDestroy(record, provider).catch(() => undefined);
       return;
@@ -915,7 +996,7 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
           install: profile.install ?? "bundle",
           settings,
         }),
-        provisionOperationId: `provision:${digest}`,
+        provisionOperationId: `provision:v2:${digest}`,
       });
       return resumeProvision(intent, provider);
     });
@@ -1069,9 +1150,16 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
         !inState(record, "ready", "idle", "attached") ||
         record.destroyRequestedAtMs !== null ||
         !record.leaseId ||
-        !record.sshEndpoint
+        !record.sshEndpoint ||
+        !record.bootstrapReceipt
       ) {
         throw serviceError("invalid_state", `Cannot start tunnel in state: ${record.state}`);
+      }
+      if (record.sharedHost === null) {
+        throw serviceError(
+          "provider_failure",
+          "Worker lease isolation is not reconciled; retry after provider inspection",
+        );
       }
       const credential = store.getCredential(request.environmentId);
       if (
@@ -1090,15 +1178,209 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
       // lock while SSH connects so drain/destroy can fence an indefinitely reconnecting start.
       startup = tunnels.start({
         ...request,
+        bundleHash: record.bootstrapReceipt.bundleHash,
         gateway,
         ssh: record.sshEndpoint,
+        sharedHost: record.sharedHost,
         resolveIdentity: identityResolverFor(record, provider, record.leaseId),
       });
     });
     if (!startup) {
       throw serviceError("invalid_state", "Worker tunnel failed to start");
     }
-    return await startup;
+    const timeoutError = serviceError(
+      "provider_failure",
+      "Worker tunnel did not connect within 3 minutes; check worker SSH reachability and retry",
+    );
+    try {
+      return await withTimeout(startup, TUNNEL_START_TIMEOUT_MS, {
+        createError: () => timeoutError,
+      });
+    } catch (error) {
+      if (error !== timeoutError) {
+        throw error;
+      }
+      // Stop can itself block on an unkillable SSH child; detach it (rejection observed,
+      // entry stays manager-tracked) so the deadline error is returned on time. Epoch-fenced
+      // so a stale timed-out attempt can never tear down a newer owner's tunnel.
+      void tunnels.stop(request.environmentId, request.ownerEpoch).catch(() => undefined);
+      throw timeoutError;
+    }
+  };
+
+  const observeDesktop = async (request: {
+    environmentId: string;
+    control: boolean;
+  }): Promise<WorkerDesktopObserveResult> => {
+    if (options.getConfig().cloudWorkers?.desktop !== true) {
+      throw serviceError(
+        "invalid_state",
+        "worker desktop observe is disabled; enable the Desktop lab in Control UI Settings -> Labs (config: cloudWorkers.desktop)",
+      );
+    }
+    if (stopping) {
+      throw serviceError("invalid_state", "Worker environment service is stopping");
+    }
+    if (!tunnels) {
+      throw serviceError("invalid_state", "Worker tunnel runtime is unavailable");
+    }
+    let startup: Promise<{ localSocketPath: string; vncPassword?: string }> | undefined;
+    let ownerEpoch: number | undefined;
+    await withLock(request.environmentId, async () => {
+      if (stopping) {
+        throw serviceError("invalid_state", "Worker environment service is stopping");
+      }
+      const record = store.get(request.environmentId);
+      if (!record) {
+        throw serviceError(
+          "environment_not_found",
+          `Unknown worker environment: ${request.environmentId}`,
+        );
+      }
+      if (
+        !inState(record, "ready", "idle", "attached") ||
+        record.destroyRequestedAtMs !== null ||
+        !record.leaseId ||
+        !record.sshEndpoint ||
+        !record.desktop
+      ) {
+        throw serviceError(
+          "invalid_state",
+          "environment has no desktop; desktop is a warm-time capability of the profile",
+        );
+      }
+      const provider = providerFor(record.providerId);
+      ownerEpoch = record.ownerEpoch;
+      startup = tunnels.desktop.acquire({
+        environmentId: record.environmentId,
+        ownerEpoch: record.ownerEpoch,
+        ssh: record.sshEndpoint,
+        desktop: record.desktop,
+        resolveIdentity: identityResolverFor(record, provider, record.leaseId),
+      });
+    });
+    if (!startup || ownerEpoch === undefined) {
+      throw serviceError("invalid_state", "Worker desktop tunnel failed to start");
+    }
+    const acquired = await startup;
+    const { WORKER_DESKTOP_OBSERVE_PATH, mintWorkerDesktopObserverToken } =
+      await import("./desktop-observe.js");
+    const minted = mintWorkerDesktopObserverToken({
+      environmentId: request.environmentId,
+      ownerEpoch,
+      control: request.control,
+      localSocketPath: acquired.localSocketPath,
+      nowMs: now(),
+    });
+    return {
+      transport: "rfb",
+      wsPath: `${WORKER_DESKTOP_OBSERVE_PATH}?token=${minted.token}`,
+      expiresAtMs: minted.expiresAtMs,
+      control: request.control,
+      ...(acquired.vncPassword ? { vncPassword: acquired.vncPassword } : {}),
+    };
+  };
+
+  const launchDesktopApp = async (request: {
+    environmentId: string;
+    app: "browser" | "terminal";
+  }): Promise<WorkerDesktopLaunchResult> => {
+    if (options.getConfig().cloudWorkers?.desktop !== true) {
+      throw serviceError(
+        "invalid_state",
+        "worker desktop launch is disabled; enable the Desktop lab in Control UI Settings -> Labs (config: cloudWorkers.desktop)",
+      );
+    }
+    if (stopping) {
+      throw serviceError("invalid_state", "Worker environment service is stopping");
+    }
+    if (!tunnels) {
+      throw serviceError("invalid_state", "Worker tunnel runtime is unavailable");
+    }
+    const requireLaunchable = () => {
+      if (stopping) {
+        throw serviceError("invalid_state", "Worker environment service is stopping");
+      }
+      const record = store.get(request.environmentId);
+      if (!record) {
+        throw serviceError(
+          "environment_not_found",
+          `Unknown worker environment: ${request.environmentId}`,
+        );
+      }
+      if (
+        !inState(record, "ready", "idle", "attached") ||
+        record.destroyRequestedAtMs !== null ||
+        !record.leaseId ||
+        !record.sshEndpoint ||
+        !record.desktop
+      ) {
+        throw serviceError(
+          "invalid_state",
+          "environment has no desktop; desktop is a warm-time capability of the profile",
+        );
+      }
+      const app = record.desktop.apps?.find((candidate) => candidate.id === request.app);
+      if (!app) {
+        throw serviceError(
+          "desktop_app_not_found",
+          `environment does not advertise desktop app: ${request.app}`,
+        );
+      }
+      return { app, record };
+    };
+
+    let startup: Promise<void> | undefined;
+    let launchEpoch: number | undefined;
+    await withLock(request.environmentId, async () => {
+      const { app, record } = requireLaunchable();
+      const provider = providerFor(record.providerId);
+      launchEpoch = record.ownerEpoch;
+      startup = tunnels.desktop.launchApp({
+        environmentId: record.environmentId,
+        ownerEpoch: record.ownerEpoch,
+        ssh: record.sshEndpoint,
+        app,
+        resolveIdentity: identityResolverFor(record, provider, record.leaseId),
+      });
+    });
+    if (!startup || launchEpoch === undefined) {
+      throw serviceError("launcher_failure", "Worker desktop app launcher failed to start");
+    }
+    try {
+      await startup;
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "unsupported_platform"
+      ) {
+        throw serviceError(
+          "unsupported_platform",
+          "desktop app launch is not supported on Windows gateway hosts",
+        );
+      }
+      // A teardown aborts the SSH child before mutating the durable row. Wait for the
+      // environment lock, then report the authoritative lifecycle state instead of a launch error.
+      await withLock(request.environmentId, async () => {
+        const { record } = requireLaunchable();
+        if (record.ownerEpoch !== launchEpoch) {
+          throw serviceError("invalid_state", "Worker desktop app launch owner changed");
+        }
+      });
+      throw serviceError(
+        "launcher_failure",
+        `worker desktop ${request.app} launcher failed; verify the app is installed and retry`,
+      );
+    }
+    await withLock(request.environmentId, async () => {
+      const { record } = requireLaunchable();
+      if (record.ownerEpoch !== launchEpoch) {
+        throw serviceError("invalid_state", "Worker desktop app launch owner changed");
+      }
+    });
+    return { app: request.app, status: "ready" };
   };
 
   const stopTunnel = async (environmentId: string, ownerEpoch?: number): Promise<void> => {
@@ -1449,7 +1731,7 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     });
   };
 
-  return {
+  const service = {
     list: () => store.list().map(project),
     get: (environmentId: string) => {
       const record = store.get(environmentId);
@@ -1460,6 +1742,8 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     destroy: async (environmentId: string) => project(await destroy(environmentId)),
     destroyUnattached: async (environmentId: string) =>
       project(await destroy(environmentId, { requireUnattached: true })),
+    observeDesktop,
+    launchDesktopApp,
     admitWorker: async (admission: WorkerConnectParams["admission"]) => {
       if (stopping) {
         return { ok: false, reason: "environment-unavailable" } as const;
@@ -1580,6 +1864,10 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     start,
     stop,
   };
+  registerWorkerInferenceSessionDrain(service, (sessionId) =>
+    inferenceWithDrain.beginSessionDrain(sessionId),
+  );
+  return service;
 }
 
 export type WorkerEnvironmentService = ReturnType<typeof createWorkerEnvironmentService>;

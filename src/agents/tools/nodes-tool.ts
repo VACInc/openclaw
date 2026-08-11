@@ -10,7 +10,6 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { OperatorScope } from "../../gateway/method-scopes.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { resolveNodePairApprovalScopes } from "../../infra/node-pairing-authz.js";
-import type { GatewayMessageChannel } from "../../utils/message-channel.js";
 import { resolveSessionAgentId } from "../agent-scope.js";
 import { resolveImageSanitizationLimits } from "../image-sanitization.js";
 import {
@@ -20,7 +19,7 @@ import {
   optionalStringEnum,
   stringEnum,
 } from "../schema/typebox.js";
-import { type AnyAgentTool, jsonResult, readStringParam } from "./common.js";
+import { type AnyAgentTool, jsonResult, readToolStringParam } from "./common.js";
 import { gatewayCallOptionSchemaProperties } from "./gateway-schema.js";
 import { callGatewayTool, readGatewayCallOptions } from "./gateway.js";
 import { executeNodeCommandAction, type NodeCommandAction } from "./nodes-tool-commands.js";
@@ -168,7 +167,7 @@ const NodesToolSchema = Type.Object({
 
 export function createNodesTool(options?: {
   agentSessionKey?: string;
-  agentChannel?: GatewayMessageChannel;
+  agentChannel?: string;
   agentAccountId?: string;
   currentChannelId?: string;
   currentThreadTs?: string | number;
@@ -189,7 +188,7 @@ export function createNodesTool(options?: {
     parameters: NodesToolSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
-      const action = readStringParam(params, "action", { required: true });
+      const action = readToolStringParam(params, "action", { required: true });
       const gatewayOpts = readGatewayCallOptions(params);
 
       try {
@@ -197,7 +196,7 @@ export function createNodesTool(options?: {
           case "status":
             return jsonResult(await callGatewayTool("node.list", gatewayOpts, {}));
           case "describe": {
-            const node = readStringParam(params, "node");
+            const node = readToolStringParam(params, "node");
             if (!node) {
               throw new Error(
                 'node required for describe; call nodes with action="status" to list nodes, then retry with node',
@@ -209,7 +208,7 @@ export function createNodesTool(options?: {
           case "pending":
             return jsonResult(await callGatewayTool("node.pair.list", gatewayOpts, {}));
           case "approve": {
-            const requestId = readStringParam(params, "requestId", {
+            const requestId = readToolStringParam(params, "requestId", {
               required: true,
             });
             const scopes = await resolveNodePairApproveScopes(gatewayOpts, requestId);
@@ -225,7 +224,7 @@ export function createNodesTool(options?: {
             );
           }
           case "reject": {
-            const requestId = readStringParam(params, "requestId", {
+            const requestId = readToolStringParam(params, "requestId", {
               required: true,
             });
             return jsonResult(
@@ -235,7 +234,7 @@ export function createNodesTool(options?: {
             );
           }
           case "notify": {
-            const node = readStringParam(params, "node", { required: true });
+            const node = readToolStringParam(params, "node", { required: true });
             const title = typeof params.title === "string" ? params.title : "";
             const body = typeof params.body === "string" ? params.body : "";
             if (!title.trim() && !body.trim()) {

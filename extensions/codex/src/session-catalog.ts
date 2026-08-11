@@ -101,6 +101,7 @@ import {
   openCodexCatalogTerminal,
   requireCatalogEligibleThread,
   resolveLocalCodexTerminalExecutable,
+  startCodexCatalogTerminal,
   type CodexTerminalConfigSources,
 } from "./session-catalog-terminal.js";
 import { toGenericTranscriptItem } from "./session-catalog-transcript-item.js";
@@ -905,8 +906,6 @@ async function findAdoptedSessionEntry(params: {
   return (await listAdoptedSessionEntries(params)).get(params.threadId);
 }
 
-class CodexAdoptionBindingCleanupError extends AggregateError {}
-
 async function clearCreatedAdoptionBinding(params: {
   bindingStore: CodexAppServerBindingStore;
   identity: ReturnType<typeof sessionBindingIdentity>;
@@ -933,19 +932,22 @@ async function clearCreatedAdoptionBinding(params: {
   try {
     current = await params.bindingStore.read(params.identity);
   } catch (readError) {
-    throw new CodexAdoptionBindingCleanupError(
+    const cleanupFailure = new AggregateError(
       [params.cause, ...(clearError ? [clearError] : []), readError],
       `OpenClaw session creation failed and the Codex binding could not be verified for ${params.sourceThreadId}`,
+      { cause: readError },
     );
+    throw cleanupFailure;
   }
   // Pending state is the cleanup CAS token. Once lifecycle work changes it,
   // that successor owns every tracked native artifact and must survive here.
   if (!matchesPendingSupervisionOwner(current, params.expectedPending)) {
     return;
   }
-  throw new CodexAdoptionBindingCleanupError(
+  throw new AggregateError(
     [params.cause, ...(clearError ? [clearError] : [])],
     `OpenClaw session creation failed and the Codex binding could not be cleared for ${params.sourceThreadId}`,
+    { cause: params.cause },
   );
 }
 
@@ -1537,6 +1539,12 @@ function registerCodexSessionCatalog(params: {
         getPluginConfig: params.getPluginConfig,
         getRuntimeConfig: params.getRuntimeConfig,
         parseCatalogPage,
+        ...request,
+      }),
+    startTerminalSession: (request) =>
+      startCodexCatalogTerminal({
+        getPluginConfig: params.getPluginConfig,
+        getRuntimeConfig: params.getRuntimeConfig,
         ...request,
       }),
   };

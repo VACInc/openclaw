@@ -6,6 +6,7 @@ import {
   runOpenClawStateWriteTransaction,
   type OpenClawStateDatabase,
 } from "../../state/openclaw-state-db.js";
+import { createPlacementPendingFailureOps } from "./placement-pending-failure.js";
 import {
   assertRecordShape,
   nextGeneration,
@@ -31,7 +32,11 @@ import {
   canTransitionWorkerSessionPlacement,
   type WorkerSessionPlacementState,
 } from "./placement-state.js";
-import { createPlacementTurnClaimOps, signalTurnClaimRelease } from "./placement-turn-claims.js";
+import {
+  createPlacementTurnClaimOps,
+  registerWorkerTurnClaimClosedHandler,
+  signalWorkerTurnClaimClosed,
+} from "./placement-turn-claims.js";
 import {
   clearWorkerWorkspaceReconciliation,
   createPlacementWorkspaceJournalOps,
@@ -40,6 +45,7 @@ import {
   createPlacementWorkspaceResultOps,
   hasWorkerWorkspacePendingResult,
 } from "./placement-workspace-result.js";
+import { boundedWorkerError } from "./worker-error.js";
 import { projectWorkspaceResultConflict } from "./workspace-conflicts.js";
 
 const RETIRABLE_PLACEMENT_STATES = ["local", "reclaimed", "failed"] as const;
@@ -81,6 +87,28 @@ function updateTransition(
     throw new Error(`Worker session placement ${current.sessionId} changed during transition`);
   }
   return getRequired(db, current.sessionId);
+}
+
+function projectWorkerTurnClaim(
+  record: WorkerSessionPlacementRecord,
+): WorkerSessionTurnClaim | undefined {
+  const claim = record.turnClaim;
+  return claim?.owner === "worker" &&
+    record.environmentId &&
+    claim.ownerEpoch !== null &&
+    claim.ownerEpoch !== undefined
+    ? {
+        sessionId: record.sessionId,
+        claimId: claim.claimId,
+        runId: claim.runId,
+        placementGeneration: claim.generation,
+        owner: {
+          kind: "worker",
+          environmentId: record.environmentId,
+          ownerEpoch: claim.ownerEpoch,
+        },
+      }
+    : undefined;
 }
 
 export function createWorkerSessionPlacementStore(
@@ -127,8 +155,13 @@ export function createWorkerSessionPlacementStore(
 
   return {
     ...createPlacementTurnClaimOps(runtime),
+    ...createPlacementPendingFailureOps(runtime),
     ...createPlacementWorkspaceJournalOps(runtime),
     ...createPlacementWorkspaceResultOps(runtime),
+
+    registerTurnClaimClosedHandler(handler: (claim: WorkerSessionTurnClaim) => void): () => void {
+      return registerWorkerTurnClaimClosedHandler(path, handler);
+    },
 
     get(sessionId: string): WorkerSessionPlacementRecord | undefined {
       return withWorkspaceResultConflict(find(read(), required(sessionId, "session id")));
@@ -209,14 +242,18 @@ export function createWorkerSessionPlacementStore(
       const identity = normalizeIdentity(input);
       return write((db) => {
         const current = ensureLocal(db, identity, now());
-        if (current.state !== "local" && current.state !== "reclaimed") {
+        if (
+          current.state !== "local" &&
+          current.state !== "reclaimed" &&
+          current.state !== "failed"
+        ) {
           throw new Error(
             `Cannot dispatch session ${identity.sessionId} from placement ${current.state}`,
           );
         }
         const updatedAtMs = now();
         // Preserve an in-flight local claim while closing admission. Reclaimed
-        // placement has no live owner and starts a fresh worker generation.
+        // and failed placements have no live worker owner and start a fresh generation.
         const result = executeSqliteQuerySync(
           db,
           query(db)
@@ -232,6 +269,8 @@ export function createWorkerSessionPlacementStore(
               last_transcript_ack_cursor: null,
               last_live_event_ack_cursor: null,
               recovery_error: null,
+              terminal_reason: null,
+              terminal_at_ms: null,
               updated_at_ms: updatedAtMs,
               state_changed_at_ms: updatedAtMs,
             })
@@ -262,6 +301,9 @@ export function createWorkerSessionPlacementStore(
       }
       if (input.from === "draining" && input.to === "reconciling") {
         throw new Error("Use startReconcile after fencing the drained worker environment");
+      }
+      if (input.to === "failed") {
+        throw new Error("Use fail to record terminal worker placement diagnostics");
       }
       const sessionId = required(input.sessionId, "session id");
       return write((db) => {
@@ -331,6 +373,8 @@ export function createWorkerSessionPlacementStore(
           lastTranscriptAckCursor: values.last_transcript_ack_cursor,
           lastLiveEventAckCursor: values.last_live_event_ack_cursor,
           recoveryError: values.recovery_error,
+          terminalReason: values.terminal_reason,
+          terminalAtMs: values.terminal_at_ms,
           turnClaim,
         });
         const result = executeSqliteQuerySync(
@@ -427,10 +471,13 @@ export function createWorkerSessionPlacementStore(
         if (result.numAffectedRows !== 1n) {
           throw new Error(`Worker session placement ${sessionId} changed during reconcile`);
         }
-        return { record: getRequired(db, sessionId), releasedClaim };
+        return {
+          record: getRequired(db, sessionId),
+          releasedClaim: releasedClaim ? projectWorkerTurnClaim(current) : undefined,
+        };
       });
       if (outcome.releasedClaim) {
-        signalTurnClaimRelease(path, sessionId);
+        signalWorkerTurnClaimClosed(path, outcome.releasedClaim);
       }
       return outcome.record;
     },
@@ -454,7 +501,7 @@ export function createWorkerSessionPlacementStore(
       expectedGeneration?: number;
     }): WorkerSessionPlacementRecord {
       const sessionId = required(input.sessionId, "session id");
-      const recoveryError = required(input.recoveryError, "recovery error");
+      const recoveryError = boundedWorkerError(input.recoveryError);
       const outcome = write((db) => {
         const current = getRequired(db, sessionId);
         if (
@@ -476,7 +523,7 @@ export function createWorkerSessionPlacementStore(
           if (result.numAffectedRows !== 1n) {
             throw new Error(`Worker session placement ${sessionId} changed during failure update`);
           }
-          return { record: getRequired(db, sessionId), releasedClaim: false };
+          return { record: getRequired(db, sessionId), releasedClaim: undefined };
         }
         if (!canTransitionWorkerSessionPlacement(current.state, "failed")) {
           throw new Error(`Cannot fail worker session placement from ${current.state}`);
@@ -491,6 +538,8 @@ export function createWorkerSessionPlacementStore(
               state: "failed",
               transition_generation: nextGeneration(current.generation),
               recovery_error: recoveryError,
+              terminal_reason: recoveryError,
+              terminal_at_ms: updatedAtMs,
               turn_claim_owner: localClaim ? "local" : null,
               turn_claim_id: localClaim?.claimId ?? null,
               turn_claim_run_id: localClaim?.runId ?? null,
@@ -508,11 +557,11 @@ export function createWorkerSessionPlacementStore(
         }
         return {
           record: getRequired(db, sessionId),
-          releasedClaim: current.turnClaim?.owner === "worker",
+          releasedClaim: projectWorkerTurnClaim(current),
         };
       });
       if (outcome.releasedClaim) {
-        signalTurnClaimRelease(path, sessionId);
+        signalWorkerTurnClaimClosed(path, outcome.releasedClaim);
       }
       return outcome.record;
     },

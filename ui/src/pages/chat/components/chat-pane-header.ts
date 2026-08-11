@@ -44,14 +44,16 @@ type ChatPaneHeaderProps = {
   canReveal: boolean;
   copiedAction: ChatPaneHeaderAction | null;
   renameDisabledReason?: string;
-  terminalAction: TemplateResult | typeof nothing;
+  panelActions: TemplateResult | typeof nothing;
   discussionAction: TemplateResult | typeof nothing;
   diffAction: TemplateResult | typeof nothing;
   backgroundTasksAction: TemplateResult | typeof nothing;
+  sessionRailAction: TemplateResult | typeof nothing;
   workspaceAction: TemplateResult | typeof nothing;
   presence?: TemplateResult | typeof nothing;
   faceControl?: TemplateResult | typeof nothing;
   sharingControl?: TemplateResult | typeof nothing;
+  sessionMenuAction: TemplateResult | typeof nothing;
   nativeGateways?: NativeGatewaysCapability | null;
   gatewaysSnapshot?: NativeGatewaysSnapshot | null;
   onboarding?: boolean;
@@ -177,7 +179,6 @@ function renderGatewayPicker(props: ChatPaneHeaderProps) {
         const selected = gateway.id === snapshot.currentId;
         return html`<wa-dropdown-item
           class="chat-pane__gateway-menu-item chat-pane__gateway-item"
-          type="checkbox"
           role="menuitemradio"
           aria-checked=${String(selected)}
           ${ref((element) => syncDropdownItemRadio(element, selected))}
@@ -302,7 +303,7 @@ export function renderChatPaneHeader(props: ChatPaneHeaderProps) {
           ? html`<span
               class="chat-pane__session-title"
               title=${props.renameDisabledReason ?? props.title}
-              >${props.title}</span
+              ><span class="chat-pane__session-title-text">${props.title}</span></span
             >`
           : html`<button
               class="chat-pane__session-title chat-pane__session-title-button"
@@ -311,7 +312,7 @@ export function renderChatPaneHeader(props: ChatPaneHeaderProps) {
               aria-label=${t("chat.sessionHeader.renameAria", { title: props.title })}
               @click=${props.onBeginRename}
             >
-              ${props.title}
+              <span class="chat-pane__session-title-text">${props.title}</span>
             </button>`}
       ${renderSessionOwnerChip(
         props.showOwnerChip ? props.session?.createdActor : undefined,
@@ -431,10 +432,11 @@ export function renderChatPaneHeader(props: ChatPaneHeaderProps) {
         : nothing}
       ${renderGatewayPicker(props)}
       <div class="chat-pane__actions">
-        ${props.terminalAction} ${props.discussionAction}
+        ${props.panelActions} ${props.discussionAction}
         ${props.catalog
           ? nothing
-          : html`${props.diffAction} ${props.backgroundTasksAction} ${props.workspaceAction}`}
+          : html`${props.diffAction} ${props.backgroundTasksAction} ${props.workspaceAction}
+            ${props.sessionRailAction}`}
         ${props.onOpenSplitView
           ? html`<openclaw-tooltip .content=${t("chat.splitView.open")}>
               <button
@@ -495,6 +497,7 @@ export function renderChatPaneHeader(props: ChatPaneHeaderProps) {
               </button>
             </openclaw-tooltip>`
           : nothing}
+        ${props.sessionMenuAction}
       </div>
     </div>
   `;
