@@ -439,7 +439,8 @@ type CliBackendNativeCompactionContract =
       manualCompaction?: CliBackendManualCompaction;
     }
   | {
-      ownsNativeCompaction?: false;
+      /** Boolean-compatible ownership for existing plugins without manual compaction. */
+      ownsNativeCompaction?: boolean;
       manualCompaction?: never;
     };
 
