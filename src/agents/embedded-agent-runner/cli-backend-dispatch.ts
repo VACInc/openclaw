@@ -25,10 +25,6 @@ import type { EmbeddedAgentRunResult } from "./types.js";
 
 const log = createSubsystemLogger("agents/embedded-cli-dispatch");
 
-type RunCliAgentInternalParams = import("../cli-runner/types.js").RunCliAgentParams & {
-  currentTurnImagesPrepared?: true;
-};
-
 type EmbeddedCliBackendDispatch = {
   provider: string;
   sessionFile: string;
@@ -107,10 +103,6 @@ async function runEmbeddedAgentViaCliBackend(
     admittedRunContext: params.admittedRunContext,
     preparedRunAdmission: params.preparedRunAdmission,
   });
-  // Owning either field means admission already ran. Normalize that private
-  // fact to the pair the CLI boundary recognizes, including an empty result.
-  const currentTurnImagesPrepared =
-    Object.hasOwn(params, "images") || Object.hasOwn(params, "imageOrder");
   // The dispatch gate guarantees a non-empty named allowlist; translate it to
   // the selectable-backend surface: no native tools, only the listed loopback
   // MCP tools. The MCP list also bounds the loopback grant server-side (tools
@@ -212,7 +204,7 @@ async function runEmbeddedAgentViaCliBackend(
   );
   let finalAssistantText: string | undefined;
   try {
-    const cliParams: RunCliAgentInternalParams = {
+    const result = await runCliAgent({
       admittedRunContext,
       sessionId: params.sessionId,
       sessionKey: params.sessionKey,
@@ -232,7 +224,6 @@ async function runEmbeddedAgentViaCliBackend(
       config: params.config,
       prompt: params.prompt,
       imagePrompt: params.prompt,
-      currentTurnImagesPrepared: currentTurnImagesPrepared || undefined,
       images: params.images,
       imageOrder: params.imageOrder,
       media: params.media,
@@ -261,8 +252,7 @@ async function runEmbeddedAgentViaCliBackend(
       // runner it closes the process-wide loopback MCP server, which a
       // concurrent main turn or overlapping recall may still be using.
       // Session-scoped MCP runtimes are retired below instead.
-    };
-    const result = await runCliAgent(cliParams);
+    });
     finalAssistantText = result.payloads?.find(
       (payload) => payload.isReasoning !== true && typeof payload.text === "string",
     )?.text;

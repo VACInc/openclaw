@@ -65,7 +65,6 @@ describe("executeAgentTurn: CLI session routing", () => {
 
     expect(result.kind).toBe("success");
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
-      currentTurnImagesPrepared: true,
       images,
       imageOrder,
     });
@@ -88,7 +87,14 @@ describe("executeAgentTurn: CLI session routing", () => {
     ];
     const imageOrder = ["inline" as const];
     const media = [{ path: "/openclaw-test-missing/current.png", contentType: "image/png" }];
+    const mediaImageLayout = {
+      slots: [{ kind: "inline" as const, factIndex: 0 }],
+      suppressedFactIndexes: [],
+    };
     state.runCliAgentMock.mockImplementationOnce(async (params: RunCliAgentParams) => {
+      const internalParams = params as RunCliAgentParams & {
+        mediaImageLayout?: typeof mediaImageLayout;
+      };
       await expect(
         prepareCliPromptImagePayload({
           backend: { command: "claude" },
@@ -108,6 +114,7 @@ describe("executeAgentTurn: CLI session routing", () => {
         model: { input: ["text", "image"] },
         existingImages: params.images,
         imageOrder: params.imageOrder,
+        mediaImageLayout: internalParams.mediaImageLayout,
       });
       expect(reconciled).toMatchObject({
         failedMediaCount: 0,
@@ -121,11 +128,13 @@ describe("executeAgentTurn: CLI session routing", () => {
     const followupRun = createFollowupRun();
     followupRun.run.provider = "claude-cli";
     followupRun.run.model = "claude-opus-5";
-    (
+    const preparedFollowupRun =
       followupRun as typeof followupRun & {
         currentTurnImagesPrepared?: true;
-      }
-    ).currentTurnImagesPrepared = true;
+        mediaImageLayout?: typeof mediaImageLayout;
+      };
+    preparedFollowupRun.currentTurnImagesPrepared = true;
+    preparedFollowupRun.mediaImageLayout = mediaImageLayout;
     followupRun.images = images;
     followupRun.imageOrder = imageOrder;
     followupRun.media = media;
@@ -144,9 +153,9 @@ describe("executeAgentTurn: CLI session routing", () => {
 
     expect(result.kind).toBe("success");
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
-      currentTurnImagesPrepared: true,
       images,
       imageOrder,
+      mediaImageLayout,
       media,
     });
   });

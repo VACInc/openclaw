@@ -67,7 +67,10 @@ import { createAgentTurnPresentation } from "./agent-runner-presentation.js";
 import { createAgentTurnTimingTracker } from "./agent-runner-turn-timing.js";
 import { resolveQueuedReplyRuntimeConfig } from "./agent-runner-utils.js";
 import { shouldNotifyUserAboutCompaction } from "./compaction-notice.js";
-import { resolveCurrentTurnImages } from "./current-turn-images.js";
+import {
+  type CurrentTurnImages,
+  resolveCurrentTurnImages,
+} from "./current-turn-images.js";
 import type { FollowupRun } from "./queue.js";
 import type { ReplyMediaContext } from "./reply-media-paths.js";
 import { createReplyMediaContext } from "./reply-media-paths.runtime.js";
@@ -80,6 +83,7 @@ import { isReplyProfilerEnabled } from "./reply-timing-tracker.js";
 type InternalFollowupRun = FollowupRun & {
   /** Keep admission state out of the public plugin-facing FollowupRun contract. */
   currentTurnImagesPrepared?: true;
+  mediaImageLayout?: CurrentTurnImages["mediaImageLayout"];
 };
 
 function resolveRunStartupPhase(
@@ -188,7 +192,7 @@ async function executeAgentTurnInternalWithRetryState(
     });
   }
   let replyMediaContext: ReplyMediaContext;
-  let currentTurnImages: Awaited<ReturnType<typeof resolveCurrentTurnImages>>;
+  let currentTurnImages: CurrentTurnImages;
   try {
     replyMediaContext =
       params.replyMediaContext ??
@@ -220,6 +224,7 @@ async function executeAgentTurnInternalWithRetryState(
       ? {
           images: params.followupRun.images,
           imageOrder: params.followupRun.imageOrder,
+          mediaImageLayout: internalFollowupRun.mediaImageLayout,
         }
       : await agentTurnTiming.measure("current_turn_images", () =>
           resolveCurrentTurnImages({

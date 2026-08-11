@@ -1,5 +1,6 @@
 // Tracks image attachments that belong to the current reply turn.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import type { MediaImageLayout } from "../../agents/embedded-agent-runner/run/prompt-image-metadata.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
@@ -24,6 +25,14 @@ type OrderedTurnImage = {
   imageOrder: PromptImageOrderEntry;
   sourceIndex?: number;
   sequence: number;
+};
+
+export type CurrentTurnImages = {
+  images?: ImageContent[];
+  imageOrder?: PromptImageOrderEntry[];
+  imageSourceIndexes?: Array<number | undefined>;
+  /** Admission-owned slot-to-media identity used by later runtime adapters. */
+  mediaImageLayout?: MediaImageLayout;
 };
 
 function collectCurrentImageAttachments(ctx: MsgContext): CurrentImageAttachment[] {
@@ -130,11 +139,7 @@ export async function resolveCurrentTurnImages(params: {
   images?: ImageContent[];
   imageOrder?: PromptImageOrderEntry[];
   extractedFileImages?: ExtractedFileImage[];
-}): Promise<{
-  images?: ImageContent[];
-  imageOrder?: PromptImageOrderEntry[];
-  imageSourceIndexes?: Array<number | undefined>;
-}> {
+}): Promise<CurrentTurnImages> {
   const entries: OrderedTurnImage[] = [];
   appendOrderedImages({
     entries,

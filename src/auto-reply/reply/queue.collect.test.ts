@@ -26,7 +26,13 @@ import {
 import { resolveFollowupDeliveryContextKey } from "./queue/drain.js";
 import { clearFollowupQueue, getExistingFollowupQueue } from "./queue/state.js";
 
-type InternalFollowupRun = FollowupRun & { currentTurnImagesPrepared?: true };
+type InternalFollowupRun = FollowupRun & {
+  currentTurnImagesPrepared?: true;
+  mediaImageLayout?: {
+    slots: Array<{ kind: "inline" | "offloaded"; factIndex?: number }>;
+    suppressedFactIndexes: number[];
+  };
+};
 
 installQueueRuntimeErrorSilencer();
 
@@ -2026,6 +2032,7 @@ describe("followup queue collect routing", () => {
     const missingMedia = {
       path: "/openclaw-test-missing/current.png",
       contentType: "image/png",
+      hydrationSuppressed: true,
     };
 
     for (const prompt of ["one", "two"]) {
@@ -2039,6 +2046,7 @@ describe("followup queue collect routing", () => {
         images: [],
         imageOrder: [],
         media: [missingMedia],
+        mediaImageLayout: { slots: [], suppressedFactIndexes: [0] },
       };
       enqueueFollowupRun(key, preparedRun, settings);
     }
@@ -2051,6 +2059,46 @@ describe("followup queue collect routing", () => {
     expect(collected?.images).toEqual([]);
     expect(collected?.imageOrder).toEqual([]);
     expect(collected?.media).toEqual([missingMedia, missingMedia]);
+    expect(collected?.mediaImageLayout).toEqual({
+      slots: [],
+      suppressedFactIndexes: [0, 1],
+    });
+  });
+
+  it("offsets prepared media layout fact indexes across collected batches", async () => {
+    const key = `test-collect-prepared-image-layout-${Date.now()}`;
+    const { calls, done, runFollowup } = createDrainRecorder();
+    const settings = createQueueSettings();
+
+    for (const [index, prompt] of ["one", "two"].entries()) {
+      const preparedRun: InternalFollowupRun = {
+        ...createRun({
+          prompt,
+          originatingChannel: "slack",
+          originatingTo: "channel:A",
+        }),
+        currentTurnImagesPrepared: true,
+        images: [],
+        imageOrder: ["offloaded"],
+        media: [{ path: `/tmp/offloaded-${index}.png`, contentType: "image/png" }],
+        mediaImageLayout: {
+          slots: [{ kind: "offloaded", factIndex: 0 }],
+          suppressedFactIndexes: [],
+        },
+      };
+      enqueueFollowupRun(key, preparedRun, settings);
+    }
+
+    scheduleFollowupDrain(key, runFollowup);
+    await done.promise;
+
+    expect((calls[0] as InternalFollowupRun | undefined)?.mediaImageLayout).toEqual({
+      slots: [
+        { kind: "offloaded", factIndex: 0 },
+        { kind: "offloaded", factIndex: 1 },
+      ],
+      suppressedFactIndexes: [],
+    });
   });
 
   it("splits collect batches when sender authorization changes", async () => {

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { expectDefined } from "@openclaw/normalization-core";
 import { stableStringify } from "@openclaw/normalization-core";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import type { MediaImageLayout } from "../../../agents/embedded-agent-runner/run/prompt-image-metadata.js";
 import { runAgentHarnessBeforeMessageWriteHook } from "../../../agents/harness/hook-helpers.js";
 import { normalizeChatType } from "../../../channels/chat-type.js";
 import { resolveStorePath } from "../../../config/sessions.js";
@@ -43,6 +44,8 @@ import {
 type InternalFollowupRun = FollowupRun & {
   /** Keep admission state out of the public plugin-facing FollowupRun contract. */
   currentTurnImagesPrepared?: true;
+  /** Admission-owned layout; fact indexes are relative to this run's media array. */
+  mediaImageLayout?: MediaImageLayout;
 };
 
 function hasPreparedCurrentTurnImages(run: FollowupRun): boolean {
@@ -302,26 +305,52 @@ function renderCollectItemPrompt(item: FollowupRun, idx: number, prompt: string)
 function collectQueuedPromptMedia(
   items: FollowupRun[],
 ): Pick<FollowupRun, "images" | "imageOrder" | "media"> &
-  Pick<InternalFollowupRun, "currentTurnImagesPrepared"> {
+  Pick<InternalFollowupRun, "currentTurnImagesPrepared" | "mediaImageLayout"> {
   const images: NonNullable<FollowupRun["images"]> = [];
   const imageOrder: NonNullable<FollowupRun["imageOrder"]> = [];
   const media: NonNullable<FollowupRun["media"]> = [];
+  const mediaImageSlots: MediaImageLayout["slots"] = [];
+  const suppressedFactIndexes: number[] = [];
   const currentTurnImagesPrepared = items.every(hasPreparedCurrentTurnImages);
   for (const item of items) {
+    const mediaOffset = media.length;
+    const internalItem = item as InternalFollowupRun;
     if (item.images) {
       images.push(...item.images);
     }
     if (item.imageOrder) {
       imageOrder.push(...item.imageOrder);
     }
+    if (currentTurnImagesPrepared) {
+      const itemSlots =
+        internalItem.mediaImageLayout?.slots ??
+        item.imageOrder?.map((kind) => ({ kind })) ??
+        [];
+      mediaImageSlots.push(
+        ...itemSlots.map((slot) => ({
+          kind: slot.kind,
+          ...(slot.factIndex === undefined ? {} : { factIndex: slot.factIndex + mediaOffset }),
+        })),
+      );
+      suppressedFactIndexes.push(
+        ...(internalItem.mediaImageLayout?.suppressedFactIndexes ?? []).map(
+          (factIndex) => factIndex + mediaOffset,
+        ),
+      );
+    }
     if (item.media) {
       media.push(...item.media);
     }
   }
+  const mediaImageLayout =
+    mediaImageSlots.length > 0 || suppressedFactIndexes.length > 0
+      ? { slots: mediaImageSlots, suppressedFactIndexes }
+      : undefined;
   return {
     ...(currentTurnImagesPrepared ? { currentTurnImagesPrepared: true as const } : {}),
     ...(currentTurnImagesPrepared || images.length > 0 ? { images } : {}),
     ...(currentTurnImagesPrepared || imageOrder.length > 0 ? { imageOrder } : {}),
+    ...(mediaImageLayout ? { mediaImageLayout } : {}),
     ...(media.length > 0 ? { media } : {}),
   };
 }
