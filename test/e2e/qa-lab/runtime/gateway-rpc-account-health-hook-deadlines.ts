@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { startQaGatewayChild } from "../../../../extensions/qa-lab/api.js";
 import type { OpenClawConfig } from "../../../../src/config/types.openclaw.js";
 
@@ -72,21 +73,16 @@ function withHealthHookDeadlineFixture(
   };
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`expected record, got ${JSON.stringify(value)}`);
-  }
-  return value as Record<string, unknown>;
-}
+const requireRecord = createRequireRecord("record", "expected-record");
 
 function readHealthAccounts(payload: unknown): Record<string, AccountState> {
-  const channels = asRecord(asRecord(payload).channels);
-  const channel = asRecord(channels[DEADLINE_CHANNEL_ID]);
-  const accounts = asRecord(channel.accounts);
+  const channels = requireRecord(requireRecord(payload).channels);
+  const channel = requireRecord(channels[DEADLINE_CHANNEL_ID]);
+  const accounts = requireRecord(channel.accounts);
   return Object.fromEntries(
     Object.entries(accounts).map(([accountId, state]) => [
       accountId,
-      asRecord(state) as AccountState,
+      requireRecord(state) as AccountState,
     ]),
   );
 }
