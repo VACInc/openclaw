@@ -107,6 +107,11 @@ export function resolveManualCompactionCliTarget(params: {
   const runtimeOverride = normalizeOptionalAgentRuntimeId(params.entry?.agentRuntimeOverride);
   const runtimeConfig =
     runtimeOverride && getCliSessionBinding(params.entry, runtimeOverride) ? params.cfg : undefined;
+  const historicalRuntime = normalizeOptionalAgentRuntimeId(params.entry?.agentHarnessId);
+  const historicalRuntimeConfig =
+    historicalRuntime && getCliSessionBinding(params.entry, historicalRuntime)
+      ? params.cfg
+      : undefined;
   const selectedRuntime = resolveSessionRuntimeOverrideForProvider({
     provider: params.provider,
     entry: params.entry,
@@ -118,7 +123,13 @@ export function resolveManualCompactionCliTarget(params: {
     params.entry?.modelSelectionLocked === true
       ? resolvePersistedSessionRuntimeId(params.entry)
       : (selectedRuntime ??
-        (params.entry?.agentRuntimeOverride ? undefined : params.entry?.agentHarnessId));
+        (params.entry?.agentRuntimeOverride
+          ? undefined
+          : resolveCompatibleAgentRuntimeForProvider({
+              provider: params.provider,
+              runtime: historicalRuntime,
+              cfg: historicalRuntimeConfig,
+            })));
   if (persistedRuntime) {
     return {
       agentHarnessId: persistedRuntime,

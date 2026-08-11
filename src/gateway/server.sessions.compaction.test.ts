@@ -805,6 +805,7 @@ test("sessions.compact records terminal Codex native compaction", async () => {
   await seedSessionEntry({
     entry: sessionStoreEntry("sess-codex", {
       agentHarnessId: "codex",
+      modelSelectionLocked: true,
       compactionCount: 2,
       totalTokens: 54_321,
       totalTokensFresh: true,
