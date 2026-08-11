@@ -14,6 +14,7 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { onAgentEvent } from "../../infra/agent-events.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { resolvePreparedRunAdmission } from "../admitted-run-context.js";
 import { stripOpenClawMcpToolPrefix } from "../cli-runner/tool-policy.js";
 import { normalizeToolName } from "../tool-policy.js";
 import { isToolResultError } from "../tool-result-error.js";
@@ -100,6 +101,12 @@ async function runEmbeddedAgentViaCliBackend(
   dispatch: EmbeddedCliBackendDispatch,
 ): Promise<EmbeddedAgentRunResult> {
   const { runCliAgent } = await import("../cli-runner.runtime.js");
+  const admittedRunContext = await resolvePreparedRunAdmission({
+    runId: params.runId,
+    runtimeKind: "embedded",
+    admittedRunContext: params.admittedRunContext,
+    preparedRunAdmission: params.preparedRunAdmission,
+  });
   // Owning either field means admission already ran. Normalize that private
   // fact to the pair the CLI boundary recognizes, including an empty result.
   const currentTurnImagesPrepared =
@@ -206,6 +213,7 @@ async function runEmbeddedAgentViaCliBackend(
   let finalAssistantText: string | undefined;
   try {
     const cliParams: RunCliAgentInternalParams = {
+      admittedRunContext,
       sessionId: params.sessionId,
       sessionKey: params.sessionKey,
       ...(params.sessionTarget?.expectedLifecycleRevision !== undefined

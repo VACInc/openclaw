@@ -1,6 +1,7 @@
 import { Value } from "typebox/value";
 import { describe, expect, it } from "vitest";
 import { GATEWAY_CLIENT_IDS, GATEWAY_CLIENT_MODES } from "../client-info.js";
+import { FAILOVER_REASONS } from "../failover-reasons.js";
 import {
   type WorkerAdmissionHandshake,
   WorkerAdmissionResponseFrameSchema,
@@ -162,12 +163,22 @@ const approval = (phase: string, status: string) =>
   event("approval", { phase, kind: "exec", status, title: "x" });
 const lifecycle = (phase: string, payload: Record<string, unknown> = {}) =>
   event("lifecycle", { phase, ...payload });
-const fallbackStep = (outcome: string) =>
+const fallbackStep = (outcome: string, reason?: string) =>
   lifecycle("fallback_step", {
     fallbackStepType: "fallback_step",
     fallbackStepFromModel: "p/m",
+    ...(reason === undefined ? {} : { fallbackStepFromFailureReason: reason }),
     fallbackStepFinalOutcome: outcome,
   });
+const fallbackReasonEvents = (reason: string) => [
+  lifecycle("fallback", {
+    ...models,
+    reasonSummary: "x",
+    attemptSummaries: ["x"],
+    attempts: [{ provider: "p", model: "m", error: "x", reason }],
+  }),
+  fallbackStep("next_fallback", reason),
+];
 const assistant = event("assistant", { text: "x", delta: "x" });
 const validateLive = validateWorkerLiveEventParams;
 const liveError = (details: Record<string, unknown>) => ({
@@ -339,10 +350,16 @@ describe("worker protocol schemas", () => {
     ).toBe(false);
   });
 
+  it("does not advertise legacy launch v2 after making execution context mandatory", () => {
+    // Older gateways adopt workers by the V2 feature alone. Omitting it forces
+    // them to reprovision instead of sending the legacy V2 assignment.
+    expect(WORKER_PROTOCOL_FEATURES).not.toContain(WORKER_LAUNCH_V2_PROTOCOL_FEATURE);
+    expect(WORKER_PROTOCOL_FEATURES).toContain("worker-execution-context-v1");
+  });
+
   it("validates the additive live-event protocol", () => {
     expect(WORKER_RPC_SET_VERSION).toBe(1);
     expect(WORKER_PROTOCOL_FEATURES).toContain("worker-live-event-v1");
-    expect(WORKER_PROTOCOL_FEATURES).toContain(WORKER_LAUNCH_V2_PROTOCOL_FEATURE);
     for (const validEvent of [
       assistant,
       event("thinking", { text: "x", delta: "x" }),
@@ -413,6 +430,18 @@ describe("worker protocol schemas", () => {
     ] as const) {
       expect(validateLive(params(tool("update", { partialResult: value })))).toBe(false);
       expect(validateLive.errors?.[0]).toMatchObject({ keyword });
+    }
+  });
+
+  it("keeps both worker fallback reason fields aligned with the canonical vocabulary", () => {
+    for (const reason of FAILOVER_REASONS) {
+      for (const fallbackEvent of fallbackReasonEvents(reason)) {
+        expect(validateLive(params(fallbackEvent))).toBe(true);
+      }
+    }
+
+    for (const fallbackEvent of fallbackReasonEvents("not-a-reason")) {
+      expect(validateLive(params(fallbackEvent))).toBe(false);
     }
   });
 

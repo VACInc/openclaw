@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   warn: vi.fn(),
 }));
 
-vi.mock("../../subagent-registry.js", () => ({
+vi.mock("../../subagents/registry/subagent-registry.js", () => ({
   releasePendingAgentSteeringItems: mocks.releasePendingSteering,
 }));
 vi.mock("../google-prompt-cache.js", () => ({
@@ -32,16 +32,14 @@ vi.mock("../stream-resolution.js", () => ({
 vi.mock("./attempt-before-agent-run.js", () => ({
   runEmbeddedAttemptBeforeAgentRun: mocks.beforeAgentRun,
 }));
-vi.mock("./attempt-prompt-assembly.js", () => ({
+vi.mock("./attempt-prompt-build.js", () => ({
   prepareEmbeddedAttemptPromptAssembly: mocks.preparePromptAssembly,
-}));
-vi.mock("./attempt-prompt-context.js", () => ({
   prepareEmbeddedAttemptPromptContext: mocks.preparePromptContext,
 }));
 vi.mock("./attempt-prompt-dispatch.js", () => ({
   dispatchEmbeddedAttemptPrompt: mocks.dispatchPrompt,
 }));
-vi.mock("./attempt-prompt-error.js", () => ({
+vi.mock("./attempt-prompt-submit.js", () => ({
   handleEmbeddedAttemptPromptError: mocks.handlePromptError,
 }));
 vi.mock("./attempt-prompt-preflight.js", () => ({

@@ -1,6 +1,7 @@
 import { Type, type Static, type TProperties } from "typebox";
 import { GATEWAY_CLIENT_IDS, GATEWAY_CLIENT_MODES } from "../client-info.js";
 import { closedObject } from "./closed-object.js";
+import { FailoverReasonSchema } from "./failover-reason.js";
 import { withSince } from "./since.js";
 import {
   LiveIntegerSchema,
@@ -36,11 +37,14 @@ export const WORKER_PROTOCOL_METHODS = [
 export const WORKER_TRANSCRIPT_COMMIT_PROTOCOL_FEATURE = "worker-transcript-commit-v1";
 export const WORKER_LIVE_EVENT_PROTOCOL_FEATURE = "worker-live-event-v1";
 export const WORKER_LAUNCH_V2_PROTOCOL_FEATURE = "worker-launch-v2";
+export const WORKER_EXECUTION_CONTEXT_PROTOCOL_FEATURE = "worker-execution-context-v1";
 export const WORKER_PROTOCOL_FEATURES = [
   "worker-heartbeat-v1",
   WORKER_TRANSCRIPT_COMMIT_PROTOCOL_FEATURE,
   WORKER_LIVE_EVENT_PROTOCOL_FEATURE,
-  WORKER_LAUNCH_V2_PROTOCOL_FEATURE,
+  // Execution context is a build-bound V2 dialect. Do not advertise legacy
+  // launch V2: an older gateway would adopt this worker and send the old shape.
+  WORKER_EXECUTION_CONTEXT_PROTOCOL_FEATURE,
   "worker-inference-v1",
 ] as const;
 export const WORKER_PROTOCOL_MAX_METHOD_LENGTH = 64;
@@ -450,29 +454,11 @@ const WorkerLiveLifecycleStartPayloadSchema = workerLiveObject({
   startedAt: LiveIntegerSchema,
 });
 
-const WorkerLiveFallbackReasonSchema = Type.Union([
-  Type.Literal("auth"),
-  Type.Literal("auth_permanent"),
-  Type.Literal("format"),
-  Type.Literal("rate_limit"),
-  Type.Literal("overloaded"),
-  Type.Literal("billing"),
-  Type.Literal("server_error"),
-  Type.Literal("timeout"),
-  Type.Literal("context_overflow"),
-  Type.Literal("model_not_found"),
-  Type.Literal("session_expired"),
-  Type.Literal("empty_response"),
-  Type.Literal("no_error_details"),
-  Type.Literal("unclassified"),
-  Type.Literal("unknown"),
-]);
-
 const WorkerLiveFallbackAttemptSchema = workerLiveObject({
   provider: LiveIdentifierSchema,
   model: LiveIdentifierSchema,
   error: LiveTextSchema,
-  reason: Type.Optional(WorkerLiveFallbackReasonSchema),
+  reason: Type.Optional(FailoverReasonSchema),
   authMode: Type.Optional(LiveIdentifierSchema),
   status: OptionalLiveIntegerSchema,
   code: Type.Optional(Type.String({ minLength: 1, maxLength: WORKER_PROTOCOL_MAX_PAYLOAD_BYTES })),
@@ -508,7 +494,7 @@ const WorkerLiveLifecycleFallbackStepPayloadSchema = workerLiveObject({
   fallbackStepType: Type.Literal("fallback_step"),
   fallbackStepFromModel: LiveIdentifierSchema,
   fallbackStepToModel: Type.Optional(LiveIdentifierSchema),
-  fallbackStepFromFailureReason: Type.Optional(WorkerLiveFallbackReasonSchema),
+  fallbackStepFromFailureReason: Type.Optional(FailoverReasonSchema),
   fallbackStepFromFailureDetail: OptionalLiveTextSchema,
   fallbackStepChainPosition: OptionalLiveIntegerSchema,
   fallbackStepFinalOutcome: Type.Union([

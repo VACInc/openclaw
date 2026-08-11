@@ -52,7 +52,7 @@ import {
   hasRestartSentinel,
   markUpdateRestartSentinelFailure,
   readRestartSentinel,
-  readUpdateInstallReceipt,
+  readVerifiedGitUpdateReceipt,
   summarizeRestartSentinel,
   trimLogTail,
   writeRestartSentinel,
@@ -541,7 +541,14 @@ describe("restart sentinel", () => {
     });
   });
 
-  it("persists the verified Git install receipt after restart", async () => {
+  it.each([
+    { name: "successful update", status: "ok", reason: undefined },
+    {
+      name: "failed handoff",
+      status: "error",
+      reason: "managed-service-handoff-failed",
+    },
+  ] as const)("persists the verified Git install receipt after a $name", async (testCase) => {
     await withRestartSentinelStateDir(async () => {
       await withTempDir({ prefix: "openclaw-install-root-" }, async (tempDir) => {
         const installRoot = path.join(tempDir, "checkout");
@@ -551,13 +558,18 @@ describe("restart sentinel", () => {
         const ts = Date.now();
         await writeRestartSentinel({
           kind: "update",
-          status: "ok",
+          status: testCase.status,
           ts,
           stats: {
             mode: "git",
+            ...(testCase.reason ? { reason: testCase.reason } : {}),
             root: installAlias,
             before: { sha: "aaaaaaaa" },
-            after: { sha: "bbbbbbbb", version: "expected-version" },
+            after: {
+              sha: " bbbbbbbb ",
+              upstreamRef: " origin/main ",
+              version: "expected-version",
+            },
           },
         });
 
@@ -569,15 +581,11 @@ describe("restart sentinel", () => {
         );
         await clearRestartSentinel();
 
-        await expect(readUpdateInstallReceipt()).resolves.toMatchObject({
-          kind: "update",
-          status: "ok",
-          ts,
-          stats: {
-            mode: "git",
-            root: await fs.realpath(installRoot),
-            after: { sha: "bbbbbbbb", version: "actual-version" },
-          },
+        await expect(readVerifiedGitUpdateReceipt()).resolves.toEqual({
+          root: await fs.realpath(installRoot),
+          sha: "bbbbbbbb",
+          upstreamRef: "origin/main",
+          installedAtMs: ts,
         });
       });
     });
@@ -604,19 +612,36 @@ describe("restart sentinel", () => {
         process.cwd(),
       );
 
-      await expect(readUpdateInstallReceipt()).resolves.toBeNull();
+      await expect(readVerifiedGitUpdateReceipt()).resolves.toBeNull();
     });
   });
 
-  it("rejects a restarted Git revision that does not match the update result", async () => {
+  it.each([
+    {
+      name: "successful update",
+      status: "ok",
+      runningCommit: "cccccccc",
+      beforeSha: undefined,
+      expectedReason: "restart-revision-mismatch",
+    },
+    {
+      name: "error-status update",
+      status: "error",
+      runningCommit: "aaaaaaaa",
+      beforeSha: "aaaaaaaa",
+      expectedReason: "managed-service-handoff-failed",
+    },
+  ] as const)("rejects a $name whose running Git revision does not match", async (testCase) => {
     await withRestartSentinelStateDir(async () => {
       await writeRestartSentinel({
         kind: "update",
-        status: "ok",
+        status: testCase.status,
         ts: Date.now(),
         stats: {
           mode: "git",
           root: process.cwd(),
+          ...(testCase.beforeSha ? { before: { sha: testCase.beforeSha } } : {}),
+          ...(testCase.status === "error" ? { reason: "managed-service-handoff-failed" } : {}),
           after: { sha: "bbbbbbbb", version: "expected-version" },
         },
       });
@@ -624,17 +649,17 @@ describe("restart sentinel", () => {
       await finalizeUpdateRestartSentinelRunningVersion(
         "actual-version",
         process.env,
-        "cccccccc",
+        testCase.runningCommit,
         process.cwd(),
       );
 
       await expect(readRestartSentinel()).resolves.toMatchObject({
         payload: {
           status: "error",
-          stats: { reason: "restart-revision-mismatch" },
+          stats: { reason: testCase.expectedReason },
         },
       });
-      await expect(readUpdateInstallReceipt()).resolves.toBeNull();
+      await expect(readVerifiedGitUpdateReceipt()).resolves.toBeNull();
     });
   });
 
@@ -670,7 +695,7 @@ describe("restart sentinel", () => {
             stats: { reason: "restart-root-mismatch" },
           },
         });
-        await expect(readUpdateInstallReceipt()).resolves.toBeNull();
+        await expect(readVerifiedGitUpdateReceipt()).resolves.toBeNull();
       });
     });
   });
