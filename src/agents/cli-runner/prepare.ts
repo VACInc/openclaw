@@ -1333,24 +1333,31 @@ export async function prepareCliRunContext(
     // returned nor previously stored id is authority for cross-process continuity.
     const ignoreCliSessionCandidate =
       isSideQuestion || preparedBackendFinal.backend.sessionMode === "none";
+    // Native controls target the already-owned transcript without rebuilding its turn-time MCP
+    // topology. Re-validating that topology here would discard the session being compacted.
+    const controlOperationCliSessionId = isControlOperation
+      ? params.cliSessionBinding?.sessionId.trim() || params.cliSessionId?.trim()
+      : undefined;
     const reusableCliSessionCandidate: CliReusableSession = ignoreCliSessionCandidate
       ? { mode: "none" }
-      : params.cliSessionBinding
-        ? resolveCliSessionReuse({
-            binding: params.cliSessionBinding,
-            authProfileId: effectiveAuthProfileId,
-            authEpoch,
-            authEpochVersion: CLI_AUTH_EPOCH_VERSION,
-            extraSystemPromptHash,
-            messageToolPolicyHash,
-            promptToolNamesHash,
-            cwdHash,
-            mcpConfigHash: preparedBackendFinal.mcpConfigHash,
-            mcpResumeHash: preparedBackendFinal.mcpResumeHash,
-          })
-        : params.cliSessionId
-          ? { mode: "reuse", sessionId: params.cliSessionId }
-          : { mode: "none" };
+      : controlOperationCliSessionId
+        ? { mode: "reuse", sessionId: controlOperationCliSessionId }
+        : params.cliSessionBinding
+          ? resolveCliSessionReuse({
+              binding: params.cliSessionBinding,
+              authProfileId: effectiveAuthProfileId,
+              authEpoch,
+              authEpochVersion: CLI_AUTH_EPOCH_VERSION,
+              extraSystemPromptHash,
+              messageToolPolicyHash,
+              promptToolNamesHash,
+              cwdHash,
+              mcpConfigHash: preparedBackendFinal.mcpConfigHash,
+              mcpResumeHash: preparedBackendFinal.mcpResumeHash,
+            })
+          : params.cliSessionId
+            ? { mode: "reuse", sessionId: params.cliSessionId }
+            : { mode: "none" };
     const backendReusableCliSession: CliReusableSession =
       reusableCliSessionCandidate.mode === "reuse-with-drift" &&
       !canTransportSystemPrompt(preparedBackendFinal.backend)

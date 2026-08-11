@@ -4470,6 +4470,11 @@ describe("runCliAgent reliability", () => {
         timeoutMs: 180_000,
         runId: "run-native-compact",
         cliSessionId: "native-session",
+        cliSessionBinding: {
+          sessionId: "native-session",
+          mcpConfigHash: "persisted-mcp-config",
+          mcpResumeHash: "persisted-mcp-resume",
+        },
         controlOperation: "compact",
       });
 
