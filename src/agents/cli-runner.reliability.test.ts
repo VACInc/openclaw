@@ -4508,6 +4508,7 @@ describe("runCliAgent reliability", () => {
 
     try {
       const context = await prepareCliRunContext({
+        admittedRunContext: createTestAdmittedRunContext("run-native-compact"),
         sessionId: "s1",
         sessionFile,
         workspaceDir: dir,

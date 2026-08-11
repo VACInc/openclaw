@@ -38,7 +38,7 @@ const liveSessionRequirement = {
 } as const;
 
 function createBackend(overrides: Partial<CliBackendPlugin> = {}): CliBackendPlugin {
-  return {
+  const backend = {
     id: "acme-cli",
     modelProvider: "acme",
     config: {
@@ -49,9 +49,9 @@ function createBackend(overrides: Partial<CliBackendPlugin> = {}): CliBackendPlu
       modelArg: "--model",
       sessionArgs: ["--session", "{sessionId}"],
       sessionMode: "existing",
-    },
+    } satisfies CliBackendConfig,
     bundleMcp: true,
-    bundleMcpMode: "claude-config-file",
+    bundleMcpMode: "claude-config-file" as const,
     runtimeArtifact,
     liveSessionRequirement,
     liveTest: {
@@ -65,6 +65,9 @@ function createBackend(overrides: Partial<CliBackendPlugin> = {}): CliBackendPlu
     },
     ...overrides,
   };
+  return backend.manualCompaction
+    ? { ...backend, ownsNativeCompaction: true, manualCompaction: backend.manualCompaction }
+    : { ...backend, manualCompaction: undefined };
 }
 
 function createBooleanOwnershipBackend(ownsNativeCompaction: boolean): CliBackendPlugin {

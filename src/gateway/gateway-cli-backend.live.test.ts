@@ -4,7 +4,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { resolveCliBackendConfig, resolveCliBackendLiveTest } from "../agents/cli-backends.js";
+import {
+  resolveCliBackendConfig,
+  resolveCliBackendLiveTest,
+  type ResolvedCliBackend,
+} from "../agents/cli-backends.js";
 import { testing as cliBackendsTesting } from "../agents/cli-backends.test-support.js";
 import { getClaudeGeneration } from "../agents/cli-runner/claude-live-registry.js";
 import { isLiveTestEnabled } from "../agents/live-test-helpers.js";
@@ -68,6 +72,21 @@ const describeLive = LIVE && CLI_LIVE ? describe : describe.skip;
 const MCP_SCHEMA_PROBE_PLUGIN_ID = "mcp-schema-probe";
 const MCP_SCHEMA_PROBE_TOOL_NAME = "mcp_schema_probe_no_args";
 const CLI_CONTINUITY_PROBE_PLUGIN_ID = "cli-continuity-probe";
+
+type RuntimeCliBackend = ReturnType<
+  (typeof import("../plugins/cli-backends.runtime.js"))["resolveRuntimeCliBackends"]
+>[number];
+
+function toRuntimeCliBackend(backend: ResolvedCliBackend, pluginId: string): RuntimeCliBackend {
+  const registered = { ...backend, pluginId };
+  return registered.manualCompaction
+    ? {
+        ...registered,
+        ownsNativeCompaction: true,
+        manualCompaction: registered.manualCompaction,
+      }
+    : { ...registered, manualCompaction: undefined };
+}
 
 const DEFAULT_PROVIDER = "claude-cli";
 const DEFAULT_MODEL =
@@ -410,26 +429,28 @@ describeLive("gateway live (cli backend)", () => {
         await fs.writeFile(mcpConfigPath, `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`);
         cliArgs = withClaudeMcpConfigOverrides(baseCliArgs, mcpConfigPath);
       }
-      const liveBackend = {
-        ...backendResolved,
-        pluginId: backendResolved.pluginId ?? providerId,
-        config: {
-          ...providerDefaults,
-          command: cliCommand,
-          args: cliArgs,
-          resumeArgs: baseCliResumeArgs,
-          clearEnv: filteredCliClearEnv.length > 0 ? filteredCliClearEnv : undefined,
-          env: Object.keys(preservedCliEnv).length > 0 ? preservedCliEnv : undefined,
-          systemPromptWhen: providerDefaults.systemPromptWhen ?? "never",
-          ...(cliImageArg
-            ? {
-                imageArg: cliImageArg,
-                imageMode: cliImageMode,
-                imagePathScope: providerDefaults.imagePathScope,
-              }
-            : {}),
+      const liveBackend = toRuntimeCliBackend(
+        {
+          ...backendResolved,
+          config: {
+            ...providerDefaults,
+            command: cliCommand,
+            args: cliArgs,
+            resumeArgs: baseCliResumeArgs,
+            clearEnv: filteredCliClearEnv.length > 0 ? filteredCliClearEnv : undefined,
+            env: Object.keys(preservedCliEnv).length > 0 ? preservedCliEnv : undefined,
+            systemPromptWhen: providerDefaults.systemPromptWhen ?? "never",
+            ...(cliImageArg
+              ? {
+                  imageArg: cliImageArg,
+                  imageMode: cliImageMode,
+                  imagePathScope: providerDefaults.imagePathScope,
+                }
+              : {}),
+          },
         },
-      };
+        backendResolved.pluginId ?? providerId,
+      );
       cliBackendsTesting.setDepsForTest({
         resolvePluginSetupCliBackend: () => undefined,
         resolveRuntimeCliBackends: () => [liveBackend],
@@ -543,11 +564,13 @@ describeLive("gateway live (cli backend)", () => {
           // isolates the exact warm-session path while leaving production defaults untouched.
           cliBackendsTesting.setDepsForTest({
             resolveRuntimeCliBackends: () => [
-              {
-                ...liveBackend,
-                pluginId: liveBackend.pluginId ?? CLI_CONTINUITY_PROBE_PLUGIN_ID,
-                bundleMcp: false,
-              },
+              toRuntimeCliBackend(
+                {
+                  ...liveBackend,
+                  bundleMcp: false,
+                },
+                liveBackend.pluginId ?? CLI_CONTINUITY_PROBE_PLUGIN_ID,
+              ),
             ],
           });
         }
