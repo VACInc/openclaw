@@ -223,6 +223,21 @@ describe("resolveManualCompactionCliTarget", () => {
     ).toEqual({});
   });
 
+  it("does not reuse an unlocked historical harness binding after a provider switch", () => {
+    expect(
+      resolveManualCompactionCliTarget({
+        provider: "openai",
+        entry: {
+          agentHarnessId: "claude-cli",
+          modelSelectionLocked: false,
+          cliSessionBindings: {
+            "claude-cli": { sessionId: "stale-claude-session" },
+          },
+        },
+      }),
+    ).toEqual({});
+  });
+
   it("keeps an explicit runtime authoritative when it has no binding yet", () => {
     expect(
       resolveManualCompactionCliTarget({

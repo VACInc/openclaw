@@ -1398,7 +1398,10 @@ export async function prepareCliRunContext(
         : reusableCliSessionCandidate;
     const candidateClaudeCliSessionId =
       resolveReusableCliSessionId(backendReusableCliSession)?.trim() || undefined;
+    // Control operations must keep the exact native session they were asked to mutate.
+    // Ordinary-turn transcript recovery must not turn `/compact` into a fresh session.
     const hasClaudeCliCandidate =
+      !isControlOperation &&
       !nodeClaudePlacement &&
       candidateClaudeCliSessionId !== undefined &&
       isClaudeCliProvider(params.provider);
