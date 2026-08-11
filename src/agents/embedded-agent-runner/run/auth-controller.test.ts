@@ -579,7 +579,7 @@ describe("createEmbeddedRunAuthController", () => {
   it("preserves the transient cooldown probe for a rate-limited backup after a billing-disabled pin", async () => {
     const harness = createMutableAuthControllerHarness();
     const now = Date.now();
-    mocks.getApiKeyForModel.mockImplementation(async ({ profileId }) => ({
+    mocks.getApiKeyForModelCore.mockImplementation(async ({ profileId }) => ({
       apiKey: `${String(profileId)}-key`,
       mode: "api-key" as const,
       profileId,
@@ -608,8 +608,8 @@ describe("createEmbeddedRunAuthController", () => {
 
     await controller.initializeAuthProfile();
 
-    expect(mocks.getApiKeyForModel).toHaveBeenCalledOnce();
-    expect(mocks.getApiKeyForModel).toHaveBeenCalledWith(
+    expect(mocks.getApiKeyForModelCore).toHaveBeenCalledOnce();
+    expect(mocks.getApiKeyForModelCore).toHaveBeenCalledWith(
       expect.objectContaining({ profileId: "backup" }),
     );
     expect(harness.profileIndex).toBe(1);
