@@ -20,7 +20,7 @@ beforeAll(async () => {
     getRuntimeConfig: () => testConfig,
   }));
   vi.doMock("../../config/sessions/paths.js", () => ({
-    resolveStorePath: () => "/tmp/health-timeout-sessions.json",
+    resolveSessionStorePathCore: () => "/tmp/health-timeout-sessions.json",
   }));
   vi.doMock("../../config/sessions/session-accessor.js", () => ({
     listSessionEntriesReadOnly: () => [],
