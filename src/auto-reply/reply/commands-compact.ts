@@ -286,11 +286,15 @@ export const handleCompactCommand: CommandHandler = async (params) => {
     skillsSnapshot: targetSessionEntry.skillsSnapshot,
     provider: params.provider,
     model: params.model,
-    authProfileId: targetSessionEntry.authProfileOverride,
+    authProfileId:
+      compactionCliTarget.cliSessionBinding?.authProfileId ??
+      targetSessionEntry.authProfileOverride,
     authProfileIdSource: resolveSessionAuthProfileOverrideSource(targetSessionEntry),
     contextTokenBudget,
     agentHarnessId: compactionCliTarget.agentHarnessId,
     cliSessionId: compactionCliTarget.cliSessionId,
+    cliSessionBinding: compactionCliTarget.cliSessionBinding,
+    sessionEntry: targetSessionEntry,
     modelSelectionLocked: targetSessionEntry.modelSelectionLocked === true,
     thinkLevel: params.resolvedThinkLevel ?? (await params.resolveDefaultThinkingLevel()),
     bashElevated: {

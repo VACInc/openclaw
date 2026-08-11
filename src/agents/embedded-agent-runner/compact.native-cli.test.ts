@@ -47,6 +47,11 @@ function registerBackend(overrides: Partial<CliBackendPlugin> = {}) {
 }
 
 function compactParams(overrides: Record<string, unknown> = {}) {
+  const cliSessionBinding = {
+    sessionId: "native-session",
+    authProfileId: "anthropic:subscription",
+  };
+  const sessionEntry = { execHost: "node", execNode: "paired-node" };
   return {
     sessionId: "openclaw-session",
     sessionKey: "agent:main:main",
@@ -65,6 +70,8 @@ function compactParams(overrides: Record<string, unknown> = {}) {
     model: "opus",
     trigger: "manual",
     cliSessionId: "native-session",
+    cliSessionBinding,
+    sessionEntry,
     customInstructions: "keep decisions",
     preparedModelRuntime: {},
     ...overrides,
@@ -96,6 +103,12 @@ describe("native CLI manual compaction", () => {
         provider: "claude-cli",
         modelProvider: "anthropic",
         cliSessionId: "native-session",
+        cliSessionBinding: {
+          sessionId: "native-session",
+          authProfileId: "anthropic:subscription",
+        },
+        authProfileId: "anthropic:subscription",
+        sessionEntry: { execHost: "node", execNode: "paired-node" },
         controlOperation: "compact",
         disableCliLiveSession: true,
         allowEmptyAssistantReplyAsSilent: true,
@@ -108,7 +121,10 @@ describe("native CLI manual compaction", () => {
 
     const result = await testing.compactNativeCliSession({
       runtime: "claude-cli",
-      compactParams: compactParams({ cliSessionId: undefined }),
+      compactParams: compactParams({
+        cliSessionId: undefined,
+        cliSessionBinding: undefined,
+      }),
     });
 
     expect(result).toMatchObject({ ok: false, compacted: false });

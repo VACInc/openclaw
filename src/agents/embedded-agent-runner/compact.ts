@@ -93,7 +93,8 @@ export async function compactNativeCliSession(params: {
       reason: `CLI backend "${runtime}" owns compaction but does not support manual compaction.`,
     };
   }
-  const cliSessionId = params.compactParams.cliSessionId?.trim();
+  const cliSessionBinding = params.compactParams.cliSessionBinding;
+  const cliSessionId = (cliSessionBinding?.sessionId ?? params.compactParams.cliSessionId)?.trim();
   if (!cliSessionId) {
     return {
       ok: false,
@@ -120,6 +121,15 @@ export async function compactNativeCliSession(params: {
       timeoutMs: resolveCompactionTimeoutMs(params.compactParams.config),
       runId: `${params.compactParams.runId ?? params.compactParams.sessionId}:native-compact`,
       cliSessionId,
+      ...(cliSessionBinding ? { cliSessionBinding } : {}),
+      ...(cliSessionBinding?.authProfileId
+        ? { authProfileId: cliSessionBinding.authProfileId }
+        : params.compactParams.authProfileId
+          ? { authProfileId: params.compactParams.authProfileId }
+          : {}),
+      ...(params.compactParams.sessionEntry
+        ? { sessionEntry: params.compactParams.sessionEntry }
+        : {}),
       trigger: "manual",
       controlOperation: "compact",
       disableCliLiveSession: true,

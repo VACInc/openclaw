@@ -96,6 +96,7 @@ describe("resolveManualCompactionCliTarget", () => {
       }),
     ).toEqual({
       agentHarnessId: "claude-cli",
+      cliSessionBinding: { sessionId: "native-claude-session" },
       cliSessionId: "native-claude-session",
     });
   });
@@ -128,6 +129,7 @@ describe("resolveManualCompactionCliTarget", () => {
       }),
     ).toEqual({
       agentHarnessId: "claude-cli",
+      cliSessionBinding: { sessionId: "native-claude-session" },
       cliSessionId: "native-claude-session",
     });
   });
@@ -163,6 +165,7 @@ describe("resolveManualCompactionCliTarget", () => {
       }),
     ).toEqual({
       agentHarnessId: "claude-cli",
+      cliSessionBinding: { sessionId: "native-claude-session" },
       cliSessionId: "native-claude-session",
     });
   });
@@ -231,6 +234,33 @@ describe("resolveManualCompactionCliTarget", () => {
           },
         },
       }),
-    ).toEqual({ agentHarnessId: "claude-cli", cliSessionId: undefined });
+    ).toEqual({
+      agentHarnessId: "claude-cli",
+      cliSessionBinding: undefined,
+      cliSessionId: undefined,
+    });
+  });
+
+  it("preserves the selected auth profile on the native binding", () => {
+    expect(
+      resolveManualCompactionCliTarget({
+        provider: "anthropic",
+        entry: {
+          cliSessionBindings: {
+            "claude-cli": {
+              sessionId: "native-claude-session",
+              authProfileId: "anthropic:subscription",
+            },
+          },
+        },
+      }),
+    ).toEqual({
+      agentHarnessId: "claude-cli",
+      cliSessionBinding: {
+        sessionId: "native-claude-session",
+        authProfileId: "anthropic:subscription",
+      },
+      cliSessionId: "native-claude-session",
+    });
   });
 });

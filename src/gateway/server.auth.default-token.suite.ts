@@ -25,7 +25,7 @@ import {
   resolvePreauthHandshakeTimeoutMs,
   rpcReq,
   sendRawConnectReq,
-  startGatewayServer,
+  startTestGatewayServer,
   TEST_OPERATOR_CLIENT,
   waitForWsClose,
   withGatewayServer,
@@ -34,12 +34,12 @@ import {
 
 export function registerDefaultAuthTokenSuite(): void {
   describe("default auth (token)", () => {
-    let server: Awaited<ReturnType<typeof startGatewayServer>> | undefined;
+    let server: Awaited<ReturnType<typeof startTestGatewayServer>> | undefined;
     let port: number;
 
     beforeAll(async () => {
       port = await getFreePort();
-      server = await startGatewayServer(port);
+      server = await startTestGatewayServer(port);
     });
 
     afterAll(async () => {
@@ -158,6 +158,9 @@ export function registerDefaultAuthTokenSuite(): void {
       );
       expect(payload?.features?.capabilities).toContain(
         GATEWAY_SERVER_CAPS.CHAT_SEND_ROUTING_CONTRACT,
+      );
+      expect(payload?.features?.capabilities).toContain(
+        GATEWAY_SERVER_CAPS.SYSTEM_AGENT_WIZARD_CANCEL,
       );
       expect(payload?.features?.capabilities).toContain(
         GATEWAY_SERVER_CAPS.SYSTEM_AGENT_SETUP_MODEL_REF,

@@ -3,7 +3,7 @@
  *
  * Resolves persisted runtime overrides without leaking provider-specific CLI runtime bindings across model routes.
  */
-import type { SessionEntry } from "../config/sessions.js";
+import type { CliSessionBinding, SessionEntry } from "../config/sessions.js";
 import { getCliSessionBinding } from "../config/sessions/cli-session-binding.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isDefaultAgentRuntimeId } from "./agent-runtime-id.js";
@@ -31,6 +31,7 @@ type ManualCompactionRuntimeEntry = Pick<
 
 type ManualCompactionCliTarget = {
   agentHarnessId?: string;
+  cliSessionBinding?: CliSessionBinding;
   cliSessionId?: string;
 };
 
@@ -120,9 +121,11 @@ export function resolveManualCompactionCliTarget(params: {
       : (selectedRuntime ??
         (params.entry?.agentRuntimeOverride ? undefined : params.entry?.agentHarnessId));
   if (persistedRuntime) {
+    const cliSessionBinding = getCliSessionBinding(params.entry, persistedRuntime);
     return {
       agentHarnessId: persistedRuntime,
-      cliSessionId: getCliSessionBinding(params.entry, persistedRuntime)?.sessionId,
+      cliSessionBinding,
+      cliSessionId: cliSessionBinding?.sessionId,
     };
   }
 
@@ -143,9 +146,7 @@ export function resolveManualCompactionCliTarget(params: {
     const binding = compatibleRuntime
       ? getCliSessionBinding(params.entry, compatibleRuntime)
       : undefined;
-    return compatibleRuntime && binding
-      ? [{ runtime: compatibleRuntime, sessionId: binding.sessionId }]
-      : [];
+    return compatibleRuntime && binding ? [{ runtime: compatibleRuntime, binding }] : [];
   });
   const compatibleBinding = compatibleBindings.length === 1 ? compatibleBindings[0] : undefined;
   if (!compatibleBinding) {
@@ -153,6 +154,7 @@ export function resolveManualCompactionCliTarget(params: {
   }
   return {
     agentHarnessId: compatibleBinding.runtime,
-    cliSessionId: compatibleBinding.sessionId,
+    cliSessionBinding: compatibleBinding.binding,
+    cliSessionId: compatibleBinding.binding.sessionId,
   };
 }

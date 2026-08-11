@@ -276,7 +276,7 @@ type CliBackendManualCompaction = Readonly<{
 }>;
 
 /** Plugin-owned CLI backend defaults used by the text-only CLI runner. */
-export type CliBackendPlugin = {
+type CliBackendPluginBase = {
   /** Provider id used in model refs, for example `claude-cli/opus`. */
   id: string;
   /** Canonical model provider whose models this CLI backend can execute. */
@@ -288,16 +288,6 @@ export type CliBackendPlugin = {
    * driven through the generic CLI runner.
    */
   contextEngineHostCapabilities?: readonly ContextEngineHostCapability[];
-  /**
-   * Backend-owned compaction for non-harness CLI sessions.
-   * Set only when the backend bounds its own transcript and persists resumable state.
-   */
-  ownsNativeCompaction?: boolean;
-  /**
-   * Complete control-operation contract for manually compacting an existing
-   * resumable session. Requires `ownsNativeCompaction`.
-   */
-  manualCompaction?: CliBackendManualCompaction;
   /**
    * Whether embedded runs opted into `cliBackendDispatch: "subscription-auth"`
    * execute through this backend when the selected credential is
@@ -440,3 +430,18 @@ export type CliBackendPlugin = {
    */
   sideQuestionToolMode?: CliBackendSideQuestionToolMode;
 };
+
+type CliBackendNativeCompactionContract =
+  | {
+      /** Backend-owned compaction for a persisted resumable CLI transcript. */
+      ownsNativeCompaction: true;
+      /** Optional control operation for explicit manual compaction. */
+      manualCompaction?: CliBackendManualCompaction;
+    }
+  | {
+      ownsNativeCompaction?: false;
+      manualCompaction?: never;
+    };
+
+/** Plugin-owned CLI backend defaults used by the text-only CLI runner. */
+export type CliBackendPlugin = CliBackendPluginBase & CliBackendNativeCompactionContract;

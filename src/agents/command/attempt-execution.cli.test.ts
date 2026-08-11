@@ -325,7 +325,7 @@ function makeRunAgentAttemptParams(overrides: RunAgentAttemptOverrides): RunAgen
 
 const runCliAgentMock = vi.hoisted(() => vi.fn());
 const runEmbeddedAgentMock = vi.hoisted(() => vi.fn());
-const hasClaudeLiveSessionForOwnerMock = vi.hoisted(() => vi.fn(() => false));
+const hasClaudeSessionMock = vi.hoisted(() => vi.fn(() => false));
 const providerAuthAliasMocks = vi.hoisted(() => ({
   resolveProviderAuthAliasMap: vi.fn(() => ({})),
   resolveProviderIdForAuth: vi.fn(
@@ -352,9 +352,9 @@ vi.mock("../cli-runner.js", () => ({
   runCliAgent: runCliAgentMock,
 }));
 
-vi.mock("../cli-runner/claude-live-session.js", () => ({
-  getClaudeLiveSessionGenerationForOwner: vi.fn(() => undefined),
-  hasClaudeLiveSessionForOwner: hasClaudeLiveSessionForOwnerMock,
+vi.mock("../cli-runner/claude-live-registry.js", () => ({
+  getClaudeGeneration: vi.fn(() => undefined),
+  hasClaudeSession: hasClaudeSessionMock,
 }));
 
 vi.mock("../model-selection.js", () => ({
@@ -647,8 +647,8 @@ describe("CLI attempt execution", () => {
     runCliAgentMock.mockReset();
     runEmbeddedAgentMock.mockReset();
     resetGeneratedMediaTaskActivityForTests();
-    hasClaudeLiveSessionForOwnerMock.mockReset();
-    hasClaudeLiveSessionForOwnerMock.mockReturnValue(false);
+    hasClaudeSessionMock.mockReset();
+    hasClaudeSessionMock.mockReturnValue(false);
     providerAuthAliasMocks.resolveProviderAuthAliasMap.mockClear();
     providerAuthAliasMocks.resolveProviderIdForAuth.mockClear();
     cliBackendsTesting.setDepsForTest({
@@ -730,7 +730,6 @@ describe("CLI attempt execution", () => {
             DELETE FROM auth_profile_store;
             DELETE FROM auth_profile_state;
             DELETE FROM cache_entries;
-            DELETE FROM state_leases;
           `);
         },
         database,
@@ -1455,7 +1454,7 @@ describe("CLI attempt execution", () => {
     const sessionEntry = makeClaudeCliSessionEntry("openclaw-sid", cliSessionId);
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
     await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
-    hasClaudeLiveSessionForOwnerMock.mockReturnValue(true);
+    hasClaudeSessionMock.mockReturnValue(true);
     runCliAgentMock.mockResolvedValueOnce(makeCliResult("ok"));
 
     await runClaudeCliAttempt({
@@ -1474,7 +1473,7 @@ describe("CLI attempt execution", () => {
       sessionId: cliSessionId,
       authProfileId: "anthropic:claude-cli",
     });
-    expect(hasClaudeLiveSessionForOwnerMock).toHaveBeenCalledWith({
+    expect(hasClaudeSessionMock).toHaveBeenCalledWith({
       backendId: "claude-cli",
       agentAccountId: undefined,
       agentId: "main",
@@ -2131,6 +2130,11 @@ describe("CLI attempt execution", () => {
       sessionAgentId: "main",
       sessionCwd: tmpDir,
       config: {},
+      userMessage: {
+        role: "user",
+        content: "duplicate custom ask",
+        timestamp: Date.now(),
+      },
       skipUserTurn: true,
     });
 
@@ -2900,7 +2904,7 @@ describe("CLI attempt execution", () => {
     expect(runEmbeddedAgentMock).not.toHaveBeenCalled();
   });
 
-  it("stamps CLI prompts with current timestamp context", async () => {
+  it("stamps CLI prompts and forwards the transcript target", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2024-06-05T15:30:00Z"));
     const sessionKey = "agent:main:direct:claude-timestamp";
@@ -2919,6 +2923,12 @@ describe("CLI attempt execution", () => {
         storePath,
       }),
     });
+    const sessionTarget = {
+      agentId: "main",
+      sessionId: sessionEntry.sessionId,
+      sessionKey,
+      storePath,
+    };
     await runStoredAttempt({
       providerOverride: "claude-cli",
       modelOverride: "opus",
@@ -2930,6 +2940,7 @@ describe("CLI attempt execution", () => {
       runId: "run-cli-timestamp",
       messageChannel: "discord",
       sessionStore,
+      sessionTarget,
       userTurnTranscriptRecorder,
     });
 
@@ -2938,6 +2949,7 @@ describe("CLI attempt execution", () => {
       transcriptPrompt: "canonical timestamp question",
       imagePrompt: "what time is it?",
       userTurnTranscriptRecorder,
+      sessionTarget,
       suppressNextUserMessagePersistence: false,
     });
   });

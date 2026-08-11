@@ -120,7 +120,7 @@ import {
 } from "../workspace.js";
 import { CliAuthProfilePreparationError } from "./auth-profile-preparation-error.js";
 import { prepareCliBundleMcpConfig } from "./bundle-mcp.js";
-import { getClaudeLiveSessionGenerationForOwner } from "./claude-live-session.js";
+import { getClaudeGeneration } from "./claude-live-registry.js";
 import { prepareClaudeCliSkillsPlugin } from "./claude-skills-plugin.js";
 import {
   resolveBundledCliBackendAuthPolicy,
@@ -188,7 +188,7 @@ const prepareDeps = {
   prepareClaudeCliSkillsPlugin,
   claudeCliSessionTranscriptHasContent,
   claudeCliSessionTranscriptHasOrphanedToolUse,
-  getClaudeLiveSessionGenerationForOwner,
+  getClaudeGeneration,
   readExternalCliBootstrapCredential,
   resolveApiKeyForProfile,
 };
@@ -1375,7 +1375,7 @@ export async function prepareCliRunContext(
       preparedBackendFinal.backend.liveSession === "claude-stdio" &&
       preparedBackendFinal.backend.output === "jsonl" &&
       preparedBackendFinal.backend.input === "stdin" &&
-      prepareDeps.getClaudeLiveSessionGenerationForOwner({
+      prepareDeps.getClaudeGeneration({
         backendId: backendResolved.id,
         agentAccountId: params.agentAccountId,
         agentId: params.agentId,
@@ -1407,14 +1407,13 @@ export async function prepareCliRunContext(
         `cli session reset: provider=${params.provider} reason=${invalidatedReason}`,
       );
     }
-    const heartbeatPrompt =
-      skipsTurnPreparation || params.bootstrapContextRunKind === "commitment-only"
-        ? undefined
-        : resolveHeartbeatPromptForSystemPrompt({
-            config: params.config,
-            agentId: sessionAgentId,
-            defaultAgentId,
-          });
+    const heartbeatPrompt = skipsTurnPreparation
+      ? undefined
+      : resolveHeartbeatPromptForSystemPrompt({
+          config: params.config,
+          agentId: sessionAgentId,
+          defaultAgentId,
+        });
     const openClawReferences = skipsTurnPreparation
       ? { docsPath: null, sourcePath: null }
       : await prepareDeps.resolveOpenClawReferencePaths({
@@ -1686,6 +1685,8 @@ export async function prepareCliRunContext(
         admission: params.userTurnTranscriptRecorder?.getAdmissionReceipt(),
         isHeartbeat: isHeartbeatLifecycleRunKind(params.bootstrapContextRunKind),
         lease: params.contextEngineLogicalTurnLease,
+        recorder: params.userTurnTranscriptRecorder,
+        sessionTarget: params.sessionTarget,
       });
       resolvedContextEngine = params.contextEngineLogicalTurnLease.begin().engine;
     } else {
