@@ -67,6 +67,16 @@ function createBackend(overrides: Partial<CliBackendPlugin> = {}): CliBackendPlu
   };
 }
 
+function createBooleanOwnershipBackend(ownsNativeCompaction: boolean): CliBackendPlugin {
+  return {
+    id: "boolean-ownership-cli",
+    modelProvider: "acme",
+    config: { command: "acme" },
+    bundleMcp: false,
+    ownsNativeCompaction,
+  };
+}
+
 function runtimeEntry(
   overrides: Partial<CliBackendPlugin> = {},
   pluginId = "acme-plugin",
@@ -108,6 +118,10 @@ afterEach(() => {
 });
 
 describe("resolveCliBackendConfig", () => {
+  it("accepts boolean native-compaction ownership without a manual contract", () => {
+    expect(createBooleanOwnershipBackend(true).ownsNativeCompaction).toBe(true);
+  });
+
   it("returns the plugin-owned command adapter and registration metadata", () => {
     const resolved = requireBackend();
 
