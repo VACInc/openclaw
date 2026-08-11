@@ -583,17 +583,18 @@ export function createEmbeddedRunAuthController(params: {
   const advanceAuthProfile = async (): Promise<boolean> => {
     let nextIndex = params.getProfileIndex() + 1;
     while (nextIndex < params.profileCandidates.length) {
-      const candidate = params.profileCandidates[nextIndex];
+      const candidateIndex = nextIndex++;
+      const candidate = params.profileCandidates[candidateIndex];
+      // Candidate exhaustion is run-local and never depends on a cooldown write.
+      params.setProfileIndex(candidateIndex);
       if (
         candidate &&
         isProfileInCooldown(params.authStore, candidate, undefined, params.getModelId())
       ) {
-        nextIndex += 1;
         continue;
       }
       try {
-        await applyApiKeyInfo(candidate, nextIndex);
-        params.setProfileIndex(nextIndex);
+        await applyApiKeyInfo(candidate, candidateIndex);
         params.setThinkLevel(params.initialThinkLevel);
         params.attemptedThinking.clear();
         return true;
@@ -601,9 +602,9 @@ export function createEmbeddedRunAuthController(params: {
         if (err instanceof SecretSurfaceUnavailableError) {
           throw err;
         }
-        nextIndex += 1;
       }
     }
+    params.setProfileIndex(params.profileCandidates.length);
     return false;
   };
 

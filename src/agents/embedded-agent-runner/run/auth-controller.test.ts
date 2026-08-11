@@ -374,6 +374,36 @@ describe("createEmbeddedRunAuthController", () => {
     expect(setRuntimeApiKey).toHaveBeenLastCalledWith("custom-openai", "backup-source-key");
   });
 
+  it("exhausts the remaining auth profile after a non-cooling failure", async () => {
+    const harness = createMutableAuthControllerHarness();
+    mocks.getApiKeyForModel.mockImplementation(async ({ profileId }) => {
+      if (profileId === "backup") {
+        throw new Error("provider overloaded");
+      }
+      return {
+        apiKey: "default-key",
+        mode: "api-key" as const,
+        profileId,
+        source: `profile:${String(profileId)}`,
+      };
+    });
+    mocks.prepareProviderRuntimeAuth.mockResolvedValue(undefined);
+    const controller = createMutableEmbeddedRunAuthController({
+      harness,
+      setRuntimeApiKey: vi.fn(),
+      profileCandidates: ["default", "backup"],
+    });
+
+    await controller.initializeAuthProfile();
+    await expect(controller.advanceAuthProfile()).resolves.toBe(false);
+    await expect(controller.advanceAuthProfile()).resolves.toBe(false);
+
+    expect(
+      mocks.getApiKeyForModel.mock.calls.filter(([params]) => params.profileId === "backup"),
+    ).toHaveLength(1);
+    expect(harness.profileIndex).toBe(2);
+  });
+
   it("unwraps a sentinel for runtime auth exchange but keeps auth storage opaque", async () => {
     const harness = createMutableAuthControllerHarness();
     const setRuntimeApiKey = vi.fn<(provider: string, apiKey: string) => void>();

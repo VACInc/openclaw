@@ -378,9 +378,11 @@ export async function prepareEmbeddedRunRuntime(input: {
     }
     let nextIndex = profileIndex + 1;
     while (nextIndex < preparedAuthAttempts.length) {
-      const candidateAttempt = preparedAuthAttempts[nextIndex];
+      const candidateIndex = nextIndex++;
+      const candidateAttempt = preparedAuthAttempts[candidateIndex];
+      // Harness-owned auth shares the controller's run-local exhaustion invariant.
+      profileIndex = candidateIndex;
       if (!candidateAttempt) {
-        nextIndex += 1;
         continue;
       }
       const candidate = candidateAttempt.profileId;
@@ -389,7 +391,6 @@ export async function prepareEmbeddedRunRuntime(input: {
         isProfileInCooldown(attemptAuthProfileStore, candidate, undefined, modelId)
       ) {
         if (didTransientCooldownProbe || !cooldownProbePolicy.probeProfileIds.has(candidate)) {
-          nextIndex += 1;
           continue;
         }
         didTransientCooldownProbe = true;
@@ -403,22 +404,20 @@ export async function prepareEmbeddedRunRuntime(input: {
           priorProfileAttempted: preparedProfileAttempted,
         })
       ) {
+        profileIndex = preparedAuthAttempts.length;
         return false;
       }
       if (candidateAttempt.plan.modelRoute?.authRequirement === "api-key") {
         try {
-          await authController.applyAuthProfileCandidate(candidate, nextIndex);
-          profileIndex = nextIndex;
+          await authController.applyAuthProfileCandidate(candidate, candidateIndex);
           thinkLevel = initialThinkLevel;
           attemptedThinking.clear();
           return true;
         } catch {
-          nextIndex += 1;
           continue;
         }
       }
       if (!candidate || candidateAttempt.plan.forwardedAuthProfileId !== candidate) {
-        nextIndex += 1;
         continue;
       }
       const prepared = await prepareAuthAttempt(candidateAttempt);
@@ -426,12 +425,12 @@ export async function prepareEmbeddedRunRuntime(input: {
       apiKeyInfo = null;
       runtimeAuthState = null;
       prepared.commit();
-      profileIndex = nextIndex;
       lastProfileId = candidate;
       thinkLevel = initialThinkLevel;
       attemptedThinking.clear();
       return true;
     }
+    profileIndex = preparedAuthAttempts.length;
     return false;
   };
   const advanceAttemptAuthProfile = pluginHarnessOwnsAuthBootstrap
