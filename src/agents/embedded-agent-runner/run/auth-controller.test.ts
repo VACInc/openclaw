@@ -376,7 +376,7 @@ describe("createEmbeddedRunAuthController", () => {
 
   it("exhausts the remaining auth profile after a non-cooling failure", async () => {
     const harness = createMutableAuthControllerHarness();
-    mocks.getApiKeyForModel.mockImplementation(async ({ profileId }) => {
+    mocks.getApiKeyForModelCore.mockImplementation(async ({ profileId }) => {
       if (profileId === "backup") {
         throw new Error("provider overloaded");
       }
@@ -399,7 +399,7 @@ describe("createEmbeddedRunAuthController", () => {
     await expect(controller.advanceAuthProfile()).resolves.toBe(false);
 
     expect(
-      mocks.getApiKeyForModel.mock.calls.filter(([params]) => params.profileId === "backup"),
+      mocks.getApiKeyForModelCore.mock.calls.filter(([params]) => params.profileId === "backup"),
     ).toHaveLength(1);
     expect(harness.profileIndex).toBe(2);
   });
@@ -609,7 +609,7 @@ describe("createEmbeddedRunAuthController", () => {
   it("preserves the transient cooldown probe for a rate-limited backup after a billing-disabled pin", async () => {
     const harness = createMutableAuthControllerHarness();
     const now = Date.now();
-    mocks.getApiKeyForModel.mockImplementation(async ({ profileId }) => ({
+    mocks.getApiKeyForModelCore.mockImplementation(async ({ profileId }) => ({
       apiKey: `${String(profileId)}-key`,
       mode: "api-key" as const,
       profileId,
@@ -638,8 +638,8 @@ describe("createEmbeddedRunAuthController", () => {
 
     await controller.initializeAuthProfile();
 
-    expect(mocks.getApiKeyForModel).toHaveBeenCalledOnce();
-    expect(mocks.getApiKeyForModel).toHaveBeenCalledWith(
+    expect(mocks.getApiKeyForModelCore).toHaveBeenCalledOnce();
+    expect(mocks.getApiKeyForModelCore).toHaveBeenCalledWith(
       expect.objectContaining({ profileId: "backup" }),
     );
     expect(harness.profileIndex).toBe(1);
