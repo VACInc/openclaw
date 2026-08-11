@@ -33,13 +33,13 @@ export type HealthHookDeadlineProof = {
   };
 };
 
-export function resolveHealthHookDeadlineFixturePluginDir(
+function resolveHealthHookDeadlineFixturePluginDir(
   repoRoot = path.resolve(import.meta.dirname, "../../../.."),
 ) {
   return path.join(repoRoot, "test/e2e/qa-lab/runtime/fixtures/health-hook-deadline-plugin");
 }
 
-export function withHealthHookDeadlineFixture(
+function withHealthHookDeadlineFixture(
   config: OpenClawConfig,
   pluginDir: string,
   mode: "delayed" | "hanging-probe",

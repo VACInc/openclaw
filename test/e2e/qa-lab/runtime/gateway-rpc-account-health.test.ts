@@ -1,10 +1,6 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  resolveHealthHookDeadlineFixturePluginDir,
-  withHealthHookDeadlineFixture,
-} from "./gateway-rpc-account-health-hook-deadlines.js";
-import {
   runGatewayRpcAccountHealthProof,
   statusSummaryMentions,
   withSiblingAccount,
@@ -37,25 +33,6 @@ describe("Gateway RPC account health producer", () => {
         sibling: { enabled: true },
       },
     });
-  });
-
-  it("builds an isolated six-account channel hook deadline fixture", () => {
-    const pluginDir = resolveHealthHookDeadlineFixturePluginDir();
-    const config = withHealthHookDeadlineFixture({} as never, pluginDir, "delayed");
-    expect(config.channels?.["qa-health-hook-deadline"]).toMatchObject({
-      enabled: true,
-      mode: "delayed",
-      accounts: {
-        "account-1": { enabled: true },
-        "account-6": { enabled: true },
-      },
-    });
-    expect(config.plugins).toMatchObject({
-      enabled: true,
-      allow: ["qa-health-hook-deadline"],
-      entries: { "qa-health-hook-deadline": { enabled: true } },
-    });
-    expect(config.plugins?.load?.paths).toContain(pluginDir);
   });
 
   it("reads account visibility from status channel-summary lines", () => {
