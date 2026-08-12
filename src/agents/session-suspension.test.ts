@@ -48,7 +48,9 @@ describe("session suspension", () => {
   it("records a bounded recovery marker without pausing the shared main lane", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
-    sessionAccessorMocks.patchSessionEntryCore.mockImplementation(async (_scope, update) => update({}));
+    sessionAccessorMocks.patchSessionEntryCore.mockImplementation(async (_scope, update) =>
+      update({}),
+    );
 
     await recordSuspension(Number.MAX_SAFE_INTEGER);
 
@@ -88,7 +90,9 @@ describe("session suspension", () => {
 
   it("resolves the session store with the explicit agent id, never the agentDir basename", async () => {
     const { suspendSession } = await import("./session-suspension.js");
-    sessionAccessorMocks.patchSessionEntryCore.mockImplementation(async (_scope, update) => update({}));
+    sessionAccessorMocks.patchSessionEntryCore.mockImplementation(async (_scope, update) =>
+      update({}),
+    );
 
     await suspendSession({
       cfg: {} as OpenClawConfig,
@@ -110,7 +114,9 @@ describe("session suspension", () => {
     const { suspendSession } = await import("./session-suspension.js");
     const { registerResolvedAgentDir, unregisterResolvedAgentDir } =
       await import("./agent-dir-registry.js");
-    sessionAccessorMocks.patchSessionEntryCore.mockImplementation(async (_scope, update) => update({}));
+    sessionAccessorMocks.patchSessionEntryCore.mockImplementation(async (_scope, update) =>
+      update({}),
+    );
 
     registerResolvedAgentDir({ agentId: "research", agentDir: "/state/agents/research/agent" });
     try {
@@ -169,7 +175,9 @@ describe("session suspension", () => {
       enableSessionSuspensionWritesForGatewayStart,
       fenceSessionSuspensionWritesForGatewayShutdown,
     } = await import("./session-suspension.js");
-    sessionAccessorMocks.patchSessionEntryCore.mockImplementation(async (_scope, update) => update({}));
+    sessionAccessorMocks.patchSessionEntryCore.mockImplementation(async (_scope, update) =>
+      update({}),
+    );
 
     fenceSessionSuspensionWritesForGatewayShutdown();
     await recordSuspension();
