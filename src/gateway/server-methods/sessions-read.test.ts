@@ -100,6 +100,25 @@ test("agents.list reads published model facts without starting provider discover
   expect(loadGatewayModelCatalog).not.toHaveBeenCalled();
 });
 
+test("agents.list reads model facts without an implicit owner", async () => {
+  await setAgentsConfig({ ownership: "explicit", entries: { ops: {}, research: {} } });
+  const readPreparedGatewayModelCatalog = vi.fn(async (params?: { agentId?: string }) => {
+    if (!params?.agentId) {
+      throw new Error("model catalog read has no explicit owner");
+    }
+    return [];
+  });
+
+  await expect(listAgentIdsViaRpc(false, { readPreparedGatewayModelCatalog })).resolves.toEqual([
+    "ops",
+    "research",
+  ]);
+  expect(readPreparedGatewayModelCatalog.mock.calls).toEqual([
+    [{ agentId: "ops" }],
+    [{ agentId: "research" }],
+  ]);
+});
+
 beforeEach(async () => {
   testState.agentConfig = undefined;
   testState.sessionStorePath = undefined;

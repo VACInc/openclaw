@@ -893,8 +893,24 @@ export const agentsHandlers: GatewayRequestHandlers = {
     }
 
     const cfg = context.getRuntimeConfig();
-    const modelCatalog = await readPreparedServerMethodModelCatalog(context);
+    const modelCatalogByAgentId =
+      cfg.agents?.ownership === "explicit"
+        ? new Map(
+            (
+              await Promise.all(
+                listAgentIds(cfg).map(async (agentId) => {
+                  const catalog = await readPreparedServerMethodModelCatalog(context, { agentId });
+                  return catalog ? ([[agentId, catalog]] as const) : [];
+                }),
+              )
+            ).flat(),
+          )
+        : undefined;
+    const modelCatalog = modelCatalogByAgentId
+      ? undefined
+      : await readPreparedServerMethodModelCatalog(context);
     const result = listAgentsForGateway(cfg, modelCatalog, {
+      ...(modelCatalogByAgentId ? { modelCatalogByAgentId } : {}),
       includeSystem: hasGatewayClientCap(client?.connect.caps, GATEWAY_CLIENT_CAPS.AGENT_KIND),
     });
     respond(true, result, undefined);

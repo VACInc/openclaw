@@ -1,5 +1,9 @@
 import { normalizeOptionalAgentRuntimeId } from "../agents/agent-runtime-id.js";
-import { resolveAgentEffectiveModelPrimary, resolveDefaultAgentId } from "../agents/agent-scope.js";
+import {
+  listAgentIds,
+  resolveAgentEffectiveModelPrimary,
+  tryResolveLegacyCompatibilityAgentId,
+} from "../agents/agent-scope.js";
 import { areRuntimeModelRefsEquivalent } from "../agents/model-runtime-aliases.js";
 import { resolveModelRuntimePolicy } from "../agents/model-runtime-policy.js";
 import { normalizeProviderId } from "../agents/model-selection.js";
@@ -39,13 +43,17 @@ function resolveConfiguredCandidateKind(
   if (!modelRef) {
     return undefined;
   }
+  const agentId = tryResolveLegacyCompatibilityAgentId(config ?? {});
+  if (!agentId) {
+    return undefined;
+  }
   const ref = parseRef(modelRef);
   const runtime = normalizeOptionalAgentRuntimeId(
     resolveModelRuntimePolicy({
       config,
       provider: ref.provider,
       modelId: ref.model,
-      agentId: resolveDefaultAgentId(config ?? {}),
+      agentId,
     }).policy?.id,
   );
   if (runtime === "codex") {
@@ -55,6 +63,12 @@ function resolveConfiguredCandidateKind(
     return "claude-cli";
   }
   return undefined;
+}
+
+function hasConfiguredInference(config: Parameters<typeof resolveAgentEffectiveModelPrimary>[0]) {
+  return listAgentIds(config).some((agentId) =>
+    Boolean(resolveAgentEffectiveModelPrimary(config, agentId)),
+  );
 }
 
 /**
@@ -97,7 +111,7 @@ export async function listManualSetupInferenceOptions(
     workspace,
     // Derived from config only (no probing): a pre-existing default model must
     // keep classifying the install as configured even when scanning declined.
-    setupComplete: Boolean(resolveAgentEffectiveModelPrimary(cfg, resolveDefaultAgentId(cfg))),
+    setupComplete: hasConfiguredInference(cfg),
   };
 }
 
@@ -260,6 +274,6 @@ export async function detectSetupInference(
     recommendedInstalls: listRecommendedToolInstalls(),
     workspace,
     ...(configuredModel ? { configuredModel } : {}),
-    setupComplete: Boolean(configuredModel),
+    setupComplete: Boolean(configuredModel) || hasConfiguredInference(cfg),
   };
 }

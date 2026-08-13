@@ -53,6 +53,7 @@ import {
   activateSetupInference as activateSetupInferenceImpl,
   type BoundVerifySetupInferenceResult,
   detectSetupInference,
+  listManualSetupInferenceOptions,
   listSetupInferenceAuthOptions,
   listSetupInferenceManualProviders,
   listSetupInferencePrepareOptions,
@@ -792,6 +793,53 @@ describe("detectSetupInference", () => {
     await expect(detectSetupInference()).rejects.toThrow(
       "OpenClaw config /tmp/openclaw.json is invalid (agents.defaults.model: Expected a model reference)",
     );
+  });
+
+  it("detects configured inference without an implicit roster owner", async () => {
+    const { readConfigFileSnapshot } = await import("../config/config.js");
+    const config = {
+      agents: {
+        ownership: "explicit" as const,
+        defaults: { model: "openai/gpt-5.5" },
+        entries: { ops: {}, research: { model: "anthropic/claude-opus-4-8" } },
+      },
+    } satisfies OpenClawConfig;
+    vi.mocked(readConfigFileSnapshot).mockImplementationOnce(
+      mockConfigSnapshot(config, { includeMetadata: true }),
+    );
+
+    await expect(
+      detectSetupInference({
+        detectInferenceBackends: async () => [
+          {
+            kind: "existing-model",
+            modelRef: "openai/gpt-5.5",
+            label: "Current model",
+            detail: "openai/gpt-5.5 - already configured",
+            credentials: true,
+          },
+        ],
+        probeLocalCommand: vi.fn(async (command) => ({ command, found: false })),
+        resolveManifestProviderAuthChoices: () => [],
+      }),
+    ).resolves.toMatchObject({ setupComplete: true });
+  });
+
+  it("recognizes per-agent inference when manual setup has no implicit roster owner", async () => {
+    const { readConfigFileSnapshot } = await import("../config/config.js");
+    const config = {
+      agents: {
+        ownership: "explicit" as const,
+        entries: { ops: {}, research: { model: "anthropic/claude-opus-4-8" } },
+      },
+    } satisfies OpenClawConfig;
+    vi.mocked(readConfigFileSnapshot).mockImplementationOnce(
+      mockConfigSnapshot(config, { includeMetadata: true }),
+    );
+
+    await expect(
+      listManualSetupInferenceOptions({ resolveManifestProviderAuthChoices: () => [] }),
+    ).resolves.toMatchObject({ setupComplete: true });
   });
 
   it("lists text-inference key and token methods from provider manifests", () => {
