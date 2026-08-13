@@ -84,6 +84,8 @@ function createHarness(runtime: { current?: GatewayRecoveryRuntime }) {
   const notifyContextEngineSubagentEnded = vi.fn();
   const callGateway = vi.fn();
   const warn = vi.fn();
+  const resumeRequesterSettleWake = vi.fn();
+  const startSubagentAnnounceCleanupFlow = vi.fn(() => true);
   const sweeper = createSubagentRegistrySweeper({
     runs,
     resumedRuns: new Set(),
@@ -121,8 +123,8 @@ function createHarness(runtime: { current?: GatewayRecoveryRuntime }) {
     ),
     resetSubagentRestartRecoveryLaunchAttempt: vi.fn(() => true),
     finalizeInterruptedSubagentRun,
-    resumeRequesterSettleWake: vi.fn(),
-    startSubagentAnnounceCleanupFlow: vi.fn(() => true),
+    resumeRequesterSettleWake,
+    startSubagentAnnounceCleanupFlow,
     completeCleanupBookkeeping,
     discardTerminalDelivery: vi.fn(),
     shouldEmitEndedHookForRun: vi.fn(() => false),
@@ -145,6 +147,8 @@ function createHarness(runtime: { current?: GatewayRecoveryRuntime }) {
     emitSubagentEndedHookForRun,
     finalizeInterruptedSubagentRun,
     notifyContextEngineSubagentEnded,
+    resumeRequesterSettleWake,
+    startSubagentAnnounceCleanupFlow,
     sweeper,
     warn,
   };
@@ -219,6 +223,44 @@ describe("subagent registry recovery scheduling", () => {
     await vi.advanceTimersByTimeAsync(5_000);
 
     expect(finalizeInterruptedSubagentRun).toHaveBeenCalledOnce();
+    sweeper.reset();
+  });
+
+  it("resumes cleanup instead of waking a requester after a committed yielded final", async () => {
+    const { entry, resumeRequesterSettleWake, startSubagentAnnounceCleanupFlow, sweeper } =
+      createHarness({});
+    entry.execution = {
+      ...entry.execution,
+      status: "terminal",
+      endedAt: Date.now(),
+      outcome: { status: "ok" },
+    };
+    entry.endedReason = "subagent-complete";
+    entry.completion = { required: true, resultText: "child result" };
+    entry.delivery = { status: "delivered", requesterVisibleFinalGeneration: 1 };
+    entry.requesterSettleWake = {
+      status: "pending",
+      attemptCount: 0,
+      batchRunIds: [entry.runId],
+      requesterYieldBatch: true,
+      rearmGeneration: 1,
+    };
+    detachedTaskRuntime.findDetachedTaskRun.mockReturnValue({
+      lookup: "available",
+      task: {
+        runId: entry.runId,
+        runtime: "subagent",
+        childSessionKey: entry.childSessionKey,
+        status: "succeeded",
+        createdAt: entry.createdAt,
+        endedAt: entry.execution.endedAt,
+      },
+    });
+
+    await sweeper.sweepOnce();
+
+    expect(startSubagentAnnounceCleanupFlow).toHaveBeenCalledWith(entry.runId, entry);
+    expect(resumeRequesterSettleWake).not.toHaveBeenCalled();
     sweeper.reset();
   });
 

@@ -294,6 +294,61 @@ export function scheduleRequesterSettleWake(
 ): void {
   const params = context.options;
   const requesterSessionKey = entry.requesterSessionKey?.trim();
+  const requesterSettleWake = entry.requesterSettleWake;
+  const frozenBatchRunIds = requesterSettleWake?.batchRunIds;
+  if (
+    requesterSessionKey &&
+    requesterSettleWake?.requesterYieldBatch === true &&
+    typeof requesterSettleWake.rearmGeneration === "number" &&
+    frozenBatchRunIds?.includes(runId) &&
+    frozenBatchRunIds.every((batchRunId) => {
+      const sibling = params.runs.get(batchRunId);
+      return Boolean(
+        sibling &&
+        sibling.requesterSessionKey === requesterSessionKey &&
+        sibling.requesterSettleWake?.requesterYieldBatch === true &&
+        sibling.requesterSettleWake.rearmGeneration === requesterSettleWake.rearmGeneration &&
+        sibling.delivery?.status === "delivered" &&
+        hasSubagentRunEnded(sibling),
+      );
+    }) &&
+    frozenBatchRunIds.some(
+      (batchRunId) =>
+        params.runs.get(batchRunId)?.delivery?.requesterVisibleFinalGeneration ===
+        requesterSettleWake.rearmGeneration,
+    ) &&
+    params.countPendingDescendantRuns(requesterSessionKey) === 0
+  ) {
+    // Completion already delivered this fully drained generation's final;
+    // canonical batch retirement preserves delete rows, rollback, and later waves.
+    completeRequesterSettleWakeBatch(
+      context,
+      frozenBatchRunIds,
+      requesterSettleWake.rearmGeneration,
+    );
+    return;
+  }
+  if (requesterSettleWake?.requesterYieldBatch === true) {
+    const deliveredFinalAwaitingCleanup =
+      typeof requesterSettleWake.rearmGeneration === "number" &&
+      (frozenBatchRunIds ?? [runId]).some((batchRunId) => {
+        const finalOwner = params.runs.get(batchRunId);
+        return Boolean(
+          finalOwner &&
+          finalOwner.requesterSessionKey === requesterSessionKey &&
+          finalOwner.requesterSettleWake?.requesterYieldBatch === true &&
+          finalOwner.requesterSettleWake.rearmGeneration === requesterSettleWake.rearmGeneration &&
+          finalOwner.delivery?.requesterVisibleFinalGeneration ===
+            requesterSettleWake.rearmGeneration &&
+          typeof finalOwner.cleanupCompletedAt !== "number",
+        );
+      });
+    // The completion owner must finish its cleanup before the existing final
+    // can retire the batch; other completed delivery states still need a wake.
+    if (deliveredFinalAwaitingCleanup) {
+      return;
+    }
+  }
   // A replayed lifecycle start can retain an older endedAt; require both
   // terminal status and end evidence so a live child never wakes its requester.
   if (

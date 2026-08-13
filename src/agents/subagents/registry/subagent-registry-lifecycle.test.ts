@@ -4396,6 +4396,49 @@ describe("requester settle wake trigger", () => {
     expect(entry.requesterSettleWake).toBeUndefined();
   });
 
+  it("retires a yielded batch after its direct requester final is committed", async () => {
+    const entry = createRunEntry({
+      endedAt: 4_000,
+      expectsCompletionMessage: true,
+      requesterSettleWake: {
+        status: "pending",
+        attemptCount: 0,
+        batchRunIds: ["run-1"],
+        requesterYieldBatch: true,
+        rearmGeneration: 1,
+      },
+    });
+    const runs = new Map([[entry.runId, entry]]);
+    const maybeWakeRequesterAfterAllChildrenSettled = vi.fn(async () => false);
+    const runSubagentAnnounceFlow: LifecycleControllerParams["runSubagentAnnounceFlow"] = vi.fn(
+      async (announceParams) => {
+        announceParams.onDeliveryResult?.({
+          delivered: true,
+          path: "direct",
+          deliveredAt: 8_000,
+          requesterVisibleFinalDelivered: true,
+        });
+        return "delivered" as const;
+      },
+    );
+    const controller = createLifecycleController({
+      entry,
+      runs,
+      maybeWakeRequesterAfterAllChildrenSettled,
+      runSubagentAnnounceFlow,
+    });
+
+    await completeRun(controller, entry, { triggerCleanup: true });
+    await waitForLifecycleState(() => expect(entry.cleanupCompletedAt).toBeTypeOf("number"));
+
+    expect(entry.delivery).toMatchObject({
+      status: "delivered",
+      requesterVisibleFinalGeneration: 1,
+    });
+    expect(entry.requesterSettleWake).toBeUndefined();
+    expect(maybeWakeRequesterAfterAllChildrenSettled).not.toHaveBeenCalled();
+  });
+
   it("credits a yielded intentional non-delivery only after requester-settle succeeds", async () => {
     const entry = createRunEntry({
       endedAt: 4_000,
