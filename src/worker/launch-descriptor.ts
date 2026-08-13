@@ -25,10 +25,14 @@ import {
 } from "../../packages/gateway-protocol/src/schema/worker-inference.js";
 import { PROTOCOL_VERSION } from "../../packages/gateway-protocol/src/version.js";
 import type { OperationalRunInstanceRef } from "../agents/admitted-run-context.js";
-import { isWorkerLocalToolName, type WorkerToolAuthority } from "./tool-authority.js";
+import { isWorkerToolName, type WorkerToolAuthority } from "./tool-authority.js";
 import { isWorkerTranscriptMessageFrameSafe } from "./transcript-message.js";
+import {
+  parseWorkerConnectionEndpoint,
+  type WorkerConnectionEndpoint,
+} from "./worker-connection-endpoint.js";
 
-const LAUNCH_VERSION = 2;
+const LAUNCH_VERSION = 3;
 
 export type WorkerBrowserLaunchDescriptor = {
   cdpUrl: string;
@@ -67,8 +71,8 @@ type WorkerLaunchAdmission = Omit<WorkerConnectParams["admission"], "runId"> & {
 };
 
 export type WorkerLaunchDescriptor = {
-  version: 2;
-  socketPath: string;
+  version: 3;
+  connectionEndpoint: WorkerConnectionEndpoint;
   admission: WorkerLaunchAdmission;
   assignment: WorkerLaunchAssignment;
 };
@@ -102,7 +106,7 @@ function parseToolAuthority(value: unknown): WorkerToolAuthority | undefined {
     !isRecord(value) ||
     !hasExactKeys(value, ["allowedToolNames"]) ||
     !Array.isArray(value.allowedToolNames) ||
-    !value.allowedToolNames.every(isWorkerLocalToolName) ||
+    !value.allowedToolNames.every(isWorkerToolName) ||
     new Set(value.allowedToolNames).size !== value.allowedToolNames.length
   ) {
     return undefined;
@@ -261,20 +265,19 @@ export function buildWorkerConnectParams(
 export function parseWorkerLaunchDescriptor(value: unknown): WorkerLaunchDescriptor {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ["version", "socketPath", "admission", "assignment"]) ||
-    value.version !== LAUNCH_VERSION ||
-    !isIdentifier(value.socketPath) ||
-    !path.isAbsolute(value.socketPath)
+    !hasExactKeys(value, ["version", "connectionEndpoint", "admission", "assignment"]) ||
+    value.version !== LAUNCH_VERSION
   ) {
     throw new Error("invalid worker launch descriptor");
   }
+  const connectionEndpoint = parseWorkerConnectionEndpoint(value.connectionEndpoint);
   const assignment = parseAssignment(value.assignment);
-  if (!assignment || !isRecord(value.admission)) {
+  if (!connectionEndpoint || !assignment || !isRecord(value.admission)) {
     throw new Error("invalid worker launch descriptor");
   }
   const candidate: WorkerLaunchDescriptor = {
     version: LAUNCH_VERSION,
-    socketPath: value.socketPath,
+    connectionEndpoint,
     admission: value.admission as WorkerLaunchAdmission,
     assignment,
   };

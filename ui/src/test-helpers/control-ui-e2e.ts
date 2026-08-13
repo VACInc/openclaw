@@ -198,6 +198,8 @@ const defaultControlUiFeatureMethods = [
   "config.apply",
   "config.patch",
   "config.set",
+  "device.scopes.requestUpgrade",
+  "device.scopes.waitUpgrade",
   "session.members.add",
   "session.members.list",
   "session.members.remove",
@@ -955,6 +957,8 @@ function installControlUiMockGateway(
     return names;
   }
 
+  // This function is serialized with installControlUiMockGateway.toString().
+  // Keep the guard local so the generated script captures no module imports.
   function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
   }
@@ -1433,12 +1437,15 @@ function installControlUiMockGateway(
         : configuredValue;
     }
     switch (method) {
-      case "connect":
+      case "connect": {
+        const auth = isRecord(params) && isRecord(params.auth) ? params.auth : null;
+        const connectedDeviceToken =
+          auth && typeof auth.deviceToken === "string" ? auth.deviceToken : scenario.deviceToken;
         return {
           auth: {
             ...(deviceAuthMigrationPending
               ? {}
-              : { deviceToken: scenario.deviceToken, recoveryMigrationAllowed: true as const }),
+              : { deviceToken: connectedDeviceToken, recoveryMigrationAllowed: true as const }),
             recoveryScope: "e2e-recovery-scope",
             role: "operator",
             scopes: scenario.operatorScopes,
@@ -1473,6 +1480,7 @@ function installControlUiMockGateway(
           },
           type: "hello-ok",
         };
+      }
       case "agent.identity.get":
         return {
           agentId: scenario.assistantAgentId,

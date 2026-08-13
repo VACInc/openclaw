@@ -31,6 +31,14 @@ import {
   type AgentInternalEvent,
 } from "../../internal-events.js";
 import { isAnnounceSkip } from "../../tools/sessions-send-tokens.js";
+import {
+  countPendingDescendantRuns,
+  getLatestSubagentRunByChildSessionKey,
+  isSubagentSessionRunActive,
+  listSubagentRunsForRequester,
+  resolveRequesterForChildSession,
+  shouldIgnorePostCompletionAnnounceForSession,
+} from "../registry/subagent-registry-read.js";
 import { deleteSubagentSessionForCleanup } from "../registry/subagent-session-cleanup.js";
 import { getSubagentDepthFromSessionStore } from "../spawn/subagent-depth.js";
 import type { SpawnSubagentMode } from "../spawn/subagent-spawn.types.js";
@@ -93,7 +101,7 @@ export { buildSubagentSystemPrompt } from "../spawn/subagent-system-prompt.js";
 export { captureSubagentCompletionReply } from "./subagent-announce-output.js";
 export type { SubagentRunOutcome } from "./subagent-announce-output.js";
 
-export type SubagentAnnounceType = "subagent task" | "cron job";
+type SubagentAnnounceType = "subagent task" | "cron job";
 export type SubagentAnnounceFlowOutcome = NonNullable<
   SubagentAnnounceDeliveryResult["disposition"]
 >;
@@ -152,6 +160,7 @@ export async function runSubagentAnnounceFlow(params: {
   childSessionKey: string;
   childRunId: string;
   requesterSessionKey: string;
+  requesterAgentId?: string;
   requesterOrigin?: DeliveryContext;
   requesterDisplayKey: string;
   task: string;
@@ -197,6 +206,7 @@ export async function runSubagentAnnounceFlow(params: {
   let childSessionLifecycleRevision: string | undefined;
   try {
     let targetRequesterSessionKey = params.requesterSessionKey;
+    let targetRequesterAgentId = params.requesterAgentId;
     let targetRequesterOrigin = normalizeDeliveryContext(params.requesterOrigin);
     const childSessionEntry = !childSessionEffectsAllowed()
       ? undefined
@@ -247,7 +257,10 @@ export async function runSubagentAnnounceFlow(params: {
     if (failedTerminalOutcome && !params.terminalReply) {
       reply = undefined;
     }
-    let requesterDepth = getSubagentDepthFromSessionStore(targetRequesterSessionKey);
+    let requesterDepth = getSubagentDepthFromSessionStore(targetRequesterSessionKey, {
+      cfg: subagentAnnounceDeps.getRuntimeConfig(),
+      agentId: targetRequesterAgentId,
+    });
     const requesterIsInternalSession = () =>
       requesterDepth >= 1 || isCronSessionKey(targetRequesterSessionKey);
 
@@ -259,38 +272,29 @@ export async function runSubagentAnnounceFlow(params: {
       subagentRegistryRuntime = await subagentAnnounceDeps.loadSubagentRegistryRuntime();
       if (
         requesterDepth >= 1 &&
-        subagentRegistryRuntime.shouldIgnorePostCompletionAnnounceForSession(
-          targetRequesterSessionKey,
-        )
+        shouldIgnorePostCompletionAnnounceForSession(targetRequesterSessionKey)
       ) {
         return "delivered";
       }
 
       const pendingChildDescendantRuns = !childSessionEffectsAllowed()
         ? 0
-        : Math.max(0, subagentRegistryRuntime.countPendingDescendantRuns(params.childSessionKey));
+        : Math.max(0, countPendingDescendantRuns(params.childSessionKey));
       if (pendingChildDescendantRuns > 0 && announceType !== "cron job") {
         shouldDeleteChildSession = false;
         return "retryable";
       }
 
-      if (
-        childSessionEffectsAllowed() &&
-        typeof subagentRegistryRuntime.listSubagentRunsForRequester === "function"
-      ) {
-        const directChildren = subagentRegistryRuntime.listSubagentRunsForRequester(
-          params.childSessionKey,
-          {
-            requesterRunId: params.childRunId,
-          },
-        );
+      if (childSessionEffectsAllowed()) {
+        const directChildren = listSubagentRunsForRequester(params.childSessionKey, {
+          requesterRunId: params.childRunId,
+        });
         if (Array.isArray(directChildren) && directChildren.length > 0) {
           childCompletionFindings = buildChildCompletionFindings(
             dedupeLatestChildCompletionRows(
               filterCurrentDirectChildCompletionRows(directChildren, {
                 requesterSessionKey: params.childSessionKey,
-                getLatestSubagentRunByChildSessionKey:
-                  subagentRegistryRuntime.getLatestSubagentRunByChildSessionKey,
+                getLatestSubagentRunByChildSessionKey,
               }),
             ),
           );
@@ -466,11 +470,6 @@ export async function runSubagentAnnounceFlow(params: {
 
     let requesterIsSubagent = requesterIsInternalSession();
     if (requesterIsSubagent) {
-      const {
-        isSubagentSessionRunActive,
-        resolveRequesterForChildSession,
-        shouldIgnorePostCompletionAnnounceForSession,
-      } = subagentRegistryRuntime ?? (await loadSubagentRegistryRuntime());
       if (!isSubagentSessionRunActive(targetRequesterSessionKey)) {
         if (shouldIgnorePostCompletionAnnounceForSession(targetRequesterSessionKey)) {
           return "delivered";
@@ -485,9 +484,13 @@ export async function runSubagentAnnounceFlow(params: {
             return "retryable";
           }
           targetRequesterSessionKey = fallback.requesterSessionKey;
+          targetRequesterAgentId = fallback.requesterAgentId;
           targetRequesterOrigin =
             normalizeDeliveryContext(fallback.requesterOrigin) ?? targetRequesterOrigin;
-          requesterDepth = getSubagentDepthFromSessionStore(targetRequesterSessionKey);
+          requesterDepth = getSubagentDepthFromSessionStore(targetRequesterSessionKey, {
+            cfg: subagentAnnounceDeps.getRuntimeConfig(),
+            agentId: targetRequesterAgentId,
+          });
           requesterIsSubagent = requesterIsInternalSession();
         }
       }
@@ -527,7 +530,10 @@ export async function runSubagentAnnounceFlow(params: {
     // follow-up injection (deliver=false) so the orchestrator receives it.
     let directOrigin = targetRequesterOrigin;
     if (!requesterIsSubagent) {
-      const { entry } = loadRequesterSessionEntry(targetRequesterSessionKey);
+      const { entry } = loadRequesterSessionEntry(
+        targetRequesterSessionKey,
+        targetRequesterAgentId,
+      );
       directOrigin = resolveAnnounceOrigin(entry, targetRequesterOrigin);
     }
     const candidateCompletionDirectOrigin =
@@ -557,6 +563,7 @@ export async function runSubagentAnnounceFlow(params: {
     };
     const delivery = await deliverSubagentAnnouncement({
       requesterSessionKey: targetRequesterSessionKey,
+      requesterAgentId: targetRequesterAgentId,
       announceId,
       triggerMessage,
       steerMessage: triggerMessage,

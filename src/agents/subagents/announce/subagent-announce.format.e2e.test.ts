@@ -36,7 +36,7 @@ import { testing as subagentAnnounceOutputTesting } from "./subagent-announce-ou
 type AgentCallRequest = {
   method?: string;
   params?: Record<string, unknown> & {
-    internalEvents?: Array<{ type?: string; taskLabel?: string }>;
+    internalEvents?: Array<{ type?: string; taskLabel?: string; result?: string }>;
   };
 };
 type RequesterResolution = {
@@ -139,7 +139,7 @@ const agentSpy = vi.fn(async (_req: AgentCallRequest) => visibleAgentResponse())
 const sendSpy = vi.fn(async (_req: AgentCallRequest) => ({ runId: "send-main", status: "ok" }));
 const sessionsDeleteSpy = vi.fn((_req: AgentCallRequest) => undefined);
 const resolveAgentIdFromSessionKeySpy = vi.spyOn(configSessions, "resolveAgentIdFromSessionKey");
-const resolveStorePathSpy = vi.spyOn(configSessions, "resolveStorePath");
+const resolveStorePathSpy = vi.spyOn(configSessions, "resolveSessionStorePathCore");
 const resolveMainSessionKeySpy = vi.spyOn(configSessions, "resolveMainSessionKey");
 const callGatewaySpy = vi.spyOn(gatewayCall, "callGateway");
 const getGlobalHookRunnerSpy = vi.spyOn(hookRunnerGlobal, "getGlobalHookRunner");
@@ -182,7 +182,7 @@ const { subagentRegistryMock } = vi.hoisted(() => ({
     shouldIgnorePostCompletionAnnounceForSession: vi.fn((_sessionKey: string) => false),
     countActiveDescendantRuns: vi.fn((_sessionKey: string) => 0),
     countPendingDescendantRuns: vi.fn((_sessionKey: string) => 0),
-    countPendingDescendantRunsExcludingRun: vi.fn((_sessionKey: string, _runId: string) => 0),
+    hasDescendantRunAwaitingSettle: vi.fn((_sessionKey: string, _excludeRunId?: string) => false),
     getLatestSubagentRunByChildSessionKey: vi.fn(
       (_childSessionKey: string): MockSubagentRun | undefined => undefined,
     ),
@@ -336,6 +336,7 @@ function loadSessionStoreFixture(): Record<string, SessionEntry> {
 }
 
 vi.mock("../registry/subagent-registry.js", () => subagentRegistryMock);
+vi.mock("../registry/subagent-registry-read.js", () => subagentRegistryMock);
 vi.mock("../registry/subagent-registry-runtime.js", () => subagentRegistryMock);
 
 describe("subagent announce formatting", () => {
@@ -429,9 +430,9 @@ describe("subagent announce formatting", () => {
         req: Parameters<typeof gatewayCall.callGateway>[0],
       ) => (await callGatewaySpy(req)) as T,
       getRuntimeConfig: () => configOverride,
-      readSessionEntry: (_storePath, sessionKey) => loadSessionStoreFixture()[sessionKey],
+      readSubagentSessionEntry: (_storePath, sessionKey) => loadSessionStoreFixture()[sessionKey],
       resolveAgentIdFromSessionKey: () => "main",
-      resolveStorePath: () => "/tmp/sessions.json",
+      resolveSessionStorePathCore: () => "/tmp/sessions.json",
     });
     resolveAgentIdFromSessionKeySpy.mockReset().mockImplementation(() => "main");
     resolveStorePathSpy.mockReset().mockImplementation(() => "/tmp/sessions.json");
@@ -479,10 +480,11 @@ describe("subagent announce formatting", () => {
       .mockImplementation((sessionKey: string) =>
         subagentRegistryMock.countActiveDescendantRuns(sessionKey),
       );
-    subagentRegistryMock.countPendingDescendantRunsExcludingRun
+    subagentRegistryMock.hasDescendantRunAwaitingSettle
       .mockClear()
-      .mockImplementation((sessionKey: string, _runId: string) =>
-        subagentRegistryMock.countPendingDescendantRuns(sessionKey),
+      .mockImplementation(
+        (sessionKey: string, _excludeRunId?: string) =>
+          subagentRegistryMock.countPendingDescendantRuns(sessionKey) > 0,
       );
     subagentRegistryMock.getLatestSubagentRunByChildSessionKey
       .mockClear()
@@ -562,6 +564,28 @@ describe("subagent announce formatting", () => {
     expect(msg).toContain("Keep this internal context private");
     expect(call?.params?.internalEvents?.[0]?.type).toBe("task_completion");
     expect(call?.params?.internalEvents?.[0]?.taskLabel).toBe("do thing");
+  });
+
+  it("bounds an oversized leaf result only in the parent prompt projection", async () => {
+    const fullResult = `${"<".repeat(6_000)}-unbounded-tail`;
+    readLatestAssistantReplyMock.mockResolvedValue(fullResult);
+
+    await runSubagentAnnounceFlow({
+      childSessionKey: "agent:main:subagent:test",
+      childRunId: "run-oversized-result",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      ...defaultOutcomeAnnounce,
+    });
+
+    const call = getAgentCall();
+    const prompt = call.params?.message as string;
+    const projectedResult = prompt.match(/<prompt-data>\n([\s\S]*?)\n<\/prompt-data>/)?.[1];
+
+    expect(projectedResult?.length).toBeLessThanOrEqual(6_000);
+    expect(projectedResult?.endsWith("\n[child result truncated]")).toBe(true);
+    expect(projectedResult).not.toContain("unbounded-tail");
+    expect(call.params?.internalEvents?.[0]?.result).toBe(fullResult);
   });
 
   it("includes success status when outcome is ok", async () => {
@@ -836,10 +860,6 @@ describe("subagent announce formatting", () => {
     });
     subagentRegistryMock.countPendingDescendantRuns.mockImplementation((sessionKey: string) =>
       sessionKey === "agent:main:main" ? 2 : 0,
-    );
-    subagentRegistryMock.countPendingDescendantRunsExcludingRun.mockImplementation(
-      (sessionKey: string, runId: string) =>
-        sessionKey === "agent:main:main" && runId === "run-direct-self-pending" ? 1 : 2,
     );
 
     const didAnnounce = await runSubagentAnnounceFlow({

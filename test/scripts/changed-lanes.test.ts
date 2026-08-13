@@ -1183,7 +1183,7 @@ describe("scripts/changed-lanes", () => {
 
   it("delegates generated docs baselines with heavy owner checks", () => {
     for (const changedPath of [
-      "docs/.generated/plugin-sdk-api-baseline.jsonl",
+      "docs/.generated/plugin-sdk-api-baseline/core.json",
       "docs/.generated/sqlite-session-transcript-schema-baseline.sha256",
     ]) {
       const result = detectChangedLanes([changedPath]);
@@ -1417,6 +1417,7 @@ describe("scripts/changed-lanes", () => {
       "guarded extension wildcard re-exports",
       "plugin-sdk wildcard re-exports",
       "duplicate scan target coverage",
+      "coercion helper declaration guard",
       "dependency pin guard",
       "format changed files",
       "deprecated API usage",
@@ -1600,6 +1601,7 @@ describe("scripts/changed-lanes", () => {
       "lint:extensions:no-guarded-wildcard-reexports",
       "lint:extensions:no-plugin-sdk-wildcard-reexports",
       "dup:check:coverage",
+      "check:coercion-helpers",
       "deps:pins:check",
       "format:check",
       "--import",
@@ -1786,7 +1788,7 @@ describe("scripts/changed-lanes", () => {
         "scripts/generate-plugin-sdk-api-baseline.ts",
         "scripts/lib/plugin-sdk-doc-metadata.ts",
         "scripts/lib/plugin-sdk-entries.mts",
-        "docs/.generated/plugin-sdk-api-baseline.jsonl",
+        "docs/.generated/plugin-sdk-api-baseline/core.json",
       ]),
     ).toBe(true);
     expect(shouldRunPluginSdkApiBaselineCheck(["docs/help/troubleshooting.md"])).toBe(false);
@@ -2352,6 +2354,7 @@ describe("scripts/changed-lanes", () => {
         args: ["lint:extensions:no-plugin-sdk-wildcard-reexports"],
       },
       { name: "duplicate scan target coverage", args: ["dup:check:coverage"] },
+      { name: "coercion helper declaration guard", args: ["check:coercion-helpers"] },
       { name: "dependency pin guard", args: ["deps:pins:check"] },
       { name: "package patch guard", args: ["deps:patches:check"] },
     ]);
@@ -2375,6 +2378,7 @@ describe("scripts/changed-lanes", () => {
         args: ["lint:extensions:no-plugin-sdk-wildcard-reexports"],
       },
       { name: "duplicate scan target coverage", args: ["dup:check:coverage"] },
+      { name: "coercion helper declaration guard", args: ["check:coercion-helpers"] },
       { name: "dependency pin guard", args: ["deps:pins:check"] },
       {
         name: "format changed files",

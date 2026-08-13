@@ -7,6 +7,7 @@ import { isSecretValueRegisteredForRedaction } from "../../logging/secret-redact
 import {
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
+  OPENCLAW_STATE_SCHEMA_VERSION,
 } from "../../state/openclaw-state-db.js";
 import {
   deleteSecretStoreEntry,
@@ -137,13 +138,42 @@ describe("secret store", () => {
     ).toThrow(expect.objectContaining({ code: "SECRET_STORE_VALUE_TOO_LARGE" }));
   });
 
-  it("treats a missing lazy table as empty and preserves schema version 6 on ensure", () => {
+  it("rejects an empty secret value but keeps empty env values legal", () => {
+    const database = createDatabaseOptions();
+    // A silently-empty secret (a failed `op read |` pipe) is undiagnosable later:
+    // get refuses secret kinds and listings mask them, so reject it at the writer.
+    expect(() =>
+      writeSecretStoreEntry({
+        scope: team,
+        name: "EMPTY_SECRET",
+        value: "",
+        kind: "secret",
+        updatedBy: null,
+        database,
+      }),
+    ).toThrow(expect.objectContaining({ code: "SECRET_STORE_VALUE_EMPTY" }));
+
+    writeSecretStoreEntry({
+      scope: team,
+      name: "EMPTY_ENV",
+      value: "",
+      kind: "env",
+      updatedBy: null,
+      database,
+    });
+    const stored = readSecretStoreValue({ scope: team, name: "EMPTY_ENV", database });
+    expect(stored.ok && stored.value).toBe("");
+  });
+
+  it("treats a missing lazy table as empty and preserves the current schema version", () => {
     const database = createDatabaseOptions();
     openOpenClawStateDatabase(database);
     closeOpenClawStateDatabaseForTest();
     const { DatabaseSync } = requireNodeSqlite();
     const before = new DatabaseSync(database.path);
-    expect(before.prepare("PRAGMA user_version").get()).toEqual({ user_version: 6 });
+    expect(before.prepare("PRAGMA user_version").get()).toEqual({
+      user_version: OPENCLAW_STATE_SCHEMA_VERSION,
+    });
     before.exec("DROP TABLE secret_store_entries;");
     before.close();
 
@@ -170,7 +200,9 @@ describe("secret store", () => {
     });
     closeOpenClawStateDatabaseForTest();
     const after = new DatabaseSync(database.path, { readOnly: true });
-    expect(after.prepare("PRAGMA user_version").get()).toEqual({ user_version: 6 });
+    expect(after.prepare("PRAGMA user_version").get()).toEqual({
+      user_version: OPENCLAW_STATE_SCHEMA_VERSION,
+    });
     expect(
       after
         .prepare("SELECT name FROM sqlite_schema WHERE type = 'index' AND name = ?")

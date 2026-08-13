@@ -91,7 +91,7 @@ vi.mock("./subagent-announce-delivery.runtime.js", () =>
     loadSessionStore: () => sessionStore,
     resolveAgentIdFromSessionKey: () => "main",
     resolveMainSessionKey: () => "agent:main:main",
-    resolveStorePath: () => "/tmp/sessions-main.json",
+    resolveSessionStorePathCore: () => "/tmp/sessions-main.json",
     isEmbeddedAgentRunActive: (sessionId: string) => isEmbeddedAgentRunActiveMock(sessionId),
     queueEmbeddedAgentMessageWithOutcome: (sessionId: string) => ({
       queued: false,
@@ -188,23 +188,26 @@ vi.mock("./subagent-announce.runtime.js", () => ({
   getRuntimeConfig: () => configOverride,
   loadSessionStore: vi.fn(() => sessionStore),
   readSessionMessagesAsync: vi.fn(async () => []),
-  readSessionEntry: (_storePath: string, sessionKey: string) => sessionStore[sessionKey],
+  readSubagentSessionEntry: (_storePath: string, sessionKey: string) => sessionStore[sessionKey],
   resolveAgentIdFromSessionKey: () => "main",
-  resolveStorePath: () => "/tmp/sessions-main.json",
+  resolveSessionStorePathCore: () => "/tmp/sessions-main.json",
   resolveMainSessionKey: () => "agent:main:main",
   isEmbeddedAgentRunActive: (sessionId: string) => isEmbeddedAgentRunActiveMock(sessionId),
   waitForEmbeddedAgentRunEnd: (sessionId: string, timeoutMs?: number) =>
     waitForEmbeddedAgentRunEndMock(sessionId, timeoutMs),
 }));
-vi.mock("../registry/subagent-registry-runtime.js", () => ({
+vi.mock("../registry/subagent-registry-read.js", () => ({
   countActiveDescendantRuns: () => 0,
   countPendingDescendantRuns: () => pendingDescendantRuns,
-  countPendingDescendantRunsExcludingRun: () => 0,
+  hasDescendantRunAwaitingSettle: () => false,
+  getLatestSubagentRunByChildSessionKey: () => undefined,
   listSubagentRunsForRequester: () => [],
   isSubagentSessionRunActive: () => subagentSessionRunActive,
   shouldIgnorePostCompletionAnnounceForSession: () => shouldIgnorePostCompletion,
-  replaceSubagentRunAfterSteer: () => true,
   resolveRequesterForChildSession: () => fallbackRequesterResolution,
+}));
+vi.mock("../registry/subagent-registry-runtime.js", () => ({
+  replaceSubagentRunAfterSteer: () => true,
 }));
 import { runSubagentAnnounceFlow } from "./subagent-announce.js";
 type AnnounceFlowParams = Parameters<

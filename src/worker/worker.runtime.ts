@@ -23,7 +23,7 @@ export type WorkerRuntimeResult =
 
 const WORKER_REMOTE_CANCEL_GRACE_MS = 1_000;
 
-function toError(value: unknown, fallback: string): Error {
+function toWorkerRuntimeError(value: unknown, fallback: string): Error {
   return value instanceof Error ? value : new Error(fallback, { cause: value });
 }
 
@@ -63,7 +63,7 @@ export async function runWorkerDescriptor(
   let resultFenceAcked = false;
   let forcedStopTimer: NodeJS.Timeout | undefined;
   const connection = createWorkerConnection({
-    socketPath: descriptor.socketPath,
+    endpoint: descriptor.connectionEndpoint,
     connectParams: buildWorkerConnectParams(descriptor),
   });
   const abortFromCaller = () => {
@@ -149,22 +149,17 @@ export async function runWorkerDescriptor(
           },
         },
         live: {
-          emit: async (event) => {
-            await live.emit(descriptor.assignment.runId, event);
-            if (
-              event.kind === "lifecycle" &&
-              (event.payload.phase === "finishing" ||
-                event.payload.phase === "end" ||
-                event.payload.phase === "error")
-            ) {
-              resultFenceAcked = true;
-            }
+          enqueuePreview: (event) => live.enqueuePreview(descriptor.assignment.runId, event),
+          emitTerminal: async (event) => {
+            await live.emitTerminal(descriptor.assignment.runId, event);
+            resultFenceAcked = true;
           },
         },
+        sessions: connection,
         signal: abortController.signal,
       });
       if (options.signal?.aborted) {
-        throw toError(options.signal.reason, "worker interrupted");
+        throw toWorkerRuntimeError(options.signal.reason, "worker interrupted");
       }
     } catch (error) {
       const fenced = fencedResult(connection.state);
@@ -172,7 +167,7 @@ export async function runWorkerDescriptor(
         return fenced;
       }
       if (options.signal?.aborted) {
-        throw toError(options.signal.reason, "worker interrupted");
+        throw toWorkerRuntimeError(options.signal.reason, "worker interrupted");
       }
       if (resultFenceAcked && connection.state.kind === "ready") {
         return {
@@ -182,7 +177,7 @@ export async function runWorkerDescriptor(
           transcriptNextSeq: transcript.nextSeq,
         };
       }
-      throw toError(error, "worker session failed");
+      throw toWorkerRuntimeError(error, "worker session failed");
     }
     const fenced = fencedResult(connection.state);
     if (fenced) {

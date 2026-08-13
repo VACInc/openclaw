@@ -35,7 +35,13 @@ import { createReplyOperation, getActiveReplyRunCount } from "./reply-run-regist
 import { testing as replyRunTesting } from "./reply-run-registry.test-support.js";
 import { routeReply } from "./route-reply.runtime.js";
 import { drainFormattedSystemEvents } from "./session-system-events.js";
+import {
+  createSourceReplyDeliveryRuntime,
+  readSourceReplyDeliveryRuntime,
+  type SourceReplyDeliveryRuntimeOptions,
+} from "./source-reply-delivery-runtime.js";
 import { buildChannelSourceTurnId } from "./source-turn-id.js";
+import { withReplySystemEventSessionKey } from "./system-event-session-key.js";
 import { resolveTypingMode } from "./typing-mode.js";
 
 vi.mock("../../agents/auth-profiles/session-override.js", () => ({
@@ -56,12 +62,19 @@ vi.mock("../../agents/harness/hook-helpers.js", () => ({
   runAgentHarnessBeforeMessageWriteHook: vi.fn((params: { message: unknown }) => params.message),
 }));
 
+// Provider policy projection belongs to its adapter and provider-local suites. These tests
+// exercise prepared reply orchestration and supply their own model/thinking facts.
+vi.mock("../../plugins/provider-policy-surface.js", () => ({
+  resolveDirectBundledProviderPolicySurface: () => null,
+  resolveTrustedExternalProviderPolicySurface: () => null,
+}));
+
 vi.mock("../../config/sessions/group.js", () => ({
   resolveGroupSessionKey: vi.fn().mockReturnValue(undefined),
 }));
 
 vi.mock("../../config/sessions/paths.js", () => ({
-  resolveSessionFilePath: vi.fn().mockReturnValue("/tmp/session.jsonl"),
+  resolveSessionFilePathCore: vi.fn().mockReturnValue("/tmp/session.jsonl"),
   resolveSessionFilePathOptions: vi.fn().mockReturnValue({}),
 }));
 
@@ -69,9 +82,9 @@ const loadSessionEntryMock = vi.hoisted(() => vi.fn());
 const updateAmbientTranscriptWatermarkMock = vi.hoisted(() => vi.fn().mockResolvedValue(null));
 
 vi.mock("../../config/sessions/session-accessor.js", () => ({
-  listSessionEntries: vi.fn().mockReturnValue([]),
+  listSessionEntriesCore: vi.fn().mockReturnValue([]),
   loadSessionEntry: loadSessionEntryMock,
-  patchSessionEntry: vi.fn(),
+  patchSessionEntryCore: vi.fn(),
   persistSessionTranscriptTurn: vi.fn(),
 }));
 
@@ -93,7 +106,7 @@ vi.mock(import("../../routing/session-key.js"), async (importOriginal) => {
   return {
     ...actual,
     normalizeMainKey: () => "main",
-    normalizeAgentId: (id: string | undefined | null) => id ?? "default",
+    normalizeAgentId: vi.fn((id: string | undefined | null) => id ?? "default"),
   };
 });
 
@@ -633,10 +646,11 @@ describe("runPreparedReply media-only handling", () => {
       },
     });
 
-    expect(buildDirectChatContext).toHaveBeenCalledTimes(1);
+    expect(buildDirectChatContext).toHaveBeenCalledTimes(2);
     const directContextParams = requireMockCallArg(
       vi.mocked(buildDirectChatContext),
       "direct chat context",
+      1,
     ) as {
       sessionCtx?: { Provider?: string; ChatType?: string };
       sourceReplyDeliveryMode?: string;
@@ -662,6 +676,81 @@ describe("runPreparedReply media-only handling", () => {
       expect.anything(),
       undefined,
     );
+  });
+
+  it("projects prepared embedded prompt variants without changing CLI session guidance", async () => {
+    vi.mocked(buildDirectChatContext).mockImplementation(
+      ({ sourceReplyDeliveryMode }) => `direct:${sourceReplyDeliveryMode ?? "automatic"}`,
+    );
+    await runPrepared({
+      opts: {
+        sourceReplyDeliveryMode: "message_tool_only",
+        sourceReplyDeliveryModeOrigin: "runtime_default",
+      } as NonNullable<Parameters<typeof runPreparedReply>[0]["opts"]> &
+        SourceReplyDeliveryRuntimeOptions,
+      ctx: { ...createInboundTurn("hello", "discord", "direct") },
+      sessionCtx: { ...createSessionTurn("hello", "discord", "direct") },
+    });
+
+    const call = requireLastRunReplyAgentCall();
+    const followupRun = call.followupRun;
+    const run = followupRun.run;
+    const sourceReplyDeliveryRuntime = readSourceReplyDeliveryRuntime(run);
+    expect(run.extraSystemPrompt).toBe("direct:message_tool_only");
+    expect(run.extraSystemPromptStatic).toBe("direct:message_tool_only");
+    run.extraSystemPrompt += "\n\npost-compaction refresh";
+    sourceReplyDeliveryRuntime?.applyMode(run, "automatic");
+    expect(run.extraSystemPrompt).toBe("direct:message_tool_only\n\npost-compaction refresh");
+    sourceReplyDeliveryRuntime?.applyPreparedMode(run, "automatic");
+    expect(run.extraSystemPrompt).toBe("direct:automatic\n\npost-compaction refresh");
+    expect(run.extraSystemPromptStatic).toBe("direct:message_tool_only");
+    sourceReplyDeliveryRuntime?.applyPreparedMode(run, "message_tool_only");
+    expect(run.extraSystemPrompt).toBe("direct:message_tool_only\n\npost-compaction refresh");
+    expect(run.cliSessionBindingFacts).toEqual({
+      extraSystemPromptStatic: "direct:message_tool_only",
+      sourceReplyDeliveryMode: "message_tool_only",
+    });
+  });
+
+  it("replaces only the bound delivery prompt component", () => {
+    const repeatedPrefix = "same guidance\n\nindependent context\n\n";
+    const run = { extraSystemPrompt: `${repeatedPrefix}same guidance\n\nlater context` };
+    const runtime = createSourceReplyDeliveryRuntime({
+      origin: "runtime_default",
+      initialMode: "message_tool_only",
+      projections: [run],
+      promptComponentByMode: {
+        automatic: "automatic guidance",
+        message_tool_only: "same guidance",
+      },
+      promptComponentOffset: repeatedPrefix.length,
+    });
+
+    runtime.applyPreparedMode(run, "automatic");
+    expect(run.extraSystemPrompt).toBe(`${repeatedPrefix}automatic guidance\n\nlater context`);
+
+    const absent = { extraSystemPrompt: "independent context only" };
+    createSourceReplyDeliveryRuntime({
+      origin: "runtime_default",
+      initialMode: "message_tool_only",
+      projections: [absent],
+      promptComponentByMode: {
+        automatic: "automatic guidance",
+        message_tool_only: "missing guidance",
+      },
+      promptComponentOffset: undefined,
+    }).applyPreparedMode(absent, "automatic");
+    expect(absent.extraSystemPrompt).toBe("independent context only");
+
+    const empty = { extraSystemPrompt: "independent context only" };
+    createSourceReplyDeliveryRuntime({
+      origin: "runtime_default",
+      initialMode: "message_tool_only",
+      projections: [empty],
+      promptComponentByMode: { automatic: "", message_tool_only: "" },
+      promptComponentOffset: undefined,
+    }).applyPreparedMode(empty, "automatic");
+    expect(empty.extraSystemPrompt).toBe("independent context only");
   });
 
   it("keeps addressed message-tool delivery hints out of persisted transcript rows", async () => {
@@ -746,6 +835,7 @@ describe("runPreparedReply media-only handling", () => {
 
   it("does not borrow target-session silence for native commands sent from direct chats", async () => {
     await runPrepared({
+      agentId: "main",
       sessionKey: "agent:main:telegram:group:target",
       ctx: {
         ...createInboundBody(""),
@@ -783,6 +873,24 @@ describe("runPreparedReply media-only handling", () => {
     expect(call.followupRun.prompt).toContain("[Thread history - for context]");
     expect(call.followupRun.prompt).toContain("Earlier message in this thread");
     expect(call.followupRun.prompt).toContain("[User sent media without caption]");
+  });
+
+  it("carries source delivery provenance into the queue-owned run", async () => {
+    await runPrepared({
+      opts: {
+        sourceReplyDeliveryMode: "message_tool_only",
+        sourceReplyDeliveryModeOrigin: "runtime_default",
+      } as NonNullable<Parameters<typeof runPreparedReply>[0]["opts"]> &
+        SourceReplyDeliveryRuntimeOptions,
+    });
+
+    const call = requireRunReplyAgentCall();
+    const followupRun = call.followupRun;
+    const run = followupRun.run;
+    expect(run.sourceReplyDeliveryMode).toBe("message_tool_only");
+    const sourceReplyDeliveryRuntime = readSourceReplyDeliveryRuntime(run);
+    expect(sourceReplyDeliveryRuntime?.origin).toBe("runtime_default");
+    expect(sourceReplyDeliveryRuntime?.currentMode).toBe("message_tool_only");
   });
 
   it("persists pure media turns without the model-facing placeholder", async () => {
@@ -828,6 +936,7 @@ describe("runPreparedReply media-only handling", () => {
     vi.mocked(embeddedAgentRuntime.isEmbeddedAgentRunStreaming).mockReturnValueOnce(true);
 
     const params = baseParams({
+      agentId: "main",
       sessionKey: `agent:main:${channel}:direct:steer-smoke`,
     });
     params.ctx = {
@@ -1661,6 +1770,63 @@ describe("runPreparedReply media-only handling", () => {
     expect(call.followupRun.prompt).toContain("a tiny dot image");
   });
 
+  it("indexes the runtime image layout against filtered prompt media", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-followup-image-"));
+    cleanupPaths.push(tmpDir);
+    const imageData = Buffer.from("runtime image bytes");
+    const imagePath = path.join(tmpDir, "current.png");
+    await writeFile(imagePath, imageData);
+
+    const result = await runPrepared({
+      ctx: {
+        ...createInboundBody("describe the image"),
+        media: [
+          {
+            path: path.join(tmpDir, "voice.ogg"),
+            contentType: "audio/ogg",
+            transcribed: true,
+          },
+          { path: imagePath, contentType: "image/png", workspaceDir: tmpDir },
+        ],
+        OriginatingChannel: "webchat",
+        OriginatingTo: "webchat:local",
+        ChatType: "direct",
+      },
+      sessionCtx: {
+        ...createSessionBody("describe the image"),
+        Provider: "webchat",
+        OriginatingChannel: "webchat",
+        OriginatingTo: "webchat:local",
+        ChatType: "direct",
+      },
+    });
+
+    expect(result).toEqual({ text: "ok" });
+    const call = requireRunReplyAgentCall();
+    expect(call.followupRun.media).toEqual([
+      { path: imagePath, contentType: "image/png", workspaceDir: tmpDir },
+    ]);
+    expect(call.followupRun.images).toEqual([
+      {
+        type: "image",
+        data: imageData.toString("base64"),
+        mimeType: "image/png",
+      },
+    ]);
+    expect(
+      (call.followupRun as typeof call.followupRun & {
+        mediaImageLayout?: { slots: Array<{ kind: string; factIndex?: number }> };
+      }).mediaImageLayout,
+    ).toEqual({ slots: [{ kind: "inline", factIndex: 0 }] });
+    expect(
+      (
+        call.followupRun.userTurnTranscriptRecorder?.message as unknown as Record<string, unknown>
+      )?.["__openclaw"],
+    ).toMatchObject({
+      mediaImageLayout: { slots: [{ kind: "inline", factIndex: 1 }] },
+    });
+  });
+
   it("does not send a standalone reset notice for reply-producing /new turns", async () => {
     await runPrepared({
       ctx: {
@@ -2377,12 +2543,74 @@ describe("runPreparedReply media-only handling", () => {
 
     nextRun.complete();
   });
-  it("re-drains system events after waiting behind an active run", async () => {
+  it("keeps route and dispatch system events queued when busy admission returns", async () => {
+    vi.useFakeTimers();
+    const actualSystemEvents = await vi.importActual<typeof import("./session-system-events.js")>(
+      "./session-system-events.js",
+    );
+    vi.mocked(drainFormattedSystemEvents).mockImplementation(
+      actualSystemEvents.drainFormattedSystemEvents,
+    );
     const queueSettings = await import("./queue/settings-runtime.js");
     vi.mocked(queueSettings.resolveQueueSettings).mockReturnValueOnce({ mode: "interrupt" });
-    vi.mocked(drainFormattedSystemEvents)
-      .mockResolvedValueOnce("System: [t] Initial event.")
-      .mockResolvedValueOnce("System: [t] Post-compaction context.");
+    const routeSessionKey = "agent:main:slack:channel:c123";
+    const dispatchSessionKey = `${routeSessionKey}:thread:123.456`;
+    enqueueSystemEvent("Slack reaction added: :eyes:", { sessionKey: routeSessionKey });
+    enqueueSystemEvent("Slack message in #claw-test from Alice", {
+      sessionKey: dispatchSessionKey,
+    });
+    const previousRun = createReplyOperation({
+      sessionId: "session-before-wait",
+      sessionKey: dispatchSessionKey,
+      resetTriggered: false,
+    });
+    previousRun.setPhase("running");
+
+    const runPromise = runPrepared({
+      agentId: "main",
+      isNewSession: false,
+      sessionId: "session-before-wait",
+      sessionKey: dispatchSessionKey,
+      opts: withReplySystemEventSessionKey({}, routeSessionKey),
+      provider: "",
+      model: "",
+      resolvedThinkLevel: "off",
+    });
+
+    await Promise.resolve();
+    previousRun.complete();
+    const nextRun = createReplyOperation({
+      sessionId: "session-after-wait",
+      sessionKey: dispatchSessionKey,
+      resetTriggered: false,
+    });
+    nextRun.setPhase("running");
+
+    const assertion = expect(runPromise).resolves.toEqual({
+      text: "⚠️ Previous run is still shutting down. Please try again in a moment.",
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+    await assertion;
+    expect(vi.mocked(runReplyAgent)).not.toHaveBeenCalled();
+    expect(peekSystemEventEntries(routeSessionKey).map((event) => event.text)).toEqual([
+      "Slack reaction added: :eyes:",
+    ]);
+    expect(peekSystemEventEntries(dispatchSessionKey).map((event) => event.text)).toEqual([
+      "Slack message in #claw-test from Alice",
+    ]);
+
+    nextRun.complete();
+  });
+  it("drains system events only after waiting behind an active run", async () => {
+    const actualSystemEvents = await vi.importActual<typeof import("./session-system-events.js")>(
+      "./session-system-events.js",
+    );
+    vi.mocked(drainFormattedSystemEvents).mockImplementation(
+      actualSystemEvents.drainFormattedSystemEvents,
+    );
+    const queueSettings = await import("./queue/settings-runtime.js");
+    vi.mocked(queueSettings.resolveQueueSettings).mockReturnValueOnce({ mode: "interrupt" });
+    enqueueSystemEvent("System event after active run", { sessionKey: "session-key" });
 
     const previousRun = createReplyOperation({
       sessionId: "session-events-after-wait",
@@ -2394,19 +2622,24 @@ describe("runPreparedReply media-only handling", () => {
     const runPromise = runPrepared({
       isNewSession: false,
       sessionId: "session-events-after-wait",
+      provider: "",
+      model: "",
+      resolvedThinkLevel: "off",
     });
 
     await Promise.resolve();
+    expect(peekSystemEventEntries("session-key").map((event) => event.text)).toEqual([
+      "System event after active run",
+    ]);
     previousRun.complete();
 
     await expect(runPromise).resolves.toEqual({ text: "ok" });
     const call = requireLastRunReplyAgentCall();
-    expect(call?.commandBody).toContain("System: [t] Initial event.");
-    expect(call?.commandBody).not.toContain("System: [t] Post-compaction context.");
-    expect(call?.transcriptCommandBody).not.toContain("System: [t] Initial event.");
-    expect(call?.followupRun.prompt).toContain("System: [t] Initial event.");
-    expect(call?.followupRun.prompt).not.toContain("System: [t] Post-compaction context.");
-    expect(call?.followupRun.transcriptPrompt).not.toContain("System: [t] Initial event.");
+    expect(call?.commandBody).toContain("System event after active run");
+    expect(call?.transcriptCommandBody).not.toContain("System event after active run");
+    expect(call?.followupRun.prompt).toContain("System event after active run");
+    expect(call?.followupRun.transcriptPrompt).not.toContain("System event after active run");
+    expect(peekSystemEventEntries("session-key")).toStrictEqual([]);
   });
 
   it("threads inbound context as current-turn context without changing transcript text", async () => {
@@ -2838,41 +3071,58 @@ describe("runPreparedReply media-only handling", () => {
     const directContextParams = requireMockCallArg(
       vi.mocked(buildDirectChatContext),
       "direct chat context",
+      1,
     ) as { sourceReplyDeliveryMode?: string };
     const call = requireLastRunReplyAgentCall();
     expect(directContextParams?.sourceReplyDeliveryMode).toBe("message_tool_only");
     expect(call?.followupRun.run.sourceReplyDeliveryMode).toBe("message_tool_only");
   });
 
-  it("keeps heartbeat prompts out of visible transcript prompt", async () => {
-    const heartbeatPrompt = "Read HEARTBEAT.md and run any due maintenance.";
+  it.each(["heartbeat", "cron-event", "exec-event"] as const)(
+    "keeps %s heartbeat metadata out of the model prompt",
+    async (provider) => {
+      const heartbeatPrompt = "Read HEARTBEAT.md and run any due maintenance.";
+      const syntheticConversationInfo =
+        'Conversation info:\n```json\n{"chat_id":"discord:channel-123"}\n```';
+      vi.mocked(buildInboundUserContextPrefix).mockReturnValueOnce(syntheticConversationInfo);
 
-    await runPrepared({
-      opts: { isHeartbeat: true },
-      ctx: {
-        Body: heartbeatPrompt,
-        RawBody: heartbeatPrompt,
-        CommandBody: heartbeatPrompt,
-        ...createProviderSurface("heartbeat"),
-        ChatType: "direct",
-      },
-      sessionCtx: {
-        Body: heartbeatPrompt,
-        BodyStripped: heartbeatPrompt,
-        ...createProviderSurface("heartbeat"),
-        ChatType: "direct",
-      },
-    });
+      await runPrepared({
+        opts: { isHeartbeat: true },
+        ctx: {
+          Body: heartbeatPrompt,
+          RawBody: heartbeatPrompt,
+          CommandBody: heartbeatPrompt,
+          ...createProviderSurface(provider),
+          ChatType: "direct",
+          OriginatingChannel: "discord",
+          OriginatingTo: "discord:channel-123",
+        },
+        sessionCtx: {
+          Body: heartbeatPrompt,
+          BodyStripped: heartbeatPrompt,
+          ...createProviderSurface(provider),
+          ChatType: "direct",
+          OriginatingChannel: "discord",
+          OriginatingTo: "discord:channel-123",
+        },
+      });
 
-    const call = requireLastRunReplyAgentCall();
-    expect(call?.commandBody).toContain(heartbeatPrompt);
-    expect(call?.followupRun.prompt).toContain(heartbeatPrompt);
-    expect(call?.transcriptCommandBody).toBe("[OpenClaw heartbeat poll]");
-    expect(call?.followupRun.transcriptPrompt).toBe("[OpenClaw heartbeat poll]");
-    expect(call?.followupRun.userTurnTranscriptRecorder?.message).toMatchObject({
-      provenance: { kind: "internal_system", sourceTool: "heartbeat" },
-    });
-  });
+      const call = requireLastRunReplyAgentCall();
+      expect(call?.commandBody).toContain(heartbeatPrompt);
+      expect(call?.followupRun.prompt).toContain(heartbeatPrompt);
+      expect(call?.followupRun.prompt).not.toContain(syntheticConversationInfo);
+      expect(buildInboundUserContextPrefix).not.toHaveBeenCalled();
+      expect(call?.sessionCtx).toMatchObject({
+        OriginatingChannel: "discord",
+        OriginatingTo: "discord:channel-123",
+      });
+      expect(call?.transcriptCommandBody).toBe("[OpenClaw heartbeat poll]");
+      expect(call?.followupRun.transcriptPrompt).toBe("[OpenClaw heartbeat poll]");
+      expect(call?.followupRun.userTurnTranscriptRecorder?.message).toMatchObject({
+        provenance: { kind: "internal_system", sourceTool: "heartbeat" },
+      });
+    },
+  );
 
   it("keeps active goal context out of background heartbeat turns", async () => {
     const sessionEntry: SessionEntry = {
@@ -2897,11 +3147,7 @@ describe("runPreparedReply media-only handling", () => {
       sessionStore: { "session-key": sessionEntry },
     });
 
-    expect(buildInboundUserContextPrefix).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      undefined,
-    );
+    expect(buildInboundUserContextPrefix).not.toHaveBeenCalled();
   });
 
   it("uses persisted Discord chat metadata for system-event CLI static prompt identity", async () => {
@@ -2942,7 +3188,7 @@ describe("runPreparedReply media-only handling", () => {
     });
 
     const call = requireLastRunReplyAgentCall();
-    expect(buildGroupChatContext).toHaveBeenCalledTimes(1);
+    expect(buildGroupChatContext).toHaveBeenCalledTimes(2);
     const groupContextParams = requireMockCallArg(
       vi.mocked(buildGroupChatContext),
       "group chat context",
@@ -2985,6 +3231,16 @@ describe("runPreparedReply media-only handling", () => {
             sourceReplyDeliveryMode ?? "automatic",
           ].join(":"),
       );
+      // The direct-caller heartbeat run below resolves the stable mode from
+      // config instead of injected opts; keep both sources agreeing per case.
+      const caseCfg = {
+        session: {},
+        channels: {},
+        agents: { defaults: {} },
+        ...(stableMode === "message_tool_only"
+          ? { messages: { visibleReplies: "message_tool" as const } }
+          : {}),
+      };
       const sessionEntry: SessionEntry = {
         sessionId: "session-telegram-group",
         updatedAt: 1,
@@ -3002,6 +3258,7 @@ describe("runPreparedReply media-only handling", () => {
       };
 
       await runPrepared({
+        cfg: caseCfg,
         opts: {
           sourceReplyDeliveryMode: "message_tool_only",
           sessionPromptSourceReplyDeliveryMode: stableMode,
@@ -3020,6 +3277,7 @@ describe("runPreparedReply media-only handling", () => {
         },
       });
       await runPrepared({
+        cfg: caseCfg,
         opts: {
           sourceReplyDeliveryMode: stableMode,
           sessionPromptSourceReplyDeliveryMode: stableMode,
@@ -3037,6 +3295,7 @@ describe("runPreparedReply media-only handling", () => {
         },
       });
       await runPrepared({
+        cfg: caseCfg,
         opts: {
           isHeartbeat: true,
           sourceReplyDeliveryMode: stableMode,
@@ -3055,10 +3314,50 @@ describe("runPreparedReply media-only handling", () => {
           Provider: "cron-event",
         },
       });
+      // Production heartbeat wakes call the reply resolver directly, without
+      // dispatch's injected delivery modes; their binding facts must still
+      // match dispatched turns or the CLI session ping-pongs (#121485).
+      await runPrepared({
+        cfg: caseCfg,
+        opts: { isHeartbeat: true },
+        isNewSession: false,
+        systemSent: true,
+        sessionEntry,
+        ctx: {
+          ...createInboundBody("scheduled wake"),
+          Provider: "heartbeat",
+          SessionKey: "agent:main:telegram:-100123",
+        },
+        sessionCtx: {
+          ...createSessionBody("scheduled wake"),
+          Provider: "heartbeat",
+        },
+      });
+      // Response-tool heartbeats carry an effective message_tool_only turn
+      // mode; that is per-turn enforcement and must not become the session
+      // policy fact, or these heartbeats keep ping-ponging the binding.
+      await runPrepared({
+        cfg: caseCfg,
+        opts: { isHeartbeat: true, sourceReplyDeliveryMode: "message_tool_only" },
+        isNewSession: false,
+        systemSent: true,
+        sessionEntry,
+        ctx: {
+          ...createInboundBody("scheduled wake"),
+          Provider: "heartbeat",
+          SessionKey: "agent:main:telegram:-100123",
+        },
+        sessionCtx: {
+          ...createSessionBody("scheduled wake"),
+          Provider: "heartbeat",
+        },
+      });
 
       const roomEventRun = requireRunReplyAgentCall(0).followupRun.run;
       const primaryRun = requireRunReplyAgentCall(1).followupRun.run;
       const heartbeatRun = requireRunReplyAgentCall(2).followupRun.run;
+      const directHeartbeatRun = requireRunReplyAgentCall(3).followupRun.run;
+      const responseToolHeartbeatRun = requireRunReplyAgentCall(4).followupRun.run;
       expect(roomEventRun.sourceReplyDeliveryMode).toBe("message_tool_only");
       expect(primaryRun.sourceReplyDeliveryMode).toBe(stableMode);
       expect(heartbeatRun.sourceReplyDeliveryMode).toBe(stableMode);
@@ -3075,8 +3374,100 @@ describe("runPreparedReply media-only handling", () => {
       });
       expect(primaryRun.cliSessionBindingFacts).toEqual(roomEventRun.cliSessionBindingFacts);
       expect(heartbeatRun.cliSessionBindingFacts).toEqual(roomEventRun.cliSessionBindingFacts);
+      expect(directHeartbeatRun.cliSessionBindingFacts).toEqual(
+        roomEventRun.cliSessionBindingFacts,
+      );
+      expect(responseToolHeartbeatRun.sourceReplyDeliveryMode).toBe("message_tool_only");
+      expect(responseToolHeartbeatRun.cliSessionBindingFacts).toEqual(
+        roomEventRun.cliSessionBindingFacts,
+      );
     },
   );
+
+  it("resolves origin-less sessions as internal for synthetic stable facts", async () => {
+    vi.mocked(buildDirectChatContext).mockReturnValue("direct-context");
+    // An entry with no persisted delivery origin has only ever been driven
+    // internally; the wake provider ("heartbeat") must not leak into the
+    // stable context as a non-internal surface or the fact diverges from
+    // dispatch's live webchat turns.
+    const sessionEntry: SessionEntry = {
+      sessionId: "session-internal",
+      updatedAt: 1,
+      systemSent: true,
+      chatType: "direct",
+    };
+
+    await runPrepared({
+      cfg: { session: {}, channels: {}, agents: { defaults: {} } },
+      opts: { isHeartbeat: true },
+      isNewSession: false,
+      systemSent: true,
+      sessionEntry,
+      ctx: {
+        ...createInboundBody("scheduled wake"),
+        Provider: "heartbeat",
+        SessionKey: "agent:main:main",
+      },
+      sessionCtx: {
+        ...createSessionBody("scheduled wake"),
+        Provider: "heartbeat",
+        ChatType: "direct",
+      },
+    });
+
+    const run = requireRunReplyAgentCall(0).followupRun.run;
+    expect(run.cliSessionBindingFacts?.sourceReplyDeliveryMode).toBe("automatic");
+  });
+
+  it("downgrades the synthetic stable mode when the message tool is policy-denied", async () => {
+    vi.mocked(buildGroupChatContext).mockImplementation(({ sourceReplyDeliveryMode }) =>
+      ["group", sourceReplyDeliveryMode ?? "automatic"].join(":"),
+    );
+    const sessionEntry: SessionEntry = {
+      sessionId: "session-telegram-group",
+      updatedAt: 1,
+      systemSent: true,
+      chatType: "group",
+      delivery: normalizeSessionDeliveryState({
+        context: { channel: "telegram", to: "-100123" },
+        origin: {
+          provider: "telegram",
+          surface: "telegram",
+          chatType: "group",
+          to: "-100123",
+        },
+      }),
+    };
+
+    // Tool-only delivery configured, but the message tool is denied: dispatch
+    // downgrades its stable mode to automatic, so the synthetic fallback must
+    // record automatic too or the binding hashes diverge again.
+    await runPrepared({
+      cfg: {
+        session: {},
+        channels: {},
+        agents: { defaults: {} },
+        messages: { visibleReplies: "message_tool" as const },
+        tools: { deny: ["message"] },
+      },
+      opts: { isHeartbeat: true },
+      isNewSession: false,
+      systemSent: true,
+      sessionEntry,
+      ctx: {
+        ...createInboundBody("scheduled wake"),
+        Provider: "heartbeat",
+        SessionKey: "agent:main:telegram:-100123",
+      },
+      sessionCtx: {
+        ...createSessionBody("scheduled wake"),
+        Provider: "heartbeat",
+      },
+    });
+
+    const run = requireRunReplyAgentCall(0).followupRun.run;
+    expect(run.cliSessionBindingFacts?.sourceReplyDeliveryMode).toBe("automatic");
+  });
 
   it("keeps per-message room-event metadata out of CLI binding facts", async () => {
     vi.mocked(buildGroupChatContext).mockImplementation(({ sessionCtx, sourceReplyDeliveryMode }) =>
@@ -3525,6 +3916,39 @@ describe("runPreparedReply media-only handling", () => {
     const call = requireRunReplyAgentCall();
     expect(call.commandBody).toContain("System: [t] Model switched.");
     expect(call.followupRun.run.extraSystemPrompt ?? "").not.toContain("Runtime System Events");
+  });
+
+  it("includes route system events in a thread-scoped turn", async () => {
+    const actualSystemEvents = await vi.importActual<typeof import("./session-system-events.js")>(
+      "./session-system-events.js",
+    );
+    vi.mocked(drainFormattedSystemEvents).mockImplementation(
+      actualSystemEvents.drainFormattedSystemEvents,
+    );
+    enqueueSystemEvent("Slack reaction added: :eyes:", {
+      sessionKey: "agent:main:slack:channel:c123",
+    });
+    enqueueSystemEvent("Slack message in #claw-test from Alice", {
+      sessionKey: "agent:main:slack:channel:c123:thread:123.456",
+    });
+
+    await runPrepared({
+      agentId: "main",
+      ctx: createInboundBody("report queued reactions"),
+      opts: withReplySystemEventSessionKey({}, "agent:main:slack:channel:c123"),
+      provider: "",
+      model: "",
+      resolvedThinkLevel: "off",
+      sessionKey: "agent:main:slack:channel:c123:thread:123.456",
+    });
+
+    const prompt = requireRunReplyAgentCall().followupRun.prompt;
+    expect(prompt).toContain("Slack reaction added: :eyes:");
+    expect(prompt).toContain("Slack message in #claw-test from Alice");
+    expect(peekSystemEventEntries("agent:main:slack:channel:c123")).toStrictEqual([]);
+    expect(peekSystemEventEntries("agent:main:slack:channel:c123:thread:123.456")).toStrictEqual(
+      [],
+    );
   });
 
   it("keeps sender ownership when queued system events are prepended", async () => {

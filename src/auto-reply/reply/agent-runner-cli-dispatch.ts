@@ -5,8 +5,7 @@ import type { MediaImageLayout } from "../../agents/embedded-agent-runner/run/pr
 import { runCliAgent } from "../../agents/cli-runner.js";
 import type { RunCliAgentParams } from "../../agents/cli-runner/types.js";
 import { clearCliSession, getCliSessionBinding } from "../../agents/cli-session.js";
-import { extractToolResultText } from "../../agents/embedded-agent-subscribe.tools.js";
-import { inferToolMetaFromArgs } from "../../agents/embedded-agent-utils.js";
+import { extractToolResultText } from "../../agents/embedded-agent-tool-results.js";
 import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent.js";
 import {
   DEFAULT_FAST_MODE_AUTO_ON_SECONDS,
@@ -19,6 +18,7 @@ import {
   resolveAgentRunAbortLifecycleFields,
   resolveAgentRunErrorLifecycleFields,
 } from "../../agents/run-termination.js";
+import { inferToolMetaFromArgsCore } from "../../agents/tool-display.js";
 import { isCommandBearingToolCall } from "../../agents/tool-display.js";
 import { normalizeAgentPlanSteps } from "../../channels/streaming.js";
 import type { SessionEntry } from "../../config/sessions.js";
@@ -318,7 +318,7 @@ export function createCliToolSummaryTracker(params: {
       if (payload.phase === "start") {
         if (payload.toolCallId && payload.name) {
           toolByCallId.set(payload.toolCallId, {
-            meta: inferToolMetaFromArgs(payload.name, payload.args, {
+            meta: inferToolMetaFromArgsCore(payload.name, payload.args, {
               detailMode: params.detailMode ?? "explain",
             }),
             commandBearing: isCommandBearingToolCall(payload.name, payload.args),

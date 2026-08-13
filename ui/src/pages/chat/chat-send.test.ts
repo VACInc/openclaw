@@ -358,7 +358,7 @@ describe("refreshChat", () => {
     expect(requestUpdate).not.toHaveBeenCalled();
   });
 
-  it("uses startup-shipped metadata without requesting chat.metadata", async () => {
+  it("uses explicit model discovery after startup metadata", async () => {
     const startup = createDeferred<unknown>();
     const host = makeChatHost({
       hello: {
@@ -366,6 +366,16 @@ describe("refreshChat", () => {
       } as TestChatHost["hello"],
       requestHandlers: {
         "chat.startup": () => startup.promise,
+        "models.list": {
+          models: [
+            {
+              available: true,
+              id: "live-model",
+              name: "Live Model",
+              provider: "openai",
+            },
+          ],
+        },
       },
     });
 
@@ -397,14 +407,14 @@ describe("refreshChat", () => {
       expect(host.chatModelCatalog).toEqual([
         {
           available: true,
-          id: "startup-model",
-          name: "Startup Model",
+          id: "live-model",
+          name: "Live Model",
           provider: "openai",
         },
       ]),
     );
     expect(host.request).not.toHaveBeenCalledWith("chat.metadata", expect.anything());
-    expect(host.request).not.toHaveBeenCalledWith("models.list", expect.anything());
+    expect(host.request).toHaveBeenCalledWith("models.list", { view: "configured" });
     expect(host.request).not.toHaveBeenCalledWith("commands.list", expect.anything());
   });
 
@@ -8787,13 +8797,14 @@ describe("handleSendChat", () => {
     ]);
     expect(host.lastError).toBe("no active turn to steer");
 
-    host.chatRunId = null;
+    host.connected = false;
     await retryQueuedChatMessage(host, original.id);
     expect(payloads).toHaveLength(1);
     expect(host.lastError).toBe(
       "This steer still targets the previous run, but that run is no longer active.",
     );
 
+    host.connected = true;
     host.chatRunId = "active-run";
     host.chatDisplayedLeafEntryId = "leaf-advanced-during-tool-work";
     await retryQueuedChatMessage(host, original.id);
@@ -8809,6 +8820,49 @@ describe("handleSendChat", () => {
       "leaf-active",
       "leaf-advanced-during-tool-work",
     ]);
+  });
+
+  it("retries a failed steer as a new turn when the session is idle", async () => {
+    const payloads: Array<Record<string, unknown>> = [];
+    const original = {
+      id: "idle-failed-steer",
+      text: "deliver this as a new turn",
+      createdAt: 1,
+      kind: "steered" as const,
+      sendAttempts: 1,
+      sendError: "The session switched branches — review and resend.",
+      sendRequestStartedAtMs: 123,
+      sendRunId: "previous-steer-request",
+      sendState: "failed" as const,
+      steerTargetRunId: "previous-run",
+      sessionKey: "agent:main:main",
+      agentId: "main",
+    };
+    const host = makeChatHost({
+      requestHandlers: {
+        "chat.history": idleChatHistory(original.sessionKey),
+        "chat.send": (params: unknown) => {
+          payloads.push(requireRecord(params, "idle steer retry payload"));
+          return { status: "ok", runId: "new-turn" };
+        },
+      },
+      chatError: "The session switched branches — review and resend.",
+      chatQueue: [original],
+      sessionKey: original.sessionKey,
+    });
+    expect(admitQueuedMessageForSession(host, host.sessionKey, original)).toBe(true);
+
+    await retryQueuedChatMessage(host, original.id);
+
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]).toMatchObject({ message: original.text });
+    expect(payloads[0]).not.toHaveProperty("expectedRunId");
+    expect(payloads[0]).not.toHaveProperty("expectedLeafEntryId");
+    expect(payloads[0]).not.toHaveProperty("queueMode");
+    expect(payloads[0]?.idempotencyKey).not.toBe(original.sendRunId);
+    expect(host.chatQueue).toEqual([]);
+    expect(host.chatError).toBeNull();
+    expect(host.lastError).toBeNull();
   });
 
   it("fails a restored steer that predates durable target identity", async () => {

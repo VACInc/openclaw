@@ -2,7 +2,6 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
-import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { DEFAULT_MODEL } from "../agents/defaults.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import { resolveSessionModelIdentityRef } from "../agents/session-model-ref.js";
@@ -15,6 +14,7 @@ import {
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
 import { sessionDeliveryChannel, sessionDeliveryOrigin } from "../utils/delivery-context.shared.js";
+import { resolveSessionStoreAgentId } from "./session-store-key.js";
 import type {
   SessionListRowContext,
   SessionListRowContextProvider,
@@ -27,7 +27,7 @@ import {
 import { buildGatewaySessionRow } from "./session-utils-row.js";
 import {
   isGroupOrChannelDisplaySession,
-  loadSessionEntryReadOnly,
+  loadGatewaySessionEntryReadOnly,
   parseGroupKey,
 } from "./session-utils-store.js";
 import type { GatewaySessionRow } from "./session-utils.types.js";
@@ -101,13 +101,16 @@ export function resolveSessionListRowContext(params: {
 }
 
 export function resolveSessionListSearchModelFields(params: {
+  agentId?: string;
   cfg: OpenClawConfig;
   key: string;
   entry?: SessionEntry;
   rowContext?: SessionListRowContext;
 }): Array<string | undefined> {
   const parsedAgent = parseAgentSessionKey(params.key);
-  const agentId = normalizeAgentId(parsedAgent?.agentId ?? resolveDefaultAgentId(params.cfg));
+  const agentId = normalizeAgentId(
+    parsedAgent?.agentId ?? params.agentId ?? resolveSessionStoreAgentId(params.cfg, params.key),
+  );
   const subagentRun = params.rowContext
     ? params.rowContext.subagentRuns.getDisplaySubagentRun(params.key)
     : getSessionDisplaySubagentRunByChildSessionKey(params.key);
@@ -164,11 +167,14 @@ export function loadGatewaySessionLifecycleSnapshot(
   options?: LoadGatewaySessionRowOptions,
 ): { lifecycleRunId?: string; row: GatewaySessionRow | null } {
   const now = options?.now ?? Date.now();
-  const { cfg, storePath, store, entry, canonicalKey } = loadSessionEntryReadOnly(sessionKey, {
-    clone: false,
-    includeStoreChildEntries: true,
-    ...(options?.agentId ? { agentId: options.agentId } : {}),
-  });
+  const { cfg, storePath, store, entry, canonicalKey } = loadGatewaySessionEntryReadOnly(
+    sessionKey,
+    {
+      clone: false,
+      includeStoreChildEntries: true,
+      ...(options?.agentId ? { agentId: options.agentId } : {}),
+    },
+  );
   if (!entry) {
     return { row: null };
   }

@@ -19,7 +19,7 @@ import {
   loadSessionEntry,
   loadExactSessionEntry,
   loadTranscriptEventsSync,
-  patchSessionEntry,
+  patchSessionEntryCore,
   replaceTranscriptEvents,
   replaceSessionEntry,
   withTranscriptWriteLock,
@@ -56,7 +56,7 @@ import {
   connectOk,
   createGatewaySuiteHarness,
   dispatchInboundMessageMock,
-  getReplyFromConfig,
+  gatewayReplyMock,
   installGatewayTestHooks,
   mockGetReplyFromConfigOnce,
   onceMessage,
@@ -1069,9 +1069,11 @@ describe("gateway server chat", () => {
         routeVariants: [],
       })),
     });
+    testState.agentsConfig = config.agents;
     openDirectChatSession();
     try {
       await writeSessionStore({
+        agentId: "work",
         entries: { "agent:work:main": { sessionId: "sess-work", updatedAt: Date.now() } },
       });
       const responses: Array<{ ok: boolean; payload?: unknown; error?: unknown }> = [];
@@ -1082,12 +1084,13 @@ describe("gateway server chat", () => {
         context,
       });
 
-      expect(responses[0]?.ok).toBe(true);
+      expect(responses[0]?.ok, JSON.stringify(responses[0])).toBe(true);
       expect(
         (responses[0]?.payload as { metadata?: { models?: unknown[] } })?.metadata?.models,
       ).toBe(undefined);
       expect(context.loadGatewayModelCatalogSnapshot).not.toHaveBeenCalled();
     } finally {
+      testState.agentsConfig = undefined;
       testState.sessionStorePath = undefined;
     }
   });
@@ -1452,7 +1455,7 @@ describe("gateway server chat", () => {
               }
             | undefined;
           expect(payload?.metadata?.models).toEqual([
-            {
+            expect.objectContaining({
               id: "gpt-5.5",
               name: "GPT-5.5",
               provider: "openai",
@@ -1460,7 +1463,7 @@ describe("gateway server chat", () => {
               contextWindow: 400_000,
               reasoning: false,
               available: true,
-            },
+            }),
           ]);
           expect(payload?.sessionInfo?.thinkingLevels?.map((level) => level.id)).toEqual(["off"]);
           expect(payload?.defaults?.thinkingLevels?.map((level) => level.id)).toEqual(["off"]);
@@ -3009,7 +3012,7 @@ describe("gateway server chat", () => {
       });
       expect(stored?.restartRecoveryDeliveryContext).toBeUndefined();
       if (retryable) {
-        expect(stored?.restartRecoveryBeforeAgentReplyState).toBe("admitted");
+        expect(stored?.restartRecoveryBeforeAgentReplyState).toBeUndefined();
         expect(stored?.restartRecoveryDeliveryRequestFingerprint).toEqual(
           expect.stringMatching(/^hmac-sha256:v1:/u),
         );
@@ -3185,7 +3188,7 @@ describe("gateway server chat", () => {
       });
       restartRecoveryMocks.retryRestartAbortedMainSessionRecovery.mockImplementationOnce(
         async ({ sessionKey, storePath: recoveryStorePath }) => {
-          await patchSessionEntry({ sessionKey, storePath: recoveryStorePath }, () => ({
+          await patchSessionEntryCore({ sessionKey, storePath: recoveryStorePath }, () => ({
             abortedLastRun: false,
             updatedAt: Date.now(),
           }));
@@ -3252,7 +3255,7 @@ describe("gateway server chat", () => {
         () => expect(context.dedupe.has(pendingChatSendDedupeKey(idempotencyKey))).toBe(true),
         FAST_WAIT_OPTS,
       );
-      await patchSessionEntry({ sessionKey: "agent:main:main", storePath }, () => ({
+      await patchSessionEntryCore({ sessionKey: "agent:main:main", storePath }, () => ({
         restartRecoveryTerminalRunIds: [idempotencyKey],
         updatedAt: Date.now(),
       }));
@@ -3323,7 +3326,7 @@ describe("gateway server chat", () => {
       });
       restartRecoveryMocks.retryRestartAbortedMainSessionRecovery.mockImplementationOnce(
         async ({ sessionKey, storePath: recoveryStorePath }) => {
-          await patchSessionEntry({ sessionKey, storePath: recoveryStorePath }, () => ({
+          await patchSessionEntryCore({ sessionKey, storePath: recoveryStorePath }, () => ({
             sessionId: "replacement-session",
             restartRecoveryDeliveryRunId: "replacement-recovery",
             restartRecoveryDeliverySourceRunId: "replacement-source",
@@ -4794,7 +4797,7 @@ describe("gateway server chat", () => {
 
   test("chat.send does not force-disable block streaming", async () => {
     await withGatewayChatHarness(async ({ ws, createSessionDir }) => {
-      const spy = getReplyFromConfig;
+      const spy = gatewayReplyMock;
       await connectOk(ws);
 
       await createSessionDir();
@@ -4837,7 +4840,7 @@ describe("gateway server chat", () => {
     try {
       await withGatewayChatHarness(
         async ({ ws, createSessionDir }) => {
-          const spy = getReplyFromConfig;
+          const spy = gatewayReplyMock;
           await connectOk(ws, makeGatewayWebchatClient());
 
           await createSessionDir();
@@ -4966,7 +4969,7 @@ describe("gateway server chat", () => {
   test("chat.send forwards Control UI reconnect resume internally", async () => {
     await withGatewayChatHarness(
       async ({ ws, createSessionDir }) => {
-        const spy = getReplyFromConfig;
+        const spy = gatewayReplyMock;
         await connectOk(ws, makeGatewayWebchatClient());
 
         await createSessionDir();
@@ -5005,7 +5008,7 @@ describe("gateway server chat", () => {
   test("chat.send forwards one-turn queue mode overrides internally", async () => {
     await withGatewayChatHarness(
       async ({ ws, createSessionDir }) => {
-        const spy = getReplyFromConfig;
+        const spy = gatewayReplyMock;
         await connectOk(ws, makeGatewayWebchatClient());
 
         await createSessionDir();
@@ -5092,6 +5095,21 @@ describe("gateway server chat", () => {
         timestamp: Date.now(),
         media: [
           {
+            kind: "video",
+            url: "media://inbound/video-claim",
+            contentType: "video/mp4",
+            fileName: "managed-video.mp4",
+            durationMs: 5678,
+          },
+          {
+            kind: "image",
+            url: "media://inbound/image-claim",
+            contentType: "image/png",
+            fileName: "managed-image.png",
+            width: 640,
+            height: 480,
+          },
+          {
             kind: "image",
             path: "/private/media/local-image.png",
             workspaceDir: "/private/workspace",
@@ -5110,13 +5128,6 @@ describe("gateway server chat", () => {
             durationMs: 1234,
           },
           {
-            kind: "video",
-            path: "media://inbound/video-claim",
-            contentType: "video/mp4",
-            fileName: "managed-video.mp4",
-            durationMs: 5678,
-          },
-          {
             kind: "document",
             url: "not a media reference",
             contentType: "application/pdf",
@@ -5129,10 +5140,11 @@ describe("gateway server chat", () => {
             fileName: `invalid-claim-${index}.png`,
           })),
         ],
+        mediaImageLayout: { slots: [{ kind: "offloaded", factIndex: 1 }] },
       }) as unknown as Record<string, unknown>;
       const metadata = persisted["__openclaw"] as Record<string, unknown>;
       const facts = metadata.media as Array<Record<string, unknown>>;
-      Object.assign(expectDefined(facts[0], "local media fact"), {
+      Object.assign(expectDefined(facts[2], "local media fact"), {
         data: "private-inline-data",
         blob: "private-inline-blob",
         filePath: "/private/media/alternate-image.png",
@@ -5171,7 +5183,23 @@ describe("gateway server chat", () => {
           content: "inspect mixed attachments",
           __openclaw: {
             keepMe: { durable: true },
+            mediaImageLayout: { slots: [{ kind: "offloaded", factIndex: 1 }] },
             media: [
+              {
+                kind: "video",
+                url: "media://inbound/video-claim",
+                contentType: "video/mp4",
+                fileName: "managed-video.mp4",
+                durationMs: 5678,
+              },
+              {
+                kind: "image",
+                url: "media://inbound/image-claim",
+                contentType: "image/png",
+                fileName: "managed-image.png",
+                width: 640,
+                height: 480,
+              },
               {
                 kind: "image",
                 contentType: "image/png",
@@ -5188,13 +5216,6 @@ describe("gateway server chat", () => {
                 contentType: "audio/wav",
                 fileName: "remote-audio.wav",
                 durationMs: 1234,
-              },
-              {
-                kind: "video",
-                path: "media://inbound/video-claim",
-                contentType: "video/mp4",
-                fileName: "managed-video.mp4",
-                durationMs: 5678,
               },
               {
                 kind: "document",
@@ -5214,9 +5235,10 @@ describe("gateway server chat", () => {
             ?.media ?? []
         ).map((fact) => fact.path ?? fact.url ?? null);
         expect(projectedMedia, boundary).toEqual([
+          "media://inbound/video-claim",
+          "media://inbound/image-claim",
           null,
           "https://media.example/audio.wav",
-          "media://inbound/video-claim",
           ...Array.from({ length: invalidClaims.length + 1 }, () => null),
         ]);
         const serialized = JSON.stringify(messages);
@@ -5628,7 +5650,9 @@ describe("gateway server chat", () => {
       await writeGatewayConfig({
         session: { scope: "global" },
         agents: {
-          entries: { main: { default: true }, work: {} },
+          ownership: "explicit",
+          defaults: { sessionStore: { agentId: "work" } },
+          entries: { main: {}, work: {} },
         },
       });
       await connectOk(ws);
@@ -6367,7 +6391,7 @@ describe("gateway server chat", () => {
 
   test("smoke: supports abort and idempotent completion", async () => {
     await withGatewayChatHarness(async ({ ws, createSessionDir }) => {
-      const spy = getReplyFromConfig;
+      const spy = gatewayReplyMock;
       let aborted = false;
       await connectOk(ws);
 
