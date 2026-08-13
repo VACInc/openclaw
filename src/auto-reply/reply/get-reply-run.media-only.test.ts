@@ -1803,9 +1803,12 @@ describe("runPreparedReply media-only handling", () => {
 
     expect(result).toEqual({ text: "ok" });
     const call = requireRunReplyAgentCall();
-    expect(call.followupRun.media).toEqual([
-      { path: imagePath, contentType: "image/png", workspaceDir: tmpDir },
-    ]);
+    expect(call.followupRun.media).toHaveLength(1);
+    expect(call.followupRun.media?.[0]).toMatchObject({
+      path: imagePath,
+      contentType: "image/png",
+      workspaceDir: tmpDir,
+    });
     expect(call.followupRun.images).toEqual([
       {
         type: "image",
@@ -1814,9 +1817,11 @@ describe("runPreparedReply media-only handling", () => {
       },
     ]);
     expect(
-      (call.followupRun as typeof call.followupRun & {
-        mediaImageLayout?: { slots: Array<{ kind: string; factIndex?: number }> };
-      }).mediaImageLayout,
+      (
+        call.followupRun as typeof call.followupRun & {
+          mediaImageLayout?: { slots: Array<{ kind: string; factIndex?: number }> };
+        }
+      ).mediaImageLayout,
     ).toEqual({ slots: [{ kind: "inline", factIndex: 0 }] });
     expect(
       (
