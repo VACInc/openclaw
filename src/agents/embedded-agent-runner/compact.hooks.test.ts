@@ -3808,6 +3808,51 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
     expect(contextEngineCompactMock).not.toHaveBeenCalled();
   });
 
+  it("runs native manual compaction before generic model auth preparation", async () => {
+    resolveCliBackendConfigMock.mockReturnValue({
+      id: "claude-cli",
+      ownsNativeCompaction: true,
+      manualCompaction: {
+        buildPrompt: () => "/compact",
+        input: "arg",
+        validateOutput: () => ({ ok: true }),
+      },
+      config: {
+        command: "claude",
+        args: ["-p"],
+        resumeArgs: ["-p", "--resume", "{sessionId}"],
+        input: "arg",
+        output: "jsonl",
+        sessionMode: "existing",
+      },
+    });
+    acquireAgentRunPreparedModelRuntimeMock.mockRejectedValueOnce(
+      new Error("generic model auth must not run"),
+    );
+
+    const result = await compactEmbeddedAgentSessionDirect(
+      wrappedCompactionArgs({
+        provider: "anthropic",
+        model: "opus",
+        trigger: "manual",
+        agentHarnessId: "claude-cli",
+        modelSelectionLocked: true,
+        cliSessionId: "native-session",
+        currentTokenCount: 333,
+      }),
+    );
+
+    expect(result).toMatchObject({ ok: true, compacted: true });
+    expect(runCliAgentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cliSessionId: "native-session",
+        controlOperation: "compact",
+      }),
+    );
+    expect(acquireAgentRunPreparedModelRuntimeMock).not.toHaveBeenCalled();
+    expect(contextEngineCompactMock).not.toHaveBeenCalled();
+  });
+
   it("fails a model-locked native session when its harness returns no result", async () => {
     maybeCompactAgentHarnessSessionMock.mockResolvedValueOnce(undefined);
 

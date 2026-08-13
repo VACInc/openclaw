@@ -275,6 +275,23 @@ export async function compactEmbeddedAgentSessionDirect(
     boundHarnessRuntime: requestedParams.agentHarnessId,
     preparedRuntimePlan: requestedParams.runtimePlan,
   });
+  // Native control operations reuse the backend's existing authenticated session.
+  // Run them before generic model preparation so subscription-only CLI sessions do
+  // not incorrectly require an OpenClaw model API credential.
+  const nativeCliResult = await compactNativeCliSession({
+    runtime: runtimeSelection.selectedHarnessRuntime,
+    compactParams: {
+      ...requestedParams,
+      agentDir: requestedAgentDir,
+      workspaceDir: requestedWorkspaceDir,
+    },
+  });
+  if (nativeCliResult) {
+    return nativeCliResult;
+  }
+  if (requestedParams.modelSelectionLocked === true && lockedHarnessRuntime !== "openclaw") {
+    return lockedHarnessCompactionFailure(lockedHarnessRuntime);
+  }
   const pluginPlanCompactionTarget = resolveEmbeddedCompactionTarget({
     config: requestedParams.config,
     provider: requestedParams.provider,
@@ -363,16 +380,6 @@ export async function compactEmbeddedAgentSessionDirect(
       preparedModelRuntime,
     };
     const compactPrepared = async () => {
-      const nativeCliResult = await compactNativeCliSession({
-        runtime: runtimeSelection.selectedHarnessRuntime,
-        compactParams: params,
-      });
-      if (nativeCliResult) {
-        return nativeCliResult;
-      }
-      if (params.modelSelectionLocked === true && lockedHarnessRuntime !== "openclaw") {
-        return lockedHarnessCompactionFailure(lockedHarnessRuntime);
-      }
       if (hasExplicitCompactionModel(params) || !hasCompactionModelFallbackCandidates(params)) {
         return await compactEmbeddedAgentSessionDirectOnce(params);
       }
