@@ -3809,48 +3809,61 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
   });
 
   it("runs native manual compaction before generic model auth preparation", async () => {
-    resolveCliBackendConfigMock.mockReturnValue({
-      id: "claude-cli",
-      ownsNativeCompaction: true,
-      manualCompaction: {
-        buildPrompt: () => "/compact",
-        input: "arg",
-        validateOutput: () => ({ ok: true }),
-      },
-      config: {
-        command: "claude",
-        args: ["-p"],
-        resumeArgs: ["-p", "--resume", "{sessionId}"],
-        input: "arg",
-        output: "jsonl",
-        sessionMode: "existing",
-      },
-    });
-    acquireAgentRunPreparedModelRuntimeMock.mockRejectedValueOnce(
-      new Error("generic model auth must not run"),
-    );
+    const agentDir = await mkdtemp(join(tmpdir(), "openclaw-native-compaction-authless-"));
+    try {
+      resolveCliBackendConfigMock.mockReturnValue({
+        id: "claude-cli",
+        ownsNativeCompaction: true,
+        manualCompaction: {
+          buildPrompt: () => "/compact",
+          input: "arg",
+          validateOutput: () => ({ ok: true }),
+        },
+        config: {
+          command: "claude",
+          args: ["-p"],
+          resumeArgs: ["-p", "--resume", "{sessionId}"],
+          input: "arg",
+          output: "jsonl",
+          sessionMode: "existing",
+        },
+      });
+      acquireAgentRunPreparedModelRuntimeMock.mockRejectedValueOnce(
+        new Error("generic model auth must not run"),
+      );
 
-    const result = await compactEmbeddedAgentSessionDirect(
-      wrappedCompactionArgs({
-        provider: "anthropic",
-        model: "opus",
-        trigger: "manual",
-        agentHarnessId: "claude-cli",
-        modelSelectionLocked: true,
-        cliSessionId: "native-session",
-        currentTokenCount: 333,
-      }),
-    );
+      const result = await compactEmbeddedAgentSessionDirect(
+        wrappedCompactionArgs({
+          agentDir,
+          sessionTarget: {
+            agentId: "main",
+            sessionId: TEST_SESSION_ID,
+            sessionKey: TEST_SESSION_KEY,
+            storePath: join(agentDir, "sessions.json"),
+          },
+          provider: "anthropic",
+          model: "opus",
+          trigger: "manual",
+          agentHarnessId: "claude-cli",
+          modelSelectionLocked: true,
+          cliSessionId: "native-session",
+          currentTokenCount: 333,
+        }),
+      );
 
-    expect(result).toMatchObject({ ok: true, compacted: true });
-    expect(runCliAgentMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cliSessionId: "native-session",
-        controlOperation: "compact",
-      }),
-    );
-    expect(acquireAgentRunPreparedModelRuntimeMock).not.toHaveBeenCalled();
-    expect(contextEngineCompactMock).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true, compacted: true });
+      expect(runCliAgentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cliSessionId: "native-session",
+          controlOperation: "compact",
+        }),
+      );
+      expect(acquireAgentRunPreparedModelRuntimeMock).not.toHaveBeenCalled();
+      expect(contextEngineCompactMock).not.toHaveBeenCalled();
+    } finally {
+      closeOpenClawAgentDatabasesForTest();
+      await rm(agentDir, { force: true, recursive: true });
+    }
   });
 
   it("fails a model-locked native session when its harness returns no result", async () => {
