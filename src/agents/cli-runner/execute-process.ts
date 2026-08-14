@@ -486,11 +486,7 @@ export async function executeCliProcess(params: {
     }
     const validation = manualCompaction.validateOutput(stdout);
     if (!validation.ok) {
-      throw new FailoverError(validation.reason, {
-        reason: "unknown",
-        ...failoverContext,
-        status: resolveFailoverStatus("unknown"),
-      });
+      throw createCliFailoverError(validation.reason, "unknown", failoverContext);
     }
     return {
       text: "",
