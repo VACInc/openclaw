@@ -116,6 +116,53 @@ async function startRateLimitedGateway(): Promise<{ url: string }> {
   return { url: `ws://127.0.0.1:${address.port}` };
 }
 
+async function startNodePairingGateway(token: string): Promise<{
+  calls: string[];
+  url: string;
+}> {
+  const calls: string[] = [];
+  const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  activeServers.add(wss);
+  wss.on("connection", (ws) => {
+    sendMinimalGatewayConnectChallenge(ws);
+    ws.on("message", (data) => {
+      const frame = parseMinimalGatewayRequestFrame(data);
+      if (frame.type !== "req" || !frame.id) {
+        return;
+      }
+      if (frame.method === "connect") {
+        expect(frame.params?.auth?.token).toBe(token);
+        sendMinimalGatewayResponse(
+          ws,
+          frame.id,
+          buildMinimalGatewayHelloOkPayload({
+            methods: ["node.pair.list", "node.pair.approve"],
+            auth: { role: "operator", scopes: ["operator.admin"] },
+          }),
+        );
+        return;
+      }
+      if (typeof frame.method !== "string") {
+        return;
+      }
+      calls.push(frame.method);
+      if (frame.method === "node.pair.list") {
+        sendMinimalGatewayResponse(ws, frame.id, {
+          pending: [{ requestId: "request-1", nodeId: "node-1", commands: [] }],
+          paired: [],
+        });
+        return;
+      }
+      if (frame.method === "node.pair.approve") {
+        sendMinimalGatewayResponse(ws, frame.id, { approved: true });
+      }
+    });
+  });
+  await once(wss, "listening");
+  const address = wss.address() as AddressInfo;
+  return { calls, url: `ws://127.0.0.1:${address.port}` };
+}
+
 async function runIsolatedGatewayCli(params: {
   args: string[];
   root: string;
@@ -178,6 +225,67 @@ async function runIsolatedGatewayCli(params: {
 }
 
 describe("gateway-backed CLI process exit", () => {
+  it("dispatches node pairing mutations without opening the writable state database", async () => {
+    const root = tempDirs.make("openclaw-node-pairing-cli-");
+    const stateDir = path.join(root, "state");
+    const configPath = path.join(stateDir, "openclaw.json");
+    const token = "test-token";
+    const gateway = await startNodePairingGateway(token);
+    await fs.mkdir(stateDir, { recursive: true });
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        gateway: { mode: "remote", remote: { url: gateway.url, token } },
+      }),
+    );
+
+    const result = await runIsolatedGatewayCli({
+      args: ["nodes", "approve", "request-1", "--json"],
+      root,
+      stateDir,
+      configPath,
+    });
+
+    expect(result, result.stderr).toMatchObject({ code: 0, signal: null, stderr: "" });
+    expect(JSON.parse(result.stdout)).toEqual({ approved: true });
+    expect(gateway.calls).toEqual(["node.pair.list", "node.pair.approve"]);
+    await expect(fs.stat(path.join(stateDir, "state", "openclaw.sqlite"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }, 30_000);
+
+  it("rejects invalid remote config before a node pairing mutation without opening state", async () => {
+    const root = tempDirs.make("openclaw-node-pairing-invalid-config-");
+    const stateDir = path.join(root, "state");
+    const configPath = path.join(stateDir, "openclaw.json");
+    const gateway = await startNodePairingGateway("test-token");
+    await fs.mkdir(stateDir, { recursive: true });
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        gateway: {
+          mode: "remtoe",
+          remote: { url: gateway.url, token: "test-token" },
+        },
+      }),
+    );
+
+    const result = await runIsolatedGatewayCli({
+      args: ["nodes", "approve", "request-1", "--json"],
+      root,
+      stateDir,
+      configPath,
+    });
+
+    expect(result).toMatchObject({ code: 1, signal: null, stdout: "" });
+    expect(result.stderr).toContain("OpenClaw config is invalid");
+    expect(result.stderr).toContain("gateway.mode");
+    expect(gateway.calls).toEqual([]);
+    await expect(fs.stat(path.join(stateDir, "state", "openclaw.sqlite"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }, 30_000);
+
   it("exits promptly after cron list emits complete output", async () => {
     const root = tempDirs.make("openclaw-gateway-cli-exit-");
     const stateDir = path.join(root, "state");

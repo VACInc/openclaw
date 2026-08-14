@@ -1201,12 +1201,12 @@ async function runCliWithPreparedOutputMode(
   let unregisterProxySignalExitBarrier: (() => void) | null = null;
   let bestEffortConfigPromise: Promise<OpenClawConfig> | null = null;
   const isolateProxyConfigEnv = isGatewayRunInvocation;
-  const skipBestEffortConfigObservation = resolveCliStartupPolicyForArgv({
+  const bestEffortConfigStartupPolicy = resolveCliStartupPolicyForArgv({
     argv: normalizedArgv,
     commandPath: normalizedInvocation.commandPath,
     jsonOutputMode: options.builtInMachineOutput || hasJsonOutputFlag(normalizedArgv),
     env: process.env,
-  }).skipConfigGuard;
+  });
   const readBestEffortCliConfig = async (): Promise<OpenClawConfig> => {
     if (!bestEffortConfigPromise) {
       bestEffortConfigPromise = import("../config/io.js").then((configIo) =>
@@ -1214,7 +1214,10 @@ async function runCliWithPreparedOutputMode(
           ? configIo.readSourceConfigBestEffort()
           : configIo.readBestEffortConfig({
               ...(isolateProxyConfigEnv ? { isolateEnv: true, observe: false } : {}),
-              ...(skipBestEffortConfigObservation ? { observe: false } : {}),
+              ...(bestEffortConfigStartupPolicy.skipConfigGuard ||
+              bestEffortConfigStartupPolicy.validateConfigOnly
+                ? { observe: false }
+                : {}),
               skipPluginValidation: true,
             }),
       );

@@ -225,6 +225,7 @@ export async function ensureConfigReady(
     measure?: ConfigSnapshotReadMeasure;
     skipPristineCoreStateMigrations?: boolean;
     skipPristineStartupStateMigrations?: boolean;
+    validateConfigOnly?: boolean;
   },
   recoveryDeps?: InvalidConfigRecoveryDeps,
 ): Promise<void> {
@@ -233,6 +234,7 @@ export async function ensureConfigReady(
   const subcommandName = commandPath[1];
   let preflightSnapshot: Awaited<ReturnType<typeof readConfigFileSnapshot>> | null = null;
   const shouldConsiderStateMigration =
+    !params.validateConfigOnly &&
     commandName !== "config" &&
     commandName !== "health" &&
     commandName !== "logs" &&
@@ -285,8 +287,9 @@ export async function ensureConfigReady(
 
   // Read-only diagnostics must not record config health; logs also skips plugin
   // metadata discovery because opening the shared state DB creates SQLite sidecars.
-  const configSnapshotOptions =
-    commandName === "logs"
+  const configSnapshotOptions = params.validateConfigOnly
+    ? ({ observe: false, skipPluginValidation: true } as const)
+    : commandName === "logs"
       ? ({ observe: false, skipPluginValidation: true } as const)
       : commandName === "status" || (commandName === "gateway" && subcommandName === "call")
         ? ({ observe: false } as const)

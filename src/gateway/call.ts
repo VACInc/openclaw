@@ -32,8 +32,17 @@ import {
 import { getRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createAbortError } from "../infra/abort-signal.js";
-import { loadDeviceAuthToken, loadOriginDeviceToken } from "../infra/device-auth-store.js";
-import { loadOrCreateDeviceIdentity, type DeviceIdentity } from "../infra/device-identity.js";
+import {
+  loadDeviceAuthToken,
+  loadDeviceAuthTokenReadOnly,
+  loadOriginDeviceToken,
+  loadOriginDeviceTokenReadOnly,
+} from "../infra/device-auth-store.js";
+import {
+  loadDeviceIdentityIfPresent,
+  loadOrCreateDeviceIdentity,
+  type DeviceIdentity,
+} from "../infra/device-identity.js";
 import { isVitestRuntimeEnv } from "../infra/env.js";
 import { loadGatewayTlsRuntime } from "../infra/tls/gateway.js";
 import type { DeviceAuthEntry } from "../shared/device-auth.js";
@@ -107,6 +116,7 @@ type CallGatewayBaseOptions = {
   useStoredDeviceAuth?: boolean;
   requiredStoredDeviceAuthScopes?: OperatorScope[];
   requireLocalBackendSharedAuth?: boolean;
+  sharedStateMode?: "read-only";
   deviceIdentity?: DeviceIdentity | null;
   instanceId?: string;
   minProtocol?: number;
@@ -470,9 +480,11 @@ function shouldOmitDeviceIdentityForGatewayCall(params: {
   return isLocalBackendSharedAuth || isLocalCliSharedAuth;
 }
 
-function resolveDeviceIdentityForGatewayCall(): DeviceIdentity | null {
+function resolveDeviceIdentityForGatewayCall(sharedStateMode?: "read-only"): DeviceIdentity | null {
   try {
-    return loadOrCreateDeviceIdentity();
+    return sharedStateMode === "read-only"
+      ? loadDeviceIdentityIfPresent()
+      : loadOrCreateDeviceIdentity();
   } catch {
     // Read-only or restricted environments should still be able to call the
     // gateway with token/password auth without crashing before the RPC.
@@ -483,20 +495,25 @@ function resolveDeviceIdentityForGatewayCall(): DeviceIdentity | null {
 function loadStoredOperatorDeviceAuthToken(
   deviceIdentity: DeviceIdentity | null,
   deviceAuthScope?: string,
+  sharedStateMode?: "read-only",
 ): DeviceAuthEntry | null {
   if (!deviceIdentity) {
     return null;
   }
   try {
     if (deviceAuthScope) {
-      return loadOriginDeviceToken({
+      const loadToken =
+        sharedStateMode === "read-only" ? loadOriginDeviceTokenReadOnly : loadOriginDeviceToken;
+      return loadToken({
         gatewayScope: deviceAuthScope,
         deviceId: deviceIdentity.deviceId,
         role: "operator",
         env: process.env,
       });
     }
-    return loadDeviceAuthToken({
+    const loadToken =
+      sharedStateMode === "read-only" ? loadDeviceAuthTokenReadOnly : loadDeviceAuthToken;
+    return loadToken({
       deviceId: deviceIdentity.deviceId,
       role: "operator",
       env: process.env,
@@ -1072,11 +1089,15 @@ async function callGatewayWithScopes<T = Record<string, unknown>>(
     opts.deviceIdentity === undefined
       ? omitDeviceIdentity
         ? null
-        : resolveDeviceIdentityForGatewayCall()
+        : resolveDeviceIdentityForGatewayCall(opts.sharedStateMode)
       : opts.deviceIdentity;
   let storedAuth: DeviceAuthEntry | null | undefined;
   if (useStoredDeviceAuth) {
-    storedAuth = loadStoredOperatorDeviceAuthToken(deviceIdentity, deviceAuthScope);
+    storedAuth = loadStoredOperatorDeviceAuthToken(
+      deviceIdentity,
+      deviceAuthScope,
+      opts.sharedStateMode,
+    );
     if (!storedAuth?.token && deviceAuthScope) {
       throw new GatewayStoredDeviceAuthUnavailableError(
         [
