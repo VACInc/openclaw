@@ -3128,77 +3128,103 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
   });
 
   it("routes a queued manual CLI session to backend-owned compaction", async () => {
-    resolveCliBackendConfigMock.mockReturnValue({
-      id: "claude-cli",
-      ownsNativeCompaction: true,
-      manualCompaction: {
-        buildPrompt: () => "/compact",
-        input: "arg",
-        validateOutput: () => ({ ok: true }),
-      },
-    });
-    runCliAgentMock.mockClear();
+    const agentDir = await mkdtemp(join(tmpdir(), "openclaw-native-compaction-queued-"));
+    try {
+      resolveCliBackendConfigMock.mockReturnValue({
+        id: "claude-cli",
+        ownsNativeCompaction: true,
+        manualCompaction: {
+          buildPrompt: () => "/compact",
+          input: "arg",
+          validateOutput: () => ({ ok: true }),
+        },
+      });
+      runCliAgentMock.mockClear();
 
-    const result = await compactEmbeddedAgentSession(
-      wrappedCompactionArgs({
-        trigger: "manual",
-        provider: "anthropic",
-        model: "opus",
-        agentHarnessId: "claude-cli",
-        cliSessionId: "native-session",
-      }),
-    );
+      const result = await compactEmbeddedAgentSession(
+        wrappedCompactionArgs({
+          agentDir,
+          sessionTarget: {
+            agentId: "main",
+            sessionId: TEST_SESSION_ID,
+            sessionKey: TEST_SESSION_KEY,
+            storePath: join(agentDir, "sessions.json"),
+          },
+          trigger: "manual",
+          provider: "anthropic",
+          model: "opus",
+          agentHarnessId: "claude-cli",
+          cliSessionId: "native-session",
+        }),
+      );
 
-    expect(result).toMatchObject({ ok: true, compacted: true });
-    expect(runCliAgentMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: "claude-cli",
-        cliSessionId: "native-session",
-        prompt: "/compact",
-        controlOperation: "compact",
-      }),
-    );
-    expect(resolveContextEngineMock).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true, compacted: true });
+      expect(runCliAgentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: "claude-cli",
+          cliSessionId: "native-session",
+          prompt: "/compact",
+          controlOperation: "compact",
+        }),
+      );
+      expect(resolveContextEngineMock).not.toHaveBeenCalled();
+    } finally {
+      closeOpenClawAgentDatabasesForTest();
+      await rm(agentDir, { force: true, recursive: true });
+    }
   });
 
   it("normalizes an omitted manual target before native harness compaction", async () => {
-    resolveAgentHarnessPolicyMock.mockReturnValue({
-      runtime: "codex",
-      runtimeSource: "model",
-    } as never);
-    maybeCompactAgentHarnessSessionMock.mockResolvedValueOnce({
-      ok: true,
-      compacted: true,
-      result: { summary: "harness", firstKeptEntryId: "entry-1", tokensBefore: 100 },
-    });
+    const agentDir = await mkdtemp(join(tmpdir(), "openclaw-native-compaction-target-"));
+    try {
+      resolveAgentHarnessPolicyMock.mockReturnValue({
+        runtime: "codex",
+        runtimeSource: "model",
+      } as never);
+      maybeCompactAgentHarnessSessionMock.mockResolvedValueOnce({
+        ok: true,
+        compacted: true,
+        result: { summary: "harness", firstKeptEntryId: "entry-1", tokensBefore: 100 },
+      });
 
-    const result = await compactEmbeddedAgentSession(
-      wrappedCompactionArgs({
-        config: {
-          agents: {
-            defaults: {
-              compaction: { model: "openai/gpt-5.5" },
-              models: {
-                "openai/gpt-5.5": { agentRuntime: { id: "codex" } },
+      const result = await compactEmbeddedAgentSession(
+        wrappedCompactionArgs({
+          agentDir,
+          sessionTarget: {
+            agentId: "main",
+            sessionId: TEST_SESSION_ID,
+            sessionKey: TEST_SESSION_KEY,
+            storePath: join(agentDir, "sessions.json"),
+          },
+          config: {
+            agents: {
+              defaults: {
+                compaction: { model: "openai/gpt-5.5" },
+                models: {
+                  "openai/gpt-5.5": { agentRuntime: { id: "codex" } },
+                },
               },
             },
           },
-        },
-      }),
-    );
-
-    expect(result.ok).toBe(true);
-    expect(maybeCompactAgentHarnessSessionMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: "openai",
-        model: "gpt-5.5",
-        runtimeModel: expect.objectContaining({
-          api: "openai-responses",
-          baseUrl: "https://api.openai.com/v1",
         }),
-      }),
-      { nativeCompactionRequest: "after_context_engine" },
-    );
+      );
+
+      expect(result.ok).toBe(true);
+      expect(maybeCompactAgentHarnessSessionMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: "openai",
+          model: "gpt-5.5",
+          runtimeModel: expect.objectContaining({
+            api: "openai-responses",
+            baseUrl: "https://api.openai.com/v1",
+          }),
+        }),
+        { nativeCompactionRequest: "after_context_engine" },
+      );
+    } finally {
+      closeOpenClawAgentDatabasesForTest();
+      await rm(agentDir, { force: true, recursive: true });
+    }
   });
 
   it("preserves concrete OpenClaw pins over explicit Codex policy for queued compaction", async () => {
