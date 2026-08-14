@@ -336,6 +336,20 @@ async function compactEmbeddedAgentSessionImpl(
         ? normalizeOptionalAgentRuntimeId(params.agentHarnessId)
         : undefined,
   });
+  // Native control operations reuse the backend's existing authenticated session.
+  // Run them before generic model preparation so subscription-only CLI sessions do
+  // not incorrectly require an OpenClaw model API credential.
+  const nativeCliResult = await compactNativeCliSession({
+    runtime: runtimeSelection.selectedHarnessRuntime,
+    compactParams: {
+      ...params,
+      agentDir,
+      workspaceDir: resolvedWorkspaceDir,
+    },
+  });
+  if (nativeCliResult) {
+    return nativeCliResult;
+  }
   const lease = await acquireAgentRunPreparedModelRuntime({
     config: params.config ?? {},
     agentId: agentIds.sessionAgentId,
@@ -355,13 +369,6 @@ async function compactEmbeddedAgentSessionImpl(
     ],
   });
   const run = async () => {
-    const nativeCliResult = await compactNativeCliSession({
-      runtime: runtimeSelection.selectedHarnessRuntime,
-      compactParams: params,
-    });
-    if (nativeCliResult) {
-      return nativeCliResult;
-    }
     ensureContextEnginesInitialized();
     const contextEngine = await resolveContextEngine(params.config, {
       agentDir,

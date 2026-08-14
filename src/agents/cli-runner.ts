@@ -484,7 +484,7 @@ export async function runPreparedCliAgent(
       });
     }
     if (controlOperation) {
-      const reusableCliSessionId = resolveReusableCliSessionId(context.reusableCliSession);
+      const reusableCliSessionId = resolveCliSessionId(context.reusableCliSession);
       if (!reusableCliSessionId) {
         throw new Error(
           `CLI backend ${context.backendResolved.id} cannot ${params.controlOperation} without a reusable native session.`,
@@ -492,11 +492,15 @@ export async function runPreparedCliAgent(
       }
       const { output, usedHistoryPrompt } = await executeCliAttempt(reusableCliSessionId);
       return buildCliRunResult({
+        context,
         output,
         effectiveCliSessionId: reusableCliSessionId,
         bindingFlushOk: true,
         assistantTranscriptOwned: false,
         usedHistoryPrompt,
+        userTurnHandled,
+        sessionBindingDisabled,
+        preparedContextAgentMeta,
       });
     }
     await bootstrapHarnessContextEngine({

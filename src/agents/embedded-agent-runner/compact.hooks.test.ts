@@ -3892,7 +3892,11 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
           sessionMode: "existing",
         },
       });
-      const result = await compactEmbeddedAgentSessionDirect(
+      acquireAgentRunPreparedModelRuntimeMock.mockRejectedValueOnce(
+        new Error("generic model auth must not run"),
+      );
+
+      const result = await compactEmbeddedAgentSession(
         wrappedCompactionArgs({
           agentDir,
           sessionTarget: {
