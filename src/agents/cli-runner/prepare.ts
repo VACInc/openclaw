@@ -45,7 +45,7 @@ import {
   parseAgentSessionKey,
 } from "../../routing/session-key.js";
 import { annotateInterSessionPromptText } from "../../sessions/input-provenance.js";
-import { resolveSkillsPromptForRun } from "../../skills/loading/workspace.js";
+import { resolveSkillsPrompt } from "../../skills/loading/workspace-skill-prompt.js";
 import { resolveEmbeddedRunSkillEntries } from "../../skills/runtime/embedded-run-entries.js";
 import { resolveUserPath } from "../../utils.js";
 import { normalizeMessageChannel } from "../../utils/message-channel.js";
@@ -114,7 +114,7 @@ import { collectRuntimeChannelCapabilities } from "../runtime-capabilities.js";
 import { ensureSandboxWorkspaceForSession } from "../sandbox.js";
 import { buildSystemPromptReport } from "../system-prompt-report.js";
 import { appendModelIdentitySystemPrompt, buildModelIdentityPromptLine } from "../system-prompt.js";
-import { expandToolGroups, normalizeToolName } from "../tool-policy.js";
+import { expandToolGroups, normalizeToolPolicyName } from "../tool-policy.js";
 import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js";
 import {
   DEFAULT_BOOTSTRAP_FILENAME,
@@ -128,7 +128,7 @@ import {
   resolveBundledCliBackendAuthPolicy,
   type BundledCliBackendAuthPolicy,
 } from "./cli-backend-auth-policy.js";
-import { buildCliAgentSystemPrompt, isClaudeCliProvider, normalizeCliModel } from "./helpers.js";
+import { buildCliAgentSystemPrompt, isClaudeCliBackendId, normalizeCliModel } from "./helpers.js";
 import { cliBackendLog } from "./log.js";
 import { buildCliMcpGrantContext, normalizeOptionalMcpContextValue } from "./mcp-grant-context.js";
 import { CLAUDE_CLI_CONTEXT_MODEL_ALIASES, detectNodeClaudePlacement } from "./prepare-claude.js";
@@ -171,7 +171,7 @@ type RunCliAgentPrepareParams = RunCliAgentParams & {
   systemAgentTool?: import("../tools/system-agent-tool.js").SystemAgentToolOptions;
 };
 
-const prepareDeps = {
+const defaultPrepareDeps = {
   isWorkspaceBootstrapPending: isWorkspaceBootstrapPendingImpl,
   makeBootstrapWarn: makeBootstrapWarnImpl,
   resolveBootstrapContextForRun: resolveBootstrapContextForRunImpl,
@@ -195,6 +195,7 @@ const prepareDeps = {
   readExternalCliBootstrapCredential,
   resolveApiKeyForProfile,
 };
+const prepareDeps = { ...defaultPrepareDeps };
 
 function resolveReusableCliSessionId(reusableCliSession: CliReusableSession): string | undefined {
   return reusableCliSession.mode === "reuse" || reusableCliSession.mode === "reuse-with-drift"
@@ -259,7 +260,7 @@ async function resolveCliSkillsPrompt(params: {
     workspaceDir: params.workspaceDir,
   });
   if (!sandboxWorkspace) {
-    return resolveSkillsPromptForRun({
+    return resolveSkillsPrompt({
       skillsSnapshot: params.skillsSnapshot,
       workspaceDir: params.workspaceDir,
       config: params.config,
@@ -305,7 +306,7 @@ async function resolveCliSkillsPrompt(params: {
     skillsWorkspaceDir,
     skillsPromptWorkspaceDir,
   });
-  return resolveSkillsPromptForRun({
+  return resolveSkillsPrompt({
     skillsSnapshot: skillsSnapshotForRun,
     entries: promptSkillEntries,
     workspaceDir: skillsPromptWorkspaceDir,
@@ -318,6 +319,11 @@ async function resolveCliSkillsPrompt(params: {
 /** Overrides preparation dependencies for CLI runner tests. */
 function setCliRunnerPrepareTestDeps(overrides: Partial<typeof prepareDeps>): void {
   Object.assign(prepareDeps, overrides);
+}
+
+/** Restores preparation dependencies after CLI runner tests. */
+function resetCliRunnerPrepareTestDeps(): void {
+  Object.assign(prepareDeps, defaultPrepareDeps);
 }
 
 /** Returns whether profile-owned prepared execution should skip local CLI epoch hashing. */
@@ -337,6 +343,7 @@ function shouldSkipLocalCliCredentialEpoch(params: {
 
 if (process.env.VITEST || process.env.NODE_ENV === "test") {
   (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.cliRunnerPrepareTestApi")] = {
+    resetCliRunnerPrepareTestDeps,
     setCliRunnerPrepareTestDeps: (overrides: Record<string, unknown>) => {
       setCliRunnerPrepareTestDeps(overrides as Partial<typeof prepareDeps>);
     },
@@ -405,9 +412,9 @@ export async function prepareCliRunContext(
 ): Promise<PreparedCliRunContext> {
   let params = inputParams.config ? inputParams : { ...inputParams, config: getRuntimeConfig() };
   const runConfig = params.config!;
-  const selectedOwner = normalizeAgentId(
-    params.agentId?.trim() ||
-      parseAgentSessionKey(params.sessionKey)?.agentId ||
+  const sessionOwner = normalizeAgentId(
+    parseAgentSessionKey(params.sessionKey)?.agentId ||
+      params.agentId?.trim() ||
       LEGACY_IMPLICIT_AGENT_ID,
   );
   // Direct CLI-runner callers predate roster-aware ownership. Adapt that SDK
@@ -419,7 +426,7 @@ export async function prepareCliRunContext(
         ...runConfig,
         agents: {
           ...runConfig.agents,
-          entries: { [selectedOwner]: { default: true } },
+          entries: { [sessionOwner]: { default: true } },
         },
       } satisfies OpenClawConfig);
   const started = Date.now();
@@ -441,13 +448,13 @@ export async function prepareCliRunContext(
       preparedRunAdmission: candidate.preparedRunAdmission,
     });
     const { preparedRunAdmission: _preparedRunAdmission, ...rest } = candidate;
-    return { ...rest, admittedRunContext };
+    return { ...rest, agentId: workspaceResolution.agentId, admittedRunContext };
   };
   const runtimeChatType = params.chatType ?? params.sessionEntry?.chatType;
   const workspaceResolution = resolveRunWorkspaceDir({
     workspaceDir: params.workspaceDir,
     sessionKey: params.sessionKey,
-    agentId: params.agentId,
+    agentId: sessionOwner,
     config: workspaceConfig,
   });
   const resolvedWorkspace = workspaceResolution.workspaceDir;
@@ -463,8 +470,10 @@ export async function prepareCliRunContext(
   const cwd = params.cwd ? resolveUserPath(params.cwd) : workspaceDir;
   const cwdHash = hashCliSessionText(cwd);
 
+  // params.agentId may identify a distinct runtime-policy requester. Backend
+  // config and managed process reuse must key from the resolved session owner.
   const backendResolved = resolveCliBackendConfig(params.provider, params.config, {
-    agentId: params.agentId,
+    agentId: workspaceResolution.agentId,
   });
   if (!backendResolved) {
     throw new Error(`Unknown CLI backend: ${params.provider}`);
@@ -483,13 +492,13 @@ export async function prepareCliRunContext(
         `CLI backend ${backendResolved.id} received conflicting runtime tool policies`,
       );
     }
-    if (params.toolsAllow.some((toolName) => normalizeToolName(toolName) === "*")) {
+    if (params.toolsAllow.some((toolName) => normalizeToolPolicyName(toolName) === "*")) {
       params = { ...params, toolsAllow: undefined };
     } else {
       runtimeToolsAllowPolicy = [...params.toolsAllow];
       const fallbackOpenClawTools = uniqueStrings(
         expandToolGroups(params.toolsAllow)
-          .map((toolName) => normalizeToolName(toolName))
+          .map((toolName) => normalizeToolPolicyName(toolName))
           .filter(Boolean),
       );
       if (
@@ -560,7 +569,7 @@ export async function prepareCliRunContext(
   const { defaultAgentId, sessionAgentId } = resolveSessionAgentIds({
     sessionKey: params.sessionKey,
     config: params.config,
-    agentId: params.agentId,
+    agentId: sessionOwner,
   });
   const agentContextTokens = resolveAgentConfig(params.config ?? {}, sessionAgentId)?.contextTokens;
   const agentDir = params.agentDir ?? resolveAgentDir(params.config ?? {}, sessionAgentId);
@@ -755,7 +764,7 @@ export async function prepareCliRunContext(
       sessionId: params.sessionId,
       sessionFile: params.sessionFile,
       sessionKey: params.sessionKey,
-      agentId: params.agentId,
+      agentId: sessionAgentId,
       config: params.config,
     });
     return openClawHistoryMessages;
@@ -799,8 +808,8 @@ export async function prepareCliRunContext(
   );
   const promptBuildRestrictsTools =
     promptBuildToolsAllow !== undefined &&
-    !promptBuildToolsAllow.some((toolName) => normalizeToolName(toolName) === "*");
-  const isClaudeCli = isClaudeCliProvider(params.provider);
+    !promptBuildToolsAllow.some((toolName) => normalizeToolPolicyName(toolName) === "*");
+  const isClaudeCli = isClaudeCliBackendId(params.provider);
   const requestedContextModelId = isClaudeCli ? resolveClaudeCliContextModelId(modelId) : modelId;
   const normalizedContextModelId = isClaudeCli
     ? resolveClaudeCliContextModelId(normalizedModel)
@@ -1059,7 +1068,7 @@ export async function prepareCliRunContext(
     : hookFilteredProjectedTools;
   const promptTools = bundleMcpEnabled ? projectedTools : [];
   const messageToolAvailable = promptTools.some(
-    (tool) => normalizeToolName(tool.name) === "message",
+    (tool) => normalizeToolPolicyName(tool.name) === "message",
   );
   const resultContentSourceByToolName = new Map(
     promptTools.flatMap((tool) =>
@@ -1404,7 +1413,7 @@ export async function prepareCliRunContext(
       !isControlOperation &&
       !nodeClaudePlacement &&
       candidateClaudeCliSessionId !== undefined &&
-      isClaudeCliProvider(params.provider);
+      isClaudeCliBackendId(params.provider);
     const claudeCliTranscriptMissing =
       hasClaudeCliCandidate &&
       !(await prepareDeps.claudeCliSessionTranscriptHasContent({
@@ -1421,7 +1430,7 @@ export async function prepareCliRunContext(
       prepareDeps.getClaudeGeneration({
         backendId: backendResolved.id,
         agentAccountId: params.agentAccountId,
-        agentId: params.agentId,
+        agentId: workspaceResolution.agentId,
         authProfileId: effectiveAuthProfileId,
         sessionId: params.sessionId,
         sessionKey: params.sessionKey,
@@ -1557,6 +1566,7 @@ export async function prepareCliRunContext(
           }) ?? systemPrompt;
         const mediaTaskSystemPromptAddition = resolveAttemptMediaTaskSystemPromptAddition({
           sessionKey: params.sessionKey,
+          agentId: sessionAgentId,
           trigger: params.trigger,
         });
         if (mediaTaskSystemPromptAddition) {
@@ -1608,7 +1618,7 @@ export async function prepareCliRunContext(
             sessionId: params.sessionId,
             sessionFile: params.sessionFile,
             sessionKey: params.sessionKey,
-            agentId: params.agentId,
+            agentId: sessionAgentId,
             config: params.config,
             allowRawTranscriptReseed,
             rawTranscriptReseedReason,
@@ -1708,7 +1718,7 @@ export async function prepareCliRunContext(
     const { sessionAgentId: contextEngineSessionAgentId } = resolveSessionAgentIds({
       sessionKey: params.sessionKey,
       config: contextEngineConfig,
-      agentId: params.agentId,
+      agentId: sessionAgentId,
     });
     // Context remains session-owned. Trusted helper runs may borrow a different
     // agentDir only for model/auth execution.
@@ -1752,7 +1762,7 @@ export async function prepareCliRunContext(
       sessionId: params.sessionId,
       sessionFile: params.sessionFile,
       sessionKey: params.sessionKey,
-      agentId: params.agentId,
+      agentId: sessionAgentId,
       config: contextEngineConfig,
     });
     const contextEngineTurnPrompt = params.transcriptPrompt ?? params.prompt;

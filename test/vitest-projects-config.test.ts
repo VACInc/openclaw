@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createPatternFileHelper } from "./helpers/pattern-file.js";
 import { normalizeConfigPath, normalizeConfigPaths } from "./helpers/vitest-config-paths.js";
+import { auditFullSuiteTestFileOwnership } from "./vitest-projects-config.test-support.js";
 import { createAgentsCoreVitestConfig } from "./vitest/vitest.agents-core.config.ts";
 import { createAgentsEmbeddedIncompleteTurnVitestConfig } from "./vitest/vitest.agents-embedded-agent-incomplete-turn.config.ts";
 import { createAgentsEmbeddedOverflowCompactionVitestConfig } from "./vitest/vitest.agents-embedded-agent-overflow-compaction.config.ts";
@@ -18,7 +19,7 @@ import { createAgentsVitestConfig } from "./vitest/vitest.agents.config.ts";
 import bundledConfig from "./vitest/vitest.bundled.config.ts";
 import { createCommandsLightVitestConfig } from "./vitest/vitest.commands-light.config.ts";
 import { createCommandsVitestConfig } from "./vitest/vitest.commands.config.ts";
-import baseConfig, { rootVitestProjects } from "./vitest/vitest.config.ts";
+import baseConfig from "./vitest/vitest.config.ts";
 import contractChannelConfigConfig from "./vitest/vitest.contracts-channel-config.config.ts";
 import contractChannelRegistryConfig from "./vitest/vitest.contracts-channel-registry.config.ts";
 import contractChannelSessionConfig from "./vitest/vitest.contracts-channel-session.config.ts";
@@ -51,6 +52,8 @@ function requireTestConfig<T extends { test?: unknown }>(config: T): NonNullable
   return config.test as NonNullable<T["test"]>;
 }
 
+const rootVitestProjects = requireTestConfig(baseConfig).projects as string[];
+
 function requireWebOptimizer(testConfig: unknown) {
   const webOptimizer = (testConfig as { deps?: { optimizer?: { web?: { enabled?: boolean } } } })
     .deps?.optimizer?.web;
@@ -65,10 +68,6 @@ afterEach(() => {
 });
 
 describe("projects vitest config", () => {
-  it("defines the native root project list for all non-live Vitest lanes", () => {
-    expect(requireTestConfig(baseConfig).projects).toEqual([...rootVitestProjects]);
-  });
-
   it("keeps root and full-suite agent projects aligned with canonical owners", () => {
     const agenticShard = fullSuiteVitestShards.find((shard) => shard.name === "agentic");
     const agentConfigs = new Set(agentVitestProjectConfigs);
@@ -80,6 +79,13 @@ describe("projects vitest config", () => {
       agentVitestProjectConfigs,
     );
     expect(agentConfigs.size).toBe(agentVitestProjectConfigs.length);
+  });
+
+  it("covers each normal full-suite test file exactly once", async () => {
+    const { missing, duplicated } = await auditFullSuiteTestFileOwnership();
+
+    expect(missing).toStrictEqual([]);
+    expect(duplicated).toStrictEqual([]);
   });
 
   it("keeps all embedded harnesses under their canonical embedded owner", () => {

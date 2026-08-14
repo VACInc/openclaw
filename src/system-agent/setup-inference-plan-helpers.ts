@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { expectDefined } from "@openclaw/normalization-core";
+import type { AgentRunResultView } from "../agents/agent-run-result.js";
 import { listAgentEntries, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { loadAuthProfileStoreForRuntime } from "../agents/auth-profiles/store.js";
 import { resolveCliBackendConfig } from "../agents/cli-backends.js";
+import type { FailoverReason } from "../agents/failover/signal.js";
 import {
   buildModelAliasIndex,
   legacyModelKey,
@@ -76,51 +78,9 @@ export function configureCodexCliPreparedAuth(cfg: OpenClawConfig): OpenClawConf
   };
 }
 
-export type RunResult = {
-  payloads?: Array<{ text?: string; isError?: boolean }>;
-  meta?: {
-    executionTrace?: { winnerProvider?: string; winnerModel?: string };
-    finalAssistantVisibleText?: string;
-    finalAssistantRawText?: string;
-    livenessState?: string;
-    error?: { kind?: string; message?: string };
-  };
-};
-
-export function extractRunText(result: RunResult): string | undefined {
-  return (
-    result.meta?.finalAssistantVisibleText ??
-    result.meta?.finalAssistantRawText ??
-    result.payloads
-      ?.map((payload) => payload.text?.trim())
-      .filter(Boolean)
-      .join("\n")
-  );
-}
-
-export function extractRunTerminalError(result: RunResult): string | undefined {
-  const errorPayload = result.payloads?.find((payload) => payload.isError === true)?.text?.trim();
-  const hasMetaError = result.meta?.error !== undefined;
-  const metaError = result.meta?.error?.message?.trim();
-  const livenessState = result.meta?.livenessState?.trim().toLowerCase();
-  if (
-    !errorPayload &&
-    !hasMetaError &&
-    livenessState !== "blocked" &&
-    livenessState !== "abandoned"
-  ) {
-    return undefined;
-  }
-  return (
-    metaError ||
-    errorPayload ||
-    (livenessState ? `Inference ended in the ${livenessState} state.` : "Inference failed.")
-  );
-}
-
 export async function extractRunWinnerError(
   plan: SetupInferenceTestPlan,
-  result: RunResult,
+  result: AgentRunResultView,
 ): Promise<string | undefined> {
   const winnerProvider = result.meta?.executionTrace?.winnerProvider?.trim();
   const winnerModel = result.meta?.executionTrace?.winnerModel?.trim();
@@ -277,25 +237,31 @@ export function resolveSetupAgentRuntimeId(
   return undefined;
 }
 
+const SETUP_STATUS_BY_FAILOVER_REASON = {
+  auth: "auth",
+  auth_permanent: "auth",
+  format: "format",
+  rate_limit: "rate_limit",
+  overloaded: "rate_limit",
+  billing: "billing",
+  server_error: "unknown",
+  timeout: "timeout",
+  tls_certificate: "unknown",
+  context_overflow: "unknown",
+  model_not_found: "format",
+  session_expired: "unknown",
+  empty_response: "unknown",
+  no_error_details: "unknown",
+  unclassified: "unknown",
+  unknown: "unknown",
+} satisfies Record<FailoverReason, SetupInferenceFailureStatus>;
+
 export function mapFailoverReasonToSetupStatus(
   reason?: string | null,
 ): SetupInferenceFailureStatus {
-  if (reason === "auth" || reason === "auth_permanent") {
-    return "auth";
-  }
-  if (reason === "rate_limit" || reason === "overloaded") {
-    return "rate_limit";
-  }
-  if (reason === "billing") {
-    return "billing";
-  }
-  if (reason === "timeout") {
-    return "timeout";
-  }
-  if (reason === "format" || reason === "model_not_found") {
-    return "format";
-  }
-  return "unknown";
+  return reason
+    ? (SETUP_STATUS_BY_FAILOVER_REASON[reason as FailoverReason] ?? "unknown")
+    : "unknown";
 }
 
 export function prepareManualAuthForActivation(params: {

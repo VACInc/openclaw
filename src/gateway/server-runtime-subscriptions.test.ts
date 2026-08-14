@@ -22,6 +22,7 @@ import {
   createTaskRecord,
   markTaskLostById,
   markTaskTerminalById,
+  recordTaskProgressByRunId,
 } from "../tasks/task-registry.js";
 import { getTaskRegistryObservers } from "../tasks/task-registry.store.js";
 import { resetTaskRegistryForTests } from "../tasks/task-runtime.test-helpers.js";
@@ -75,6 +76,11 @@ const agentEventHandlerMocks = vi.hoisted(() => ({
 const transcriptBroadcastMocks = vi.hoisted(() => ({
   useActualHandler: false,
   readMessageCount: vi.fn(),
+}));
+const runtimeConfigState = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
+
+vi.mock("../config/io.js", () => ({
+  getRuntimeConfig: () => runtimeConfigState.value,
 }));
 
 vi.mock("../audit/audit-config.js", () => ({
@@ -171,6 +177,7 @@ describe("startGatewayEventSubscriptions", () => {
     auditTestState.stopped = 0;
     transcriptBroadcastMocks.useActualHandler = false;
     transcriptBroadcastMocks.readMessageCount.mockReset();
+    runtimeConfigState.value = {};
     agentEventHandlerMocks.create.mockReset().mockImplementation(() => {
       throw new Error("server-chat lazy load failure");
     });
@@ -267,6 +274,45 @@ describe("startGatewayEventSubscriptions", () => {
 
     await unsubs.agentUnsub();
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("uses the persisted bare-key owner for ownerless active-run projections", async () => {
+    runtimeConfigState.value = {
+      session: { scope: "global", store: "/tmp/openclaw-owned-sessions.sqlite" },
+      agents: {
+        ownership: "explicit",
+        defaults: { sessionStore: { agentId: "ops" } },
+        entries: { ops: {}, research: {} },
+      },
+    };
+    const handler = Object.assign(vi.fn(), { dispose: vi.fn() });
+    agentEventHandlerMocks.create.mockReturnValue(handler);
+    const params = createParams();
+    params.chatAbortControllers.set("run-ops", {
+      sessionKey: "global",
+      sessionId: "session-ops",
+    } as never);
+    unsubs = startGatewayEventSubscriptions(params);
+
+    emitAgentEvent({ runId: "load-handler", stream: "lifecycle", data: { phase: "error" } });
+    await waitForFast(() => expect(agentEventHandlerMocks.create).toHaveBeenCalledOnce());
+    const options = agentEventHandlerMocks.create.mock.calls[0]?.[0] as {
+      resolveSessionActiveRunState?: (session: {
+        requestedKey: string;
+        canonicalKey: string;
+        sessionId?: string;
+        agentId?: string;
+      }) => { active: boolean; runIds: string[] };
+    };
+
+    expect(
+      options.resolveSessionActiveRunState?.({
+        requestedKey: "global",
+        canonicalKey: "global",
+        sessionId: "session-ops",
+        agentId: "ops",
+      }),
+    ).toEqual({ active: true, runIds: ["run-ops"] });
   });
 
   it("logs transcript handler failures", async () => {
@@ -525,6 +571,50 @@ describe("startGatewayEventSubscriptions", () => {
     broadcast.mockClear();
     await vi.advanceTimersByTimeAsync(1_000);
     expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it("suppresses identical task summaries without delaying status transitions", async () => {
+    const broadcast = vi.fn<SubscriptionParams["broadcast"]>();
+    unsubs = startGatewayEventSubscriptions({ ...createParams(), broadcast });
+    await waitForFast(() => expect(getTaskRegistryObservers()).not.toBeNull());
+    const runId = "run-identical-task-summary";
+    const task = createTaskRecord({
+      runtime: "subagent",
+      requesterSessionKey: "agent:main:main",
+      ownerKey: "agent:main:main",
+      scopeKind: "session",
+      childSessionKey: "agent:main:subagent:summary",
+      runId,
+      task: "Avoid duplicate broadcasts",
+      status: "running",
+      deliveryStatus: "not_applicable",
+      notifyPolicy: "silent",
+      startedAt: 100,
+      lastEventAt: 100,
+    });
+    if (!task) {
+      throw new Error("expected task record");
+    }
+    broadcast.mockClear();
+
+    for (let index = 0; index < 2; index += 1) {
+      recordTaskProgressByRunId({
+        runId,
+        runtime: "subagent",
+        lastEventAt: 200,
+        progressSummary: "Working",
+      });
+    }
+    markTaskTerminalById({ taskId: task.taskId, status: "succeeded", endedAt: 300 });
+
+    const taskEvents = broadcast.mock.calls
+      .filter(([event]) => event === "task")
+      .map(([, payload]) => payload as TaskEventPayload)
+      .filter(
+        (payload): payload is Extract<TaskEventPayload, { action: "upserted" }> =>
+          payload.action === "upserted",
+      );
+    expect(taskEvents.map((event) => event.task.status)).toEqual(["running", "completed"]);
   });
 
   it.each(["succeeded", "failed", "cancelled", "timed_out", "lost"] as const)(

@@ -13,7 +13,11 @@ import { normalizeMessageChannel } from "../../utils/message-channel.js";
 import type { GetReplyOptions } from "../get-reply-options.types.js";
 import type { ReplyPayload } from "../reply-payload.js";
 import type { ChooseDispatchRouteReadyState } from "./dispatch-from-config.choose-route.js";
-import { hasAskUserPayload, hasExecApprovalPayload } from "./dispatch-from-config.payloads.js";
+import {
+  hasAskUserPayload,
+  hasExecApprovalPayload,
+  hasExecApprovalUnavailablePayload,
+} from "./dispatch-from-config.payloads.js";
 import { extendPreparedDispatchState } from "./dispatch-from-config.phase-state.js";
 import { loadGetReplyFromConfigRuntime } from "./dispatch-from-config.runtime-loaders.js";
 import { withFullRuntimeReplyConfig } from "./get-reply-fast-path.js";
@@ -32,20 +36,17 @@ export async function prepareDispatchExecution(state: ChooseDispatchRouteReadySt
     noteCommentaryProgress,
     params,
     sendPayloadAsync,
-    sendPolicyDenied,
     sessionKey,
     shouldEmitVerboseProgress,
     shouldRouteToOriginating,
     shouldSendToolSummaries,
     shouldSendVerboseProgressMessages,
-    suppressAutomaticSourceDelivery,
-    suppressDelivery,
     turnLedger,
   } = state;
   // When automatic source delivery is suppressed, still let the agent process
   // the inbound message (context, memory, tool calls) but suppress automatic
   // outbound source delivery.
-  if (suppressDelivery) {
+  if (state.suppressDelivery) {
     logVerbose(
       `Delivery suppressed by ${state.deliverySuppressionReason} for session ${state.sessionStoreEntry.sessionKey ?? sessionKey ?? "unknown"} — agent will still process the message`,
     );
@@ -94,7 +95,9 @@ export async function prepareDispatchExecution(state: ChooseDispatchRouteReadySt
   const progressState = {
     accumulatedBlockText: "",
     accumulatedBlockTtsText: "",
+    acceptedReplyPayload: false,
     blockCount: 0,
+    channelTransformSuppressed: false,
     hasPendingDirectBlockReplyDelivery: false,
     progressCallbackStartTail: Promise.resolve(),
   };
@@ -122,7 +125,7 @@ export async function prepareDispatchExecution(state: ChooseDispatchRouteReadySt
     if (shouldSendToolSummaries()) {
       return payload;
     }
-    if (hasExecApprovalPayload(payload)) {
+    if (hasExecApprovalPayload(payload) || hasExecApprovalUnavailablePayload(payload)) {
       return payload;
     }
     if (hasAskUserPayload(payload)) {
@@ -146,8 +149,8 @@ export async function prepareDispatchExecution(state: ChooseDispatchRouteReadySt
     systemEvent: shouldRouteToOriginating,
   });
   const shouldSuppressProgressDelivery = () =>
-    sendPolicyDenied ||
-    (suppressDelivery && !state.shouldDeliverVerboseProgressDespiteSourceSuppression());
+    state.sendPolicyDenied ||
+    (state.suppressDelivery && !state.shouldDeliverVerboseProgressDespiteSourceSuppression());
   const hasVisibleRegularVerboseToolProgress = () =>
     shouldEmitVerboseProgress() &&
     !state.shouldEmitFullVerboseProgress() &&
@@ -217,9 +220,9 @@ export async function prepareDispatchExecution(state: ChooseDispatchRouteReadySt
       return false;
     }
     return (
-      !suppressAutomaticSourceDelivery ||
+      !state.suppressAutomaticSourceDelivery ||
       (allowSuppressedSourceProgressCallbacks &&
-        !sendPolicyDenied &&
+        !state.sendPolicyDenied &&
         options?.forwardWhenSourceDeliverySuppressed === true)
     );
   };
@@ -310,13 +313,11 @@ export async function prepareDispatchExecution(state: ChooseDispatchRouteReadySt
     forwardWhenSourceDeliverySuppressed: true,
     requiresToolSummaryVisibility: true,
   } as const;
-  const canForwardItemEvents =
-    Boolean(params.replyOptions?.onItemEvent) &&
-    shouldForwardProgressCallback(itemEventForwardingOptions);
+  const canForwardItemEvents = Boolean(params.replyOptions?.onItemEvent);
   const canForwardSuppressedSourceItemEvents =
-    suppressAutomaticSourceDelivery &&
     allowSuppressedSourceProgressCallbacks &&
-    canForwardItemEvents;
+    !state.sendPolicyDenied &&
+    Boolean(params.replyOptions?.onItemEvent);
   const shouldDeliverDurableCommentaryProgress = (
     payload: Parameters<NonNullable<GetReplyOptions["onItemEvent"]>>[0],
   ) =>

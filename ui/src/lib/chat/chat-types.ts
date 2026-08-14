@@ -3,6 +3,7 @@
  */
 
 import type { MediaKind } from "@openclaw/media-core/constants";
+import type { toolIcons } from "../../components/icons-tools.ts";
 import type { SenderIdentity } from "./sender-label.ts";
 
 export type BrowserAnnotationAttachment = {
@@ -84,11 +85,20 @@ export type ChatQueueItem = {
 /** Union type for items in the chat thread */
 export type ChatItem =
   | { kind: "message"; key: string; message: unknown; duplicateCount?: number }
-  | { kind: "notice"; key: string; text: string; timestamp: number }
+  | {
+      kind: "notice";
+      key: string;
+      text: string;
+      timestamp: number;
+      icon?: keyof typeof toolIcons;
+      label?: string;
+      startsTurn?: true;
+    }
   | {
       kind: "divider";
       key: string;
       label: string;
+      icon?: keyof typeof toolIcons;
       metric?: string;
       description?: string;
       action?: { kind: "session-checkpoints"; label: string };
@@ -133,7 +143,6 @@ export type MessageGroup = {
   messages: Array<{ message: unknown; key: string; duplicateCount?: number }>;
   timestamp: number;
   isStreaming: boolean;
-  turnSucceeded?: boolean;
 };
 
 /** Content item types in a normalized message */
@@ -175,6 +184,7 @@ export type NormalizedMessage = {
   senderLabel?: string | null;
   sender?: SenderIdentity;
   audioAsVoice?: boolean;
+  replyPreview?: { text: string; senderLabel?: string | null };
   replyTarget?:
     | {
         kind: "current";

@@ -16,7 +16,6 @@ import "./tooltip.ts";
 import { createIdleImport } from "../lib/idle-import.ts";
 import { shouldHandleNavigationClick } from "../lib/navigation-click.ts";
 import type { CatalogProjectGrouping } from "../lib/sessions/catalog-project-grouping.ts";
-import { normalizeAgentId } from "../lib/sessions/session-key.ts";
 import { showToast } from "../lib/toast.ts";
 import { SubscriptionsController } from "../lit/subscriptions-controller.ts";
 import { SETTINGS_SEARCH_TARGETS } from "../pages/config/settings-targets.ts";
@@ -181,16 +180,6 @@ class AppSidebar extends AppSidebarSessionNavigationElement implements SessionLi
         ? [chip.activeId]
         : chip.agents.map((agent) => agent.id);
     this.ensureAgentIdentities(identityIds);
-    // A fresh draft must be visible where it will live: genuinely expand a
-    // collapsed Threads section (persisted) instead of overriding at render
-    // time, so the header toggle keeps matching the visible state.
-    if (
-      changed.has("draftSessionAgentId") &&
-      this.draftSessionAgentId &&
-      this.collapsedSessionSections.has("ungrouped")
-    ) {
-      this.sessionOrganizer.toggleSection("ungrouped");
-    }
   }
 
   ensureAgentIdentities(agentIds: readonly string[]): void {
@@ -377,12 +366,6 @@ class AppSidebar extends AppSidebarSessionNavigationElement implements SessionLi
       this.sessionData.sessionCatalogs.find((catalog) => catalog.id === catalogId)?.label ??
       catalogId;
     setStoredSessionCatalogHidden(catalogId, true);
-    // On a phone this menu was opened inside the navigation drawer, which is a modal
-    // dialog: a toast raised behind it is occluded and inert, so the operator would get
-    // the same silent hide this repair exists to remove. Hand the drawer back first —
-    // the section is already gone from it, and the outcome belongs on the main surface.
-    // No-op wherever the drawer is not open.
-    this.onCloseNavDrawer?.();
     // Reuse the settings-search destination for the Sidebar preferences block so the
     // toast opens the same place the rest of the app calls "Appearance > Sidebar".
     const recovery = SETTINGS_SEARCH_TARGETS.appearanceSidebar;
@@ -454,9 +437,6 @@ class AppSidebar extends AppSidebarSessionNavigationElement implements SessionLi
       sections,
       nativeSessionsHaveMore: this.sessionData.sessionsResult?.hasMore === true,
       catalogRenderer: this.catalogRenderer,
-      showDraft:
-        Boolean(this.draftSessionAgentId) &&
-        normalizeAgentId(this.draftSessionAgentId) === expandedAgentId,
       catalogs: {
         catalogs,
         refreshStatus: this.sessionData.sessionCatalogRefreshStatus,
@@ -541,7 +521,9 @@ class AppSidebar extends AppSidebarSessionNavigationElement implements SessionLi
               .updateAvailable=${this.updateAvailable}
               .updateSchedule=${this.updateSchedule}
               .heldUpdateCampaignId=${this.heldUpdateCampaignId}
-              .updateRunning=${this.updateRunning}
+              .updateBusy=${this.updateBusy}
+              .statusBanner=${this.updateStatusBanner}
+              .watchUpdateProgress=${this.watchUpdateProgress}
               .canUpdate=${this.canUpdate}
               .canHoldUpdate=${this.canHoldUpdate}
               .onUpdate=${this.onUpdate}

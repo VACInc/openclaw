@@ -75,8 +75,12 @@ describe("method scope resolution", () => {
     ["worktrees.branches", ["operator.write"]],
     ["worktrees.create", ["operator.admin"]],
     ["projects.list", ["operator.read"]],
+    ["users.prefs.get", ["operator.read"]],
+    ["users.prefs.set", ["operator.write"]],
     ["projects.register", ["operator.admin"]],
     ["projects.remove", ["operator.admin"]],
+    ["projects.add", ["operator.write"]],
+    ["projects.searchRemote", ["operator.read"]],
     ["sessions.groups.list", ["operator.read"]],
     ["sessions.groups.put", ["operator.write"]],
     ["sessions.groups.rename", ["operator.write"]],
@@ -112,6 +116,9 @@ describe("method scope resolution", () => {
     ["talk.session.close", ["operator.talk"]],
     ["update.status", ["operator.admin"]],
     ["update.hold", ["operator.admin"]],
+    ["secrets.store.list", ["operator.admin"]],
+    ["secrets.store.set", ["operator.admin"]],
+    ["secrets.store.delete", ["operator.admin"]],
     ["config.schema", ["operator.admin"]],
     ["config.patch", ["operator.admin"]],
     ["nativeHook.invoke", ["operator.admin"]],
@@ -859,6 +866,7 @@ describe("core gateway method classification", () => {
     expect(isGatewayMethodClassified("node.pluginSurface.refresh")).toBe(true);
     expect(isGatewayMethodClassified("node.pluginTools.update")).toBe(true);
     expect(isGatewayMethodClassified("node.skills.update")).toBe(true);
+    expect(isGatewayMethodClassified("node.runnerInventory.update")).toBe(true);
   });
 
   it("classifies every exposed core gateway handler method", () => {

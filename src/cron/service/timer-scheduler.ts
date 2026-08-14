@@ -6,25 +6,32 @@ import {
 } from "../../process/gateway-work-admission.js";
 import { normalizeAgentId, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { sweepCronRunSessions } from "../session-reaper.js";
-import type { CronJob } from "../types.js";
 import {
-  hasScheduledNextRunAtMs,
-  nextWakeAtMs,
-  recomputeNextRunsForMaintenance,
-} from "./jobs-scheduling.js";
+  finishCronRunReceiptInDatabase,
+  releaseLocalCronRunReceiptOwnership,
+} from "../store/run-receipt-store.js";
+import type { CronJob } from "../types.js";
+import { enrollForeignReceipt } from "./foreign-receipt-monitor.js";
+import { hasScheduledNextRunAtMs, nextWakeAtMs } from "./jobs-scheduling.js";
 import { locked } from "./locked.js";
 import {
   cleanupQueuedCronRunReservations,
   executeQueuedCronRun,
+  persistQueuedCronRunReservations,
   releaseQueuedCronRun,
   reserveQueuedCronRun,
   resolveRunConcurrency,
 } from "./run-admission.js";
-import type { CronServiceState, DeferredCronNotifications } from "./state.js";
-import { ensureLoaded, persistOrRestore, snapshotStoreForRollback } from "./store.js";
+import {
+  recomputeUnownedCronSchedules,
+  recoverNonTerminalCronRunReceipts,
+} from "./run-recovery.js";
+import { applyCronRuntimeRowsToState, commitCronRuntimeRows } from "./runtime-store.js";
+import type { CronServiceState } from "./state.js";
+import { ensureLoaded, runPostPersistCronNotifications } from "./store.js";
 import { resolveCronJobTimeoutMs } from "./timeout-policy.js";
 import {
-  MAX_TIMER_DELAY_MS,
+  MAX_CRON_TIMER_DELAY_MS,
   MIN_REFIRE_GAP_MS,
   type TimedCronRunOutcome,
 } from "./timer-execution-timeout.js";
@@ -70,7 +77,7 @@ export function armTimer(state: CronServiceState) {
     if (enabledCount > 0) {
       armRunningRecheckTimer(state);
       state.deps.log.debug(
-        { jobCount, enabledCount, withNextRun, delayMs: MAX_TIMER_DELAY_MS },
+        { jobCount, enabledCount, withNextRun, delayMs: MAX_CRON_TIMER_DELAY_MS },
         "cron: timer armed for maintenance recheck",
       );
       return;
@@ -94,13 +101,13 @@ export function armTimer(state: CronServiceState) {
   const flooredDelay = delay === 0 ? MIN_REFIRE_GAP_MS : delay;
   // Wake at least once a minute to avoid schedule drift and recover quickly
   // when the process was paused or wall-clock time jumps.
-  const clampedDelay = Math.min(flooredDelay, MAX_TIMER_DELAY_MS);
+  const clampedDelay = Math.min(flooredDelay, MAX_CRON_TIMER_DELAY_MS);
   // Intentionally avoid an `async` timer callback:
   // Vitest's fake-timer helpers can await async callbacks, which would block
   // tests that simulate long-running jobs. Runtime behavior is unchanged.
   setCronTimer(state, clampedDelay);
   state.deps.log.debug(
-    { nextAt, delayMs: clampedDelay, clamped: delay > MAX_TIMER_DELAY_MS },
+    { nextAt, delayMs: clampedDelay, clamped: delay > MAX_CRON_TIMER_DELAY_MS },
     "cron: timer armed",
   );
 }
@@ -112,7 +119,7 @@ function armRunningRecheckTimer(state: CronServiceState) {
   if (state.timer) {
     clearTimeout(state.timer);
   }
-  setCronTimer(state, MAX_TIMER_DELAY_MS);
+  setCronTimer(state, MAX_CRON_TIMER_DELAY_MS);
 }
 
 function setCronTimer(state: CronServiceState, delayMs: number): void {
@@ -155,11 +162,11 @@ async function onAdmittedTimer(state: CronServiceState) {
   if (state.running) {
     // Re-arm the timer so the scheduler keeps ticking even when a job is
     // still executing.  Without this, a long-running job (e.g. an agentTurn
-    // exceeding MAX_TIMER_DELAY_MS) causes the clamped 60 s timer to fire
+    // exceeding MAX_CRON_TIMER_DELAY_MS) causes the clamped 60 s timer to fire
     // while `running` is true.  The early return then leaves no timer set,
     // silently killing the scheduler until the next gateway restart.
     //
-    // We use MAX_TIMER_DELAY_MS as a fixed re-check interval to avoid a
+    // We use MAX_CRON_TIMER_DELAY_MS as a fixed re-check interval to avoid a
     // zero-delay hot-loop when past-due jobs are waiting for the current
     // execution to finish.
     // See: https://github.com/openclaw/openclaw/issues/12025
@@ -190,6 +197,15 @@ async function onAdmittedTimer(state: CronServiceState) {
         );
         return [];
       }
+      // Timer-owned liveness reconciliation is bounded to durable non-terminal markers.
+      const leaseRecovery = recoverNonTerminalCronRunReceipts(state);
+      runPostPersistCronNotifications(state, leaseRecovery.notifications);
+      for (const receipt of leaseRecovery.receipts) {
+        enrollForeignReceipt(state, receipt);
+      }
+      if (leaseRecovery.repaired) {
+        await ensureLoaded(state, { forceReload: true, skipRecompute: true });
+      }
       const dueCheckNow = state.deps.nowMs();
       const due = collectRunnableJobs(state, dueCheckNow);
 
@@ -197,30 +213,26 @@ async function onAdmittedTimer(state: CronServiceState) {
         // Use maintenance-only recompute to avoid advancing past-due nextRunAtMs
         // values without execution. This prevents jobs from being silently skipped
         // when the timer wakes up but findDueJobs returns empty (see #13992).
-        const rollbackSnapshot = snapshotStoreForRollback(state);
-        const postPersistNotifications: DeferredCronNotifications = [];
-        const changed = recomputeNextRunsForMaintenance(state, {
+        const maintenance = recomputeUnownedCronSchedules(state, {
           recomputeExpired: true,
           nowMs: dueCheckNow,
-          deferredNotifications: postPersistNotifications,
         });
-        if (changed) {
-          await persistOrRestore(state, rollbackSnapshot, { postPersistNotifications });
-        }
+        runPostPersistCronNotifications(state, maintenance.notifications);
+        applyCronRuntimeRowsToState(state, maintenance.jobs);
         return [];
       }
 
       const now = state.deps.nowMs();
-      const reservationRollbackSnapshot = snapshotStoreForRollback(state);
-      for (const job of due) {
-        job.state.queuedAtMs = now;
-      }
-      await persistOrRestore(state, reservationRollbackSnapshot);
-      const reservedDue = due.map((job) => ({
+      const reservedJobs = await persistQueuedCronRunReservations({
+        state,
+        candidates: due,
+        reservedAtMs: now,
+      });
+      const reservedDue = reservedJobs.map(({ job, runReceipt }) => ({
         id: job.id,
         job,
         reservedAtMs: now,
-        reservationIdentity: reserveQueuedCronRun(state, job.id, now),
+        reservationIdentity: reserveQueuedCronRun(state, job.id, now, { runReceipt }),
       }));
       return reservedDue;
     });
@@ -272,10 +284,39 @@ async function onAdmittedTimer(state: CronServiceState) {
                 stopAdmittingDueJobs = true;
               },
               onActivated: () => claimedIndexes.add(index),
-              onNotRunnable: async (job) => {
-                const rollbackSnapshot = snapshotStoreForRollback(state);
-                delete job.state.queuedAtMs;
-                await persistOrRestore(state, rollbackSnapshot);
+              onNotRunnable: async () => {
+                const committedJob = commitCronRuntimeRows({
+                  state,
+                  jobIds: [due.id],
+                  operationLabel: "cron.skipped-reservation-cleanup",
+                  mutate: ({ database, jobs }) => {
+                    const current = jobs.get(due.id);
+                    const ownership = state.queuedRunReservationsByJobId.get(due.id);
+                    if (
+                      !current ||
+                      ownership?.identity !== due.reservationIdentity ||
+                      ownership.markerAtMs !== current.state.queuedAtMs
+                    ) {
+                      return { value: undefined };
+                    }
+                    finishCronRunReceiptInDatabase({
+                      database,
+                      handle: ownership.runReceipt,
+                      status: "skipped",
+                      finishedAtMs: state.deps.nowMs(),
+                      error: "cron scheduled reservation became ineligible",
+                    });
+                    delete current.state.queuedAtMs;
+                    return { upsertJobIds: [current.id], value: current };
+                  },
+                });
+                if (committedJob) {
+                  applyCronRuntimeRowsToState(state, [committedJob]);
+                }
+                const ownership = state.queuedRunReservationsByJobId.get(due.id);
+                if (ownership?.identity === due.reservationIdentity) {
+                  releaseLocalCronRunReceiptOwnership(ownership.runReceipt);
+                }
                 releaseQueuedCronRun(state, due.id, due.reservationIdentity);
               },
               onSetupError: (job, errorText) => {

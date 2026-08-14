@@ -9,6 +9,7 @@ on:
       - ".github/workflows/plugin-npm-release.yml"
       - "extensions/**"
       - "package.json"
+      - "packages/normalization-core/**"
       - "scripts/generate-npm-package-lock.mjs"
       - "scripts/generate-npm-package-lock.mts"
       - "scripts/lib/npm-publish-plan.mjs"
@@ -66,7 +67,7 @@ concurrency:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  NODE_VERSION: "24.15.0"
+  NODE_VERSION: "24.16.0"
 
 jobs:
   preview_plugins_npm:
@@ -340,7 +341,9 @@ jobs:
           ref: ${{ github.workflow_sha }}
           path: .release-tooling
           fetch-depth: 1
-          sparse-checkout: scripts
+          sparse-checkout: |
+            packages/normalization-core
+            scripts
 
       - name: Setup Node environment
         uses: ./.github/actions/setup-node-env

@@ -52,7 +52,8 @@ const { subagentRegistryRuntimeMock } = vi.hoisted(() => ({
     isSubagentSessionRunActive: vi.fn(() => true),
     countActiveDescendantRuns: vi.fn(() => 0),
     countPendingDescendantRuns: vi.fn(() => 0),
-    countPendingDescendantRunsExcludingRun: vi.fn(() => 0),
+    hasDescendantRunAwaitingSettle: vi.fn(() => false),
+    getLatestSubagentRunByChildSessionKey: vi.fn(() => undefined),
     listSubagentRunsForRequester: vi.fn(() => []),
     replaceSubagentRunAfterSteer: vi.fn(() => true),
     resolveRequesterForChildSession: vi.fn(() => null),
@@ -70,12 +71,13 @@ vi.mock("./subagent-announce.runtime.js", () => ({
   getRuntimeConfig: () => mockConfig,
   loadSessionStore: (storePath: string) => loadSessionStoreMock(storePath),
   readSessionMessagesAsync: vi.fn(async () => []),
-  readSessionEntry: (storePath: string, sessionKey: string) =>
+  readSubagentSessionEntry: (storePath: string, sessionKey: string) =>
     (loadSessionStoreMock(storePath) as Record<string, unknown>)[sessionKey],
   resolveAgentIdFromSessionKey: (sessionKey: string) =>
     resolveAgentIdFromSessionKeyMock(sessionKey),
   resolveMainSessionKey: (cfg: unknown) => resolveMainSessionKeyMock(cfg),
-  resolveStorePath: (store: unknown, options: unknown) => resolveStorePathMock(store, options),
+  resolveSessionStorePathCore: (store: unknown, options: unknown) =>
+    resolveStorePathMock(store, options),
   waitForEmbeddedAgentRunEnd: (sessionId: string, timeoutMs?: number) =>
     waitForEmbeddedAgentRunEndMock(sessionId, timeoutMs),
 }));
@@ -88,7 +90,8 @@ vi.mock("./subagent-announce-delivery.runtime.js", () =>
     resolveAgentIdFromSessionKey: (sessionKey: string) =>
       resolveAgentIdFromSessionKeyMock(sessionKey),
     resolveMainSessionKey: (cfg: unknown) => resolveMainSessionKeyMock(cfg),
-    resolveStorePath: (store: unknown, options: unknown) => resolveStorePathMock(store, options),
+    resolveSessionStorePathCore: (store: unknown, options: unknown) =>
+      resolveStorePathMock(store, options),
     isEmbeddedAgentRunActive: (sessionId: string) => isEmbeddedAgentRunActiveMock(sessionId),
     queueEmbeddedAgentMessageWithOutcome: (sessionId: string, text: string, options?: unknown) =>
       queueEmbeddedAgentMessageWithOutcomeMock(sessionId, text, options),
@@ -214,6 +217,7 @@ vi.mock("./subagent-announce-delivery.js", () => ({
   runAnnounceDeliveryWithRetry: async <T>(params: { run: () => Promise<T> }) => await params.run(),
 }));
 
+vi.mock("../registry/subagent-registry-read.js", () => subagentRegistryRuntimeMock);
 vi.mock("../registry/subagent-registry-runtime.js", () => subagentRegistryRuntimeMock);
 import { defaultRuntime } from "../../../runtime.js";
 import { applySubagentWaitOutcome } from "./subagent-announce-output.js";
@@ -309,8 +313,8 @@ describe("subagent announce seam flow", () => {
     subagentRegistryRuntimeMock.countActiveDescendantRuns.mockReturnValue(0);
     subagentRegistryRuntimeMock.countPendingDescendantRuns.mockReset();
     subagentRegistryRuntimeMock.countPendingDescendantRuns.mockReturnValue(0);
-    subagentRegistryRuntimeMock.countPendingDescendantRunsExcludingRun.mockReset();
-    subagentRegistryRuntimeMock.countPendingDescendantRunsExcludingRun.mockReturnValue(0);
+    subagentRegistryRuntimeMock.hasDescendantRunAwaitingSettle.mockReset();
+    subagentRegistryRuntimeMock.hasDescendantRunAwaitingSettle.mockReturnValue(false);
     subagentRegistryRuntimeMock.listSubagentRunsForRequester.mockReset();
     subagentRegistryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([]);
     subagentRegistryRuntimeMock.replaceSubagentRunAfterSteer.mockReset();
