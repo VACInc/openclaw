@@ -336,12 +336,13 @@ export async function executePreparedCliRun(
       throw createCliAbortError();
     }
     const cliTurnStartedAt = Date.now();
-    const restoreSkillEnv = params.skillsSnapshot
-      ? applySkillEnvOverridesFromSnapshot({
-          snapshot: params.skillsSnapshot,
-          config: params.config,
-        })
-      : undefined;
+    const restoreSkillEnv =
+      params.skillsSnapshot && !params.controlOperation
+        ? applySkillEnvOverridesFromSnapshot({
+            snapshot: params.skillsSnapshot,
+            config: params.config,
+          })
+        : undefined;
     let cleanupMcpCaptureAttempt: (() => Promise<void>) | undefined;
     let runOutput: CliOutput | undefined;
     let runError: unknown;
