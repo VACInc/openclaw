@@ -1200,25 +1200,26 @@ export function buildAnthropicProvider(): ProviderPlugin {
 /** Register Anthropic provider, Claude CLI backend, and media understanding provider. */
 export function registerAnthropicPlugin(api: OpenClawPluginApi): void {
   let supportsDynamicSystemPromptSections = false;
-  api.registerCliBackend(
-    buildAnthropicCliBackend({
-      supportsDynamicSystemPromptSections: () => supportsDynamicSystemPromptSections,
-    }),
-  );
-  api.registerHook(
-    "gateway:startup",
-    async () => {
-      const result = await api.runtime.system
-        .runCommandWithTimeout(["claude", "--version"], {
-          timeoutMs: 1_500,
-          killProcessTree: true,
-          maxOutputBytes: { stdout: 1_024, stderr: 1_024 },
-        })
-        .catch(() => undefined);
+  // Start once at plugin load. The first Claude execution awaits the same promise,
+  // so a post-ready gateway hook cannot race the first session's immutable argv.
+  const dynamicSystemPromptSectionsProbe = (async () => {
+    try {
+      const result = await api.runtime.system.runCommandWithTimeout(["claude", "--version"], {
+        timeoutMs: 1_500,
+        killProcessTree: true,
+        maxOutputBytes: { stdout: 1_024, stderr: 1_024 },
+      });
       supportsDynamicSystemPromptSections =
         result?.code === 0 && supportsClaudeDynamicSystemPromptSections(result.stdout);
-    },
-    { name: "anthropic-claude-cli-cache-control" },
+    } catch {
+      supportsDynamicSystemPromptSections = false;
+    }
+  })();
+  api.registerCliBackend(
+    buildAnthropicCliBackend({
+      ensureDynamicSystemPromptSectionsSupport: () => dynamicSystemPromptSectionsProbe,
+      supportsDynamicSystemPromptSections: () => supportsDynamicSystemPromptSections,
+    }),
   );
   api.registerProvider(buildAnthropicProvider());
   api.registerMediaUnderstandingProvider(anthropicMediaUnderstandingProvider);

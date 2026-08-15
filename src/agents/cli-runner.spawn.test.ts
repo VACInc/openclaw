@@ -267,6 +267,7 @@ describe("runCliAgent spawn path", () => {
           "--permission-mode",
           "bypassPermissions",
           "--strict-mcp-config",
+          "--exclude-dynamic-system-prompt-sections",
           "--mcp-config",
           "/tmp/gateway-mcp.json",
           "--allowedTools",
@@ -279,6 +280,7 @@ describe("runCliAgent spawn path", () => {
           "--permission-mode",
           "bypassPermissions",
           "--strict-mcp-config",
+          "--exclude-dynamic-system-prompt-sections",
           "--mcp-config",
           "/tmp/gateway-mcp.json",
           "--allowedTools",
@@ -337,6 +339,7 @@ describe("runCliAgent spawn path", () => {
     expect(argv).not.toContain("--permission-mode");
     expect(argv).not.toContain("bypassPermissions");
     expect(argv).not.toContain("--strict-mcp-config");
+    expect(argv).not.toContain("--exclude-dynamic-system-prompt-sections");
     expect(argv).not.toContain("--allowedTools");
     expect(argv).not.toContain("--plugin-dir");
     expect(argv).not.toContain("--append-system-prompt");

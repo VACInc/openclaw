@@ -3,8 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import { buildAnthropicCliBackend } from "./cli-backend.js";
 import {
   CLAUDE_CLI_CLEAR_ENV,
-  CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
-  CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_MINIMUM_VERSION,
   normalizeClaudeBackendConfig,
   resolveClaudeCliAutoCompactEnv,
   resolveClaudeCliExecutionArgs,
@@ -25,6 +23,7 @@ type ClaudePreparedExecutionWithSecret = {
 
 const CLAUDE_CLI_DISALLOWED_TOOLS =
   "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor";
+const CLAUDE_CACHE_FLAG = "--exclude-dynamic-system-prompt-sections";
 
 describe("Claude CLI adapter equivalence", () => {
   const commonArgs = [
@@ -767,7 +766,6 @@ describe("normalizeClaudeBackendConfig", () => {
   });
 
   it("gates the Claude cache-control flag on the startup capability probe", () => {
-    expect(CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_MINIMUM_VERSION).toBe("2.1.98");
     expect(supportsClaudeDynamicSystemPromptSections("Claude Code 2.1.97")).toBe(false);
     expect(supportsClaudeDynamicSystemPromptSections("Claude Code 2.1.98")).toBe(true);
     expect(supportsClaudeDynamicSystemPromptSections("unparseable")).toBe(false);
@@ -783,21 +781,15 @@ describe("normalizeClaudeBackendConfig", () => {
       provider: "claude-cli",
       modelId: "claude-haiku-4-5",
       useResume: false,
-      baseArgs: unsupported.config.args,
+      baseArgs: unsupported.config.args ?? [],
     };
 
-    expect(unsupported.config.args).not.toContain(
-      CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
-    );
-    expect(unsupported.resolveExecutionArgs?.(context)).not.toContain(
-      CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
-    );
-    expect(supported.resolveExecutionArgs?.(context)).toContain(
-      CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
-    );
+    expect(unsupported.config.args).not.toContain(CLAUDE_CACHE_FLAG);
+    expect(unsupported.resolveExecutionArgs?.(context)).not.toContain(CLAUDE_CACHE_FLAG);
+    expect(supported.resolveExecutionArgs?.(context)).toContain(CLAUDE_CACHE_FLAG);
   });
 
-  it("probes Claude Code once at gateway startup, never while resolving turn args", async () => {
+  it("starts one Claude version probe at plugin load and awaits it before first execution", async () => {
     const runCommandWithTimeout = vi.fn().mockResolvedValue({
       code: 0,
       stdout: "2.1.98 (Claude Code)",
@@ -819,27 +811,26 @@ describe("normalizeClaudeBackendConfig", () => {
     const backend = registerCliBackend.mock.calls[0]?.[0] as ReturnType<
       typeof buildAnthropicCliBackend
     >;
-    const startup = registerHook.mock.calls.find(([event]) => event === "gateway:startup")?.[1] as
-      | (() => Promise<void>)
-      | undefined;
-    expect(startup).toBeTypeOf("function");
-    expect(runCommandWithTimeout).not.toHaveBeenCalled();
-
-    await startup?.();
     expect(runCommandWithTimeout).toHaveBeenCalledOnce();
     expect(runCommandWithTimeout).toHaveBeenCalledWith(
       ["claude", "--version"],
       expect.objectContaining({ timeoutMs: 1_500 }),
     );
+    expect(registerHook).not.toHaveBeenCalled();
+    await backend.prepareExecution?.({
+      workspaceDir: "/tmp",
+      provider: "claude-cli",
+      modelId: "claude-haiku-4-5",
+    });
     expect(
       backend.resolveExecutionArgs?.({
         workspaceDir: "/tmp",
         provider: "claude-cli",
         modelId: "claude-haiku-4-5",
         useResume: false,
-        baseArgs: backend.config.args,
+        baseArgs: backend.config.args ?? [],
       }),
-    ).toContain(CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG);
+    ).toContain(CLAUDE_CACHE_FLAG);
     expect(runCommandWithTimeout).toHaveBeenCalledOnce();
   });
 
@@ -861,11 +852,11 @@ describe("normalizeClaudeBackendConfig", () => {
     const backend = registerCliBackend.mock.calls[0]?.[0] as ReturnType<
       typeof buildAnthropicCliBackend
     >;
-    const startup = registerHook.mock.calls.find(([event]) => event === "gateway:startup")?.[1] as
-      | (() => Promise<void>)
-      | undefined;
-
-    await startup?.();
+    await backend.prepareExecution?.({
+      workspaceDir: "/tmp",
+      provider: "claude-cli",
+      modelId: "claude-haiku-4-5",
+    });
     expect(runCommandWithTimeout).toHaveBeenCalledOnce();
     expect(
       backend.resolveExecutionArgs?.({
@@ -873,9 +864,9 @@ describe("normalizeClaudeBackendConfig", () => {
         provider: "claude-cli",
         modelId: "claude-haiku-4-5",
         useResume: false,
-        baseArgs: backend.config.args,
+        baseArgs: backend.config.args ?? [],
       }),
-    ).not.toContain(CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG);
+    ).not.toContain(CLAUDE_CACHE_FLAG);
   });
 
   it("leaves claude cli subscription-managed, restricts setting sources, and clears inherited env overrides", () => {
@@ -888,13 +879,11 @@ describe("normalizeClaudeBackendConfig", () => {
     expect(backend.nativeToolMode).toBe("selectable");
     expect(backend.config.args).toContain("--setting-sources");
     expect(backend.config.args).toContain("user");
-    expect(backend.config.args).not.toContain(CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG);
+    expect(backend.config.args).not.toContain(CLAUDE_CACHE_FLAG);
     expectDefaultDisallowedTools(backend.config.args);
     expect(backend.config.resumeArgs).toContain("--setting-sources");
     expect(backend.config.resumeArgs).toContain("user");
-    expect(backend.config.resumeArgs).not.toContain(
-      CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
-    );
+    expect(backend.config.resumeArgs).not.toContain(CLAUDE_CACHE_FLAG);
     expectDefaultDisallowedTools(backend.config.resumeArgs);
     expect(backend.config.clearEnv).toEqual([...CLAUDE_CLI_CLEAR_ENV]);
     expect(backend.config.clearEnv).toContain("ANTHROPIC_API_TOKEN");
