@@ -118,49 +118,13 @@ describe("Claude live configured exec policy", () => {
 });
 
 describe("Claude live process", () => {
-  it("refreshes a reused Claude live session when only dynamic prompt context changes", async () => {
+  it("keeps a reused Claude live session cached when only dynamic prompt context changes", async () => {
     let userTurn = 0;
-    let controlRequest = 0;
     const live = mockClaudeLiveRun(supervisorSpawnMock, {
       onWrite: ({ data, emit }) => {
-        const parsed = JSON.parse(data) as {
-          type: string;
-          request_id?: string;
-          request?: { subtype?: string; model?: string; system_prompt?: string };
-        };
-        if (parsed.type === "control_request") {
-          controlRequest += 1;
-          if (controlRequest === 1) {
-            expect(parsed.request).toEqual({
-              subtype: "set_model",
-              model: "sonnet",
-              system_prompt: "",
-            });
-            emit([
-              {
-                type: "control_response",
-                response: {
-                  subtype: "error",
-                  request_id: parsed.request_id,
-                  error: "set_model: system_prompt must be a non-empty string when present",
-                },
-              },
-            ]);
-            return;
-          }
-          expect(parsed.request).toEqual({
-            subtype: "set_model",
-            model: "sonnet",
-            system_prompt:
-              "# OpenClaw\n\n## Stable Instructions\nKeep the operator informed.\nSecond-turn metadata",
-          });
-          emit([
-            {
-              type: "control_response",
-              response: { subtype: "success", request_id: parsed.request_id },
-            },
-          ]);
-          return;
+        const parsed = JSON.parse(data) as { type: string };
+        if (parsed.type !== "user") {
+          throw new Error(`unexpected live stdin ${parsed.type}`);
         }
         userTurn += 1;
         emit([
@@ -198,12 +162,15 @@ describe("Claude live process", () => {
     expect(first.text).toBe("one");
     expect(second.text).toBe("two");
     expect(supervisorSpawnMock).toHaveBeenCalledOnce();
-    expect(live.writes.map((entry) => JSON.parse(entry).type)).toEqual([
-      "user",
-      "control_request",
-      "control_request",
-      "user",
-    ]);
+    const userWrites = live.writes.map(
+      (entry) => JSON.parse(entry) as { type: string; message?: { content?: string } },
+    );
+    expect(userWrites.map((entry) => entry.type)).toEqual(["user", "user"]);
+    expect(userWrites[0]?.message?.content).toContain("First-turn metadata");
+    expect(userWrites[0]?.message?.content).toContain("first");
+    expect(userWrites[0]?.message?.content).not.toContain("Second-turn metadata");
+    expect(userWrites[1]?.message?.content).toContain("Second-turn metadata");
+    expect(userWrites[1]?.message?.content).toContain("second");
   });
 
   it("answers Claude live control_request can_use_tool with deny when the user rejects approval", async () => {

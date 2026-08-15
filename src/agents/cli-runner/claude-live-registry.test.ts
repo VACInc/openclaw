@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { SYSTEM_PROMPT_CACHE_BOUNDARY } from "@openclaw/ai/internal/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { onAgentEvent, resetAgentEventsForTest } from "../../infra/agent-events.js";
@@ -835,52 +834,31 @@ describe("Claude live registry lifecycle", () => {
       vi.useRealTimers();
     }
   });
-  it("serializes direct live turns before refreshing their system prompts", async () => {
+  it("serializes direct live turns and drops an aborted queued turn", async () => {
     let userTurn = 0;
-    let releaseCapabilityProbe: (() => void) | undefined;
+    let releaseSecondTurn: (() => void) | undefined;
     const live = mockClaudeLiveRun(supervisorSpawnMock, {
       onWrite: ({ data, emit }) => {
-        const parsed = JSON.parse(data) as {
-          type: string;
-          request_id?: string;
-          request?: { system_prompt?: string };
-        };
-        if (parsed.type === "control_request") {
-          if (parsed.request?.system_prompt === "") {
-            releaseCapabilityProbe = () => {
-              emit([
-                {
-                  type: "control_response",
-                  response: {
-                    subtype: "error",
-                    request_id: parsed.request_id,
-                    error: "set_model: system_prompt must be a non-empty string when present",
-                  },
-                },
-              ]);
-            };
-            return;
-          }
-          emit([
-            {
-              type: "control_response",
-              response: {
-                subtype: "success",
-                request_id: parsed.request_id,
-              },
-            },
-          ]);
-          return;
+        const parsed = JSON.parse(data) as { type: string };
+        if (parsed.type !== "user") {
+          throw new Error(`unexpected live stdin ${parsed.type}`);
         }
         userTurn += 1;
-        emit([
-          { type: "system", subtype: "init", session_id: "live-serialized-refresh" },
-          {
-            type: "result",
-            session_id: "live-serialized-refresh",
-            result: `turn-${userTurn}`,
-          },
-        ]);
+        const emitTurn = () => {
+          emit([
+            { type: "system", subtype: "init", session_id: "live-serialized-turns" },
+            {
+              type: "result",
+              session_id: "live-serialized-turns",
+              result: `turn-${userTurn}`,
+            },
+          ]);
+        };
+        if (userTurn === 2) {
+          releaseSecondTurn = emitTurn;
+          return;
+        }
+        emitTurn();
       },
     });
     const backend = {
@@ -897,13 +875,12 @@ describe("Claude live registry lifecycle", () => {
       getRecord: vi.fn(),
     });
     const runTurn = (
-      systemPrompt: string,
       prompt: string,
       useResume: boolean,
       abortSignal?: AbortSignal,
       cleanup: () => Promise<void> = async () => {},
     ) => {
-      const context = buildPreparedCliRunContext({ backend, prompt, systemPrompt });
+      const context = buildPreparedCliRunContext({ backend, prompt });
       context.params.abortSignal = abortSignal;
       return runClaudeTurn({
         context,
@@ -918,48 +895,27 @@ describe("Claude live registry lifecycle", () => {
       });
     };
 
-    await expect(
-      runTurn(`Stable instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}First metadata`, "first", false),
-    ).resolves.toMatchObject({ output: { text: "turn-1" } });
+    await expect(runTurn("first", false)).resolves.toMatchObject({ output: { text: "turn-1" } });
 
-    const second = runTurn(
-      `Stable instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}Second metadata`,
-      "second",
-      true,
-    );
-    await vi.waitFor(() => expect(releaseCapabilityProbe).toBeTypeOf("function"));
+    const second = runTurn("second", true);
+    await vi.waitFor(() => expect(releaseSecondTurn).toBeTypeOf("function"));
     const queuedAbort = new AbortController();
     const abortedCleanup = vi.fn(async () => {});
-    const third = runTurn(
-      `Stable instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}Third metadata`,
-      "third",
-      true,
-      queuedAbort.signal,
-      abortedCleanup,
-    );
+    const third = runTurn("third", true, queuedAbort.signal, abortedCleanup);
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });
 
-    expect(live.writes.map((entry) => JSON.parse(entry).type)).toEqual(["user", "control_request"]);
+    expect(live.writes.map((entry) => JSON.parse(entry).type)).toEqual(["user", "user"]);
     queuedAbort.abort();
     await expect(third).rejects.toMatchObject({ name: "AbortError" });
     expect(abortedCleanup).toHaveBeenCalledOnce();
-    expect(live.writes.map((entry) => JSON.parse(entry).type)).toEqual(["user", "control_request"]);
-    releaseCapabilityProbe?.();
+    expect(live.writes.map((entry) => JSON.parse(entry).type)).toEqual(["user", "user"]);
+    releaseSecondTurn?.();
 
     await expect(second).resolves.toMatchObject({ output: { text: "turn-2" } });
-    await expect(
-      runTurn(`Stable instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}Fourth metadata`, "fourth", true),
-    ).resolves.toMatchObject({ output: { text: "turn-3" } });
-    expect(live.writes.map((entry) => JSON.parse(entry).type)).toEqual([
-      "user",
-      "control_request",
-      "control_request",
-      "user",
-      "control_request",
-      "user",
-    ]);
+    await expect(runTurn("fourth", true)).resolves.toMatchObject({ output: { text: "turn-3" } });
+    expect(live.writes.map((entry) => JSON.parse(entry).type)).toEqual(["user", "user", "user"]);
     expect(supervisorSpawnMock).toHaveBeenCalledOnce();
   });
 });

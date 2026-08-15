@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildAnthropicCliBackend } from "./cli-backend.js";
 import {
   CLAUDE_CLI_CLEAR_ENV,
+  CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
   normalizeClaudeBackendConfig,
   resolveClaudeCliAutoCompactEnv,
   resolveClaudeCliExecutionArgs,
@@ -29,6 +30,7 @@ describe("Claude CLI adapter equivalence", () => {
     "stream-json",
     "--include-partial-messages",
     "--verbose",
+    CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
     "--setting-sources",
     "user",
     "--allowedTools",
@@ -772,9 +774,11 @@ describe("normalizeClaudeBackendConfig", () => {
     expect(backend.nativeToolMode).toBe("selectable");
     expect(backend.config.args).toContain("--setting-sources");
     expect(backend.config.args).toContain("user");
+    expect(backend.config.args).toContain(CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG);
     expectDefaultDisallowedTools(backend.config.args);
     expect(backend.config.resumeArgs).toContain("--setting-sources");
     expect(backend.config.resumeArgs).toContain("user");
+    expect(backend.config.resumeArgs).toContain(CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG);
     expectDefaultDisallowedTools(backend.config.resumeArgs);
     expect(backend.config.clearEnv).toEqual([...CLAUDE_CLI_CLEAR_ENV]);
     expect(backend.config.clearEnv).toContain("ANTHROPIC_API_TOKEN");

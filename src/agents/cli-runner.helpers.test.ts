@@ -283,9 +283,9 @@ describe("buildCliArgs", () => {
     ).toEqual(["exec", "resume", "thread-123", "--model", "gpt-5.4"]);
   });
 
-  it("strips the internal cache boundary from CLI system prompt args", () => {
-    // The boundary is internal prompt-cache metadata and must never reach the
-    // downstream CLI as literal text.
+  it("sends only the stable cache prefix on CLI system prompt args", () => {
+    // CLI transports have no cache_control breakpoint, so the volatile suffix
+    // must not enter --append-system-prompt. The boundary marker stays internal.
     expect(
       buildCliArgs({
         backend: {
@@ -297,7 +297,7 @@ describe("buildCliArgs", () => {
         systemPrompt: `Stable prefix${SYSTEM_PROMPT_CACHE_BOUNDARY}Dynamic suffix`,
         useResume: false,
       }),
-    ).toEqual(["-p", "--append-system-prompt", "Stable prefix\nDynamic suffix"]);
+    ).toEqual(["-p", "--append-system-prompt", "Stable prefix"]);
   });
 
   it("passes Codex system prompts via a model instructions file config override", () => {
@@ -692,7 +692,7 @@ describe("writeCliImages", () => {
 });
 
 describe("writeCliSystemPromptFile", () => {
-  it("writes stripped system prompts to a private temp file", async () => {
+  it("writes only the stable cache prefix to a private temp file", async () => {
     const written = await writeCliSystemPromptFile({
       backend: {
         command: "codex",
@@ -703,9 +703,7 @@ describe("writeCliSystemPromptFile", () => {
 
     try {
       expect(written.filePath).toContain("openclaw-cli-system-prompt-");
-      await expect(fs.readFile(written.filePath ?? "", "utf-8")).resolves.toBe(
-        "Stable prefix\nDynamic suffix",
-      );
+      await expect(fs.readFile(written.filePath ?? "", "utf-8")).resolves.toBe("Stable prefix");
     } finally {
       await written.cleanup();
     }

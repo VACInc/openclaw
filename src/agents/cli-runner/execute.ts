@@ -46,8 +46,10 @@ import { createCliToolTracking } from "./execute-tool-tracking.js";
 import {
   buildCliArgs,
   enqueueCliRun,
+  prependCliDynamicSystemPromptSuffix,
   prepareCliPromptImagePayload,
   resolveCliNoOutputTimeoutMs,
+  resolveCliPromptCacheParts,
   resolveCliRunQueueKey,
   resolveCliRunTimeoutOverrideMs,
   resolvePromptInput,
@@ -149,20 +151,27 @@ export async function executePreparedCliRun(
     !nodePlacement && shouldSendSystemPrompt
       ? await executeDeps.writeCliSystemPromptFile({ backend, systemPrompt: systemPromptArg })
       : undefined;
-  const nodeSystemPrompt = nodePlacement && shouldSendSystemPrompt ? systemPromptArg : undefined;
+  const nodeSystemPrompt =
+    nodePlacement && shouldSendSystemPrompt && systemPromptArg
+      ? resolveCliPromptCacheParts(systemPromptArg).stablePrefix
+      : undefined;
 
   const basePrompt = cliSessionIdToUse
     ? params.prompt
     : (context.openClawHistoryPrompt ?? params.prompt);
+  // Compact/control prompts are operator-owned command text, not model turns.
   let prompt =
     params.controlOperation !== undefined
       ? basePrompt
-      : applyPluginTextReplacements(
-          appendBootstrapPromptWarning(basePrompt, context.bootstrapPromptWarningLines, {
-            preserveExactPrompt: context.heartbeatPrompt,
-          }),
-          context.backendResolved.textTransforms?.input,
-        );
+      : prependCliDynamicSystemPromptSuffix({
+          prompt: applyPluginTextReplacements(
+            appendBootstrapPromptWarning(basePrompt, context.bootstrapPromptWarningLines, {
+              preserveExactPrompt: context.heartbeatPrompt,
+            }),
+            context.backendResolved.textTransforms?.input,
+          ),
+          systemPrompt: context.systemPrompt,
+        });
   if (
     nodePlacement &&
     ((params.images?.length ?? 0) > 0 ||

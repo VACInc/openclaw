@@ -68,6 +68,8 @@ export const CLAUDE_CLI_CLEAR_ENV = [
 const CLAUDE_LEGACY_SKIP_PERMISSIONS_ARG = "--dangerously-skip-permissions";
 const CLAUDE_PERMISSION_MODE_ARG = "--permission-mode";
 const CLAUDE_SETTING_SOURCES_ARG = "--setting-sources";
+export const CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG =
+  "--exclude-dynamic-system-prompt-sections";
 const CLAUDE_SETTINGS_ARG = "--settings";
 const CLAUDE_EFFORT_ARG = "--effort";
 const CLAUDE_BARE_ARG = "--bare";

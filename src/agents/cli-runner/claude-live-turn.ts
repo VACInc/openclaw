@@ -104,11 +104,9 @@ export type ClaudeLiveTurnHost = {
   closing: boolean;
   close(reason: "idle" | "restart" | "abort" | "mcp-capture-rotation", error?: unknown): void;
   scheduleIdleClose(): void;
-  acceptControlResponse(parsed: Record<string, unknown>): boolean;
   acceptControlRequest(turn: ClaudeLiveTurn, parsed: Record<string, unknown>): void;
   acceptSessionRequirement(parsed: Record<string, unknown>): boolean;
   acceptSessionId(sessionId: string): void;
-  settleControlRequest(): void;
   cleanupAfterExit(): void;
 };
 
@@ -396,7 +394,7 @@ function acceptClaudeLine(host: ClaudeLiveTurnHost, line: string): void {
       turn?.onSessionId?.(parsedSessionId);
     }
   }
-  if (host.acceptControlResponse(parsed) || !turn) {
+  if (!turn) {
     return;
   }
   if (
@@ -501,7 +499,6 @@ export function acceptClaudeStdout(host: ClaudeLiveTurnHost, chunk: string): voi
 
 export function acceptClaudeExit(host: ClaudeLiveTurnHost, exitCode: number | null): void {
   host.closing = true;
-  host.settleControlRequest();
   host.cleanupAfterExit();
   if (!host.currentTurn) {
     return;

@@ -6,7 +6,10 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { stripSystemPromptCacheBoundary } from "@openclaw/ai/internal/shared";
+import {
+  splitSystemPromptCacheBoundary,
+  stripSystemPromptCacheBoundary,
+} from "@openclaw/ai/internal/shared";
 import { MAX_IMAGE_BYTES } from "@openclaw/media-core/constants";
 import { extensionForMime } from "@openclaw/media-core/mime";
 import {
@@ -196,6 +199,30 @@ export function normalizeCliModel(modelId: string, backend: CliBackendConfig): s
   return trimmed;
 }
 
+/** CLI transports have no provider cache_control breakpoint. */
+export function resolveCliPromptCacheParts(systemPrompt: string): {
+  stablePrefix: string;
+  dynamicSuffix: string;
+} {
+  return (
+    splitSystemPromptCacheBoundary(systemPrompt) ?? {
+      stablePrefix: stripSystemPromptCacheBoundary(systemPrompt),
+      dynamicSuffix: "",
+    }
+  );
+}
+
+/** Keep volatile CLI prompt bytes on the user turn so the system prefix can cache. */
+export function prependCliDynamicSystemPromptSuffix(params: {
+  prompt: string;
+  systemPrompt?: string | null;
+}): string {
+  const suffix = params.systemPrompt
+    ? resolveCliPromptCacheParts(params.systemPrompt).dynamicSuffix
+    : "";
+  return suffix && params.prompt ? `${suffix}\n\n${params.prompt}` : suffix || params.prompt;
+}
+
 /** Decides whether a system prompt should be sent for this CLI turn. */
 export function resolveSystemPromptUsage(params: {
   backend: CliBackendConfig;
@@ -357,7 +384,7 @@ async function writeCliImages(params: {
   return { paths, cleanup };
 }
 
-/** Writes a temporary system prompt file when the backend needs file-based prompts. */
+/** Writes the stable CLI system-prompt prefix when the backend needs a prompt file. */
 export async function writeCliSystemPromptFile(params: {
   backend: CliBackendConfig;
   systemPrompt: string;
@@ -374,7 +401,7 @@ export async function writeCliSystemPromptFile(params: {
   });
   const filePath = await workspace.write(
     "system-prompt.md",
-    stripSystemPromptCacheBoundary(params.systemPrompt),
+    resolveCliPromptCacheParts(params.systemPrompt).stablePrefix,
   );
   return {
     filePath,
@@ -492,7 +519,10 @@ export function buildCliArgs(params: {
       ),
     );
   } else if (shouldSendSystemPrompt && params.systemPrompt && params.backend.systemPromptArg) {
-    args.push(params.backend.systemPromptArg, stripSystemPromptCacheBoundary(params.systemPrompt));
+    args.push(
+      params.backend.systemPromptArg,
+      resolveCliPromptCacheParts(params.systemPrompt).stablePrefix,
+    );
   }
   if (!params.useResume && params.sessionId) {
     if (params.backend.sessionArgs && params.backend.sessionArgs.length > 0) {

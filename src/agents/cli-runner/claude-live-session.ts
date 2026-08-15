@@ -1,9 +1,5 @@
 /** Coordinates admission and reuse for Claude CLI live processes. */
 import crypto from "node:crypto";
-import {
-  splitSystemPromptCacheBoundary,
-  stripSystemPromptCacheBoundary,
-} from "@openclaw/ai/internal/shared";
 import type { ReplyBackendHandle } from "../../auto-reply/reply/reply-run-registry.js";
 import { createAbortError as createNamedAbortError } from "../../infra/abort-signal.js";
 import { sha256Hex } from "../../infra/crypto-digest.js";
@@ -22,7 +18,6 @@ import {
   abortClaudeTurn,
   beginClaudeTurn,
   createClaudeUserInputMessage,
-  refreshClaudePrompt,
   resolveClaudeLiveExecPermission,
   spawnClaudeProcess,
   writeClaudeInput,
@@ -39,6 +34,7 @@ import {
   removeClaudeSession,
 } from "./claude-live-registry.js";
 import type { ClaudeLiveToolTerminalOutcome } from "./claude-live-turn.js";
+import { resolveCliPromptCacheParts } from "./helpers.js";
 import { cliBackendLog } from "./log.js";
 import type { PreparedCliRunContext } from "./types.js";
 
@@ -166,10 +162,13 @@ function buildClaudeLiveFingerprint(params: {
   argv: string[];
   env: Record<string, string>;
 }): string {
+  // Always-mode live reuse hashes the stable prefix only. Suffix-only churn
+  // belongs on the user turn; hashing the mashed prompt would restart Claude
+  // and rewrite its native cached prefix.
   const stableSystemPrompt =
-    (params.context.preparedBackend.backend.systemPromptWhen === "always"
-      ? splitSystemPromptCacheBoundary(params.context.systemPrompt)?.stablePrefix
-      : undefined) ?? params.context.systemPrompt;
+    params.context.preparedBackend.backend.systemPromptWhen === "always"
+      ? resolveCliPromptCacheParts(params.context.systemPrompt).stablePrefix
+      : params.context.systemPrompt;
   const normalizeMcpConfigPath = Boolean(params.context.preparedBackend.mcpConfigHash);
   const skillSnapshot = params.context.params.skillsSnapshot;
   const skillsFingerprint = skillSnapshot
@@ -374,7 +373,6 @@ async function runSerializedClaudeTurn(
     argv,
     env: params.env,
   });
-  const systemPromptHash = sha256Hex(stripSystemPromptCacheBoundary(params.context.systemPrompt));
   let session = getClaudeSession(key) as ClaudeLiveProcess | undefined;
   if (
     session &&
@@ -404,19 +402,6 @@ async function runSerializedClaudeTurn(
       });
     }
     session.close("restart");
-    session = undefined;
-  }
-  if (
-    session &&
-    !(await refreshClaudePrompt({ session, context: params.context, systemPromptHash }))
-  ) {
-    if (params.requiredSessionGeneration) {
-      await cleanup();
-      throw createRequiredLiveSessionError({
-        context: params.context,
-        code: "cli_live_session_changed",
-      });
-    }
     session = undefined;
   }
   if (!session && params.requiredSessionGeneration) {
@@ -468,7 +453,6 @@ async function runSerializedClaudeTurn(
       env: params.env,
       generation,
       fingerprint,
-      systemPromptHash,
       key,
       mcpCaptureKey,
       noOutputTimeoutMs: params.noOutputTimeoutMs,
