@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { SYSTEM_PROMPT_CACHE_BOUNDARY } from "@openclaw/ai/internal/shared";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSolidPngBuffer } from "../../test/helpers/image-fixtures.js";
@@ -1296,6 +1297,45 @@ describe("runCliAgent spawn path", () => {
     );
 
     expect(supervisorSpawnMock).toHaveBeenCalledOnce();
+  });
+
+  it("moves the dynamic prompt suffix only for Claude append-and-always runs", async () => {
+    const systemPrompt = `Stable instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}Dynamic context`;
+    mockSuccessfulCliRun(CLAUDE_OK_JSONL);
+
+    await executePreparedCliRun(
+      buildPreparedCliRunContext({
+        prompt: "Claude user turn",
+        systemPrompt,
+        backend: {
+          args: ["-p", "{prompt}"],
+          input: "arg",
+          sessionMode: "none",
+          systemPromptArg: "--append-system-prompt",
+          systemPromptFileArg: undefined,
+          systemPromptMode: "append",
+          systemPromptWhen: "always",
+        },
+      }),
+    );
+
+    const claudeArgs = (mockCallArg(supervisorSpawnMock) as { argv: string[] }).argv;
+    expect(requireArgAfter(claudeArgs, "--append-system-prompt")).toBe("Stable instructions");
+    expect(claudeArgs).toContain("Dynamic context\n\nClaude user turn");
+
+    supervisorSpawnMock.mockClear();
+    mockSuccessfulCliRun(GEMINI_OK_JSONL);
+    await executePreparedCliRun(
+      buildPreparedCliRunContext({
+        provider: "google-gemini-cli",
+        model: "gemini-3.1-pro-preview",
+        prompt: "Gemini user turn",
+        systemPrompt,
+      }),
+    );
+
+    const geminiArgs = (mockCallArg(supervisorSpawnMock) as { argv: string[] }).argv;
+    expect(requireArgAfter(geminiArgs, "--prompt")).toBe("Gemini user turn");
   });
 
   it("binds and admits the exact package artifact at the tool-availability version floor", async () => {

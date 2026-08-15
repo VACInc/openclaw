@@ -46,6 +46,7 @@ import { createCliToolTracking } from "./execute-tool-tracking.js";
 import {
   buildCliArgs,
   enqueueCliRun,
+  isClaudeCliBackendId,
   prependCliDynamicSystemPromptSuffix,
   prepareCliPromptImagePayload,
   resolveCliNoOutputTimeoutMs,
@@ -119,6 +120,17 @@ type ExecutePreparedCliRunOptions = {
   onPhase?: (phase: "send" | "resolve" | "cleanup") => void;
 };
 
+function movesCliPromptCacheSuffix(params: {
+  backendId: string;
+  backend: PreparedCliRunContext["preparedBackend"]["backend"];
+}): boolean {
+  return (
+    isClaudeCliBackendId(params.backendId) &&
+    params.backend.systemPromptMode === "append" &&
+    params.backend.systemPromptWhen === "always"
+  );
+}
+
 /** Executes a prepared CLI run context and returns normalized CLI output. */
 export async function executePreparedCliRun(
   context: PreparedCliRunContext,
@@ -144,34 +156,50 @@ export async function executePreparedCliRun(
     isNewSession: isNew || resendSystemPromptForSoftResume,
     systemPrompt: context.systemPrompt,
   });
-  const shouldSendSystemPrompt =
+  const shouldSendSystemPrompt = Boolean(
     systemPromptArg &&
-    (!useResume || backend.systemPromptWhen === "always" || resendSystemPromptForSoftResume);
+    (!useResume || backend.systemPromptWhen === "always" || resendSystemPromptForSoftResume),
+  );
+  const moveDynamicSystemPromptSuffix = movesCliPromptCacheSuffix({
+    backendId: context.backendResolved.id,
+    backend,
+  });
+  const systemPromptForTransport =
+    moveDynamicSystemPromptSuffix && systemPromptArg
+      ? resolveCliPromptCacheParts(systemPromptArg).stablePrefix
+      : systemPromptArg;
   const systemPromptFile =
-    !nodePlacement && shouldSendSystemPrompt
-      ? await executeDeps.writeCliSystemPromptFile({ backend, systemPrompt: systemPromptArg })
+    !nodePlacement && shouldSendSystemPrompt && systemPromptForTransport
+      ? await executeDeps.writeCliSystemPromptFile({
+          backend,
+          systemPrompt: systemPromptForTransport,
+        })
       : undefined;
   const nodeSystemPrompt =
-    nodePlacement && shouldSendSystemPrompt && systemPromptArg
-      ? resolveCliPromptCacheParts(systemPromptArg).stablePrefix
+    nodePlacement && shouldSendSystemPrompt && systemPromptForTransport
+      ? systemPromptForTransport
       : undefined;
 
   const basePrompt = cliSessionIdToUse
     ? params.prompt
     : (context.openClawHistoryPrompt ?? params.prompt);
-  // Compact/control prompts are operator-owned command text, not model turns.
+  const inputPrompt = applyPluginTextReplacements(
+    appendBootstrapPromptWarning(basePrompt, context.bootstrapPromptWarningLines, {
+      preserveExactPrompt: context.heartbeatPrompt,
+    }),
+    context.backendResolved.textTransforms?.input,
+  );
+  // Claude's append-and-always transport has no cache breakpoint. Its suffix
+  // is a user-turn addition; other CLI backends keep their existing prompt contract.
   let prompt =
     params.controlOperation !== undefined
       ? basePrompt
-      : prependCliDynamicSystemPromptSuffix({
-          prompt: applyPluginTextReplacements(
-            appendBootstrapPromptWarning(basePrompt, context.bootstrapPromptWarningLines, {
-              preserveExactPrompt: context.heartbeatPrompt,
-            }),
-            context.backendResolved.textTransforms?.input,
-          ),
-          systemPrompt: context.systemPrompt,
-        });
+      : moveDynamicSystemPromptSuffix && systemPromptArg
+        ? prependCliDynamicSystemPromptSuffix({
+            prompt: inputPrompt,
+            systemPrompt: systemPromptArg,
+          })
+        : inputPrompt;
   if (
     nodePlacement &&
     ((params.images?.length ?? 0) > 0 ||

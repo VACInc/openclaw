@@ -384,7 +384,7 @@ async function writeCliImages(params: {
   return { paths, cleanup };
 }
 
-/** Writes the stable CLI system-prompt prefix when the backend needs a prompt file. */
+/** Writes a marker-free CLI system prompt when the backend needs a prompt file. */
 export async function writeCliSystemPromptFile(params: {
   backend: CliBackendConfig;
   systemPrompt: string;
@@ -401,7 +401,7 @@ export async function writeCliSystemPromptFile(params: {
   });
   const filePath = await workspace.write(
     "system-prompt.md",
-    resolveCliPromptCacheParts(params.systemPrompt).stablePrefix,
+    stripSystemPromptCacheBoundary(params.systemPrompt),
   );
   return {
     filePath,
@@ -519,10 +519,7 @@ export function buildCliArgs(params: {
       ),
     );
   } else if (shouldSendSystemPrompt && params.systemPrompt && params.backend.systemPromptArg) {
-    args.push(
-      params.backend.systemPromptArg,
-      resolveCliPromptCacheParts(params.systemPrompt).stablePrefix,
-    );
+    args.push(params.backend.systemPromptArg, stripSystemPromptCacheBoundary(params.systemPrompt));
   }
   if (!params.useResume && params.sessionId) {
     if (params.backend.sessionArgs && params.backend.sessionArgs.length > 0) {
