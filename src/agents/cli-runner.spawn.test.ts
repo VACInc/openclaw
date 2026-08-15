@@ -1338,6 +1338,49 @@ describe("runCliAgent spawn path", () => {
     expect(requireArgAfter(geminiArgs, "--prompt")).toBe("Gemini user turn");
   });
 
+  it("keeps Claude first and never system-prompt modes out of the cache path", async () => {
+    const systemPrompt = `Stable instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}Dynamic context`;
+    const backend = {
+      args: ["-p", "{prompt}"],
+      input: "arg" as const,
+      sessionMode: "none" as const,
+      systemPromptArg: "--append-system-prompt",
+      systemPromptFileArg: undefined,
+      systemPromptMode: "append" as const,
+    };
+
+    mockSuccessfulCliRun(CLAUDE_OK_JSONL);
+    await executePreparedCliRun(
+      buildPreparedCliRunContext({
+        prompt: "Claude first turn",
+        systemPrompt,
+        backend: { ...backend, systemPromptWhen: "first" },
+      }),
+    );
+
+    const firstArgs = (mockCallArg(supervisorSpawnMock) as { argv: string[] }).argv;
+    expect(requireArgAfter(firstArgs, "--append-system-prompt")).toBe(
+      "Stable instructions\nDynamic context",
+    );
+    expect(firstArgs).toContain("Claude first turn");
+    expect(firstArgs).not.toContain("Dynamic context\n\nClaude first turn");
+
+    supervisorSpawnMock.mockClear();
+    mockSuccessfulCliRun(CLAUDE_OK_JSONL);
+    await executePreparedCliRun(
+      buildPreparedCliRunContext({
+        prompt: "Claude never turn",
+        systemPrompt,
+        backend: { ...backend, systemPromptWhen: "never" },
+      }),
+    );
+
+    const neverArgs = (mockCallArg(supervisorSpawnMock) as { argv: string[] }).argv;
+    expect(neverArgs).not.toContain("--append-system-prompt");
+    expect(neverArgs).toContain("Claude never turn");
+    expect(neverArgs).not.toContain("Dynamic context\n\nClaude never turn");
+  });
+
   it("binds and admits the exact package artifact at the tool-availability version floor", async () => {
     const fixture = await createCliPackageFixture("0.39.1");
     try {

@@ -282,7 +282,7 @@ export async function executePreparedCliRun(
     baseArgs: Array.from(executionBaseArgs),
     modelId: context.normalizedModel,
     sessionId: resolvedSessionId,
-    systemPrompt: nodePlacement ? undefined : systemPromptArg,
+    systemPrompt: nodePlacement ? undefined : systemPromptForTransport,
     systemPromptFilePath: systemPromptFile?.filePath,
     imagePaths: imagePayload.imagePaths,
     promptArg: argsPrompt,
