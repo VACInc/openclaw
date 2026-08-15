@@ -1,13 +1,16 @@
 // Anthropic tests cover cli shared plugin behavior.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildAnthropicCliBackend } from "./cli-backend.js";
 import {
   CLAUDE_CLI_CLEAR_ENV,
   CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
+  CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_MINIMUM_VERSION,
   normalizeClaudeBackendConfig,
   resolveClaudeCliAutoCompactEnv,
   resolveClaudeCliExecutionArgs,
+  supportsClaudeDynamicSystemPromptSections,
 } from "./cli-shared.js";
+import { registerAnthropicPlugin } from "./register.runtime.js";
 
 type ClaudePreparedExecutionWithSecret = {
   env?: Record<string, string>;
@@ -30,7 +33,6 @@ describe("Claude CLI adapter equivalence", () => {
     "stream-json",
     "--include-partial-messages",
     "--verbose",
-    CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
     "--setting-sources",
     "user",
     "--allowedTools",
@@ -744,7 +746,7 @@ describe("normalizeClaudeBackendConfig", () => {
     expect(normalized?.resumeArgs).toContain("--permission-mode");
     expect(normalized?.resumeArgs).toContain("bypassPermissions");
     expect(normalized?.liveSession).toBe("claude-stdio");
-    expect(backend.resolveExecutionArgs).toBe(resolveClaudeCliExecutionArgs);
+    expect(backend.resolveExecutionArgs).toBeTypeOf("function");
     expect(backend.toolAvailabilityEnforcement).toBe("execution-args");
   });
 
@@ -764,6 +766,83 @@ describe("normalizeClaudeBackendConfig", () => {
     expect(backend.config.systemPromptWhen).toBe("always");
   });
 
+  it("gates the Claude cache-control flag on the startup capability probe", () => {
+    expect(CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_MINIMUM_VERSION).toBe("2.1.98");
+    expect(supportsClaudeDynamicSystemPromptSections("Claude Code 2.1.97")).toBe(false);
+    expect(supportsClaudeDynamicSystemPromptSections("Claude Code 2.1.98")).toBe(true);
+    expect(supportsClaudeDynamicSystemPromptSections("unparseable")).toBe(false);
+
+    const unsupported = buildAnthropicCliBackend({
+      supportsDynamicSystemPromptSections: () => false,
+    });
+    const supported = buildAnthropicCliBackend({
+      supportsDynamicSystemPromptSections: () => true,
+    });
+    const context = {
+      workspaceDir: "/tmp",
+      provider: "claude-cli",
+      modelId: "claude-haiku-4-5",
+      useResume: false,
+      baseArgs: unsupported.config.args,
+    };
+
+    expect(unsupported.config.args).not.toContain(
+      CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
+    );
+    expect(unsupported.resolveExecutionArgs?.(context)).not.toContain(
+      CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
+    );
+    expect(supported.resolveExecutionArgs?.(context)).toContain(
+      CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
+    );
+  });
+
+  it("probes Claude Code once at gateway startup, never while resolving turn args", async () => {
+    const runCommandWithTimeout = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: "2.1.98 (Claude Code)",
+      stderr: "",
+    });
+    const registerCliBackend = vi.fn();
+    const registerHook = vi.fn();
+    const api = {
+      pluginConfig: { sessionCatalog: { enabled: false } },
+      runtime: { system: { runCommandWithTimeout } },
+      registerCliBackend,
+      registerHook,
+      registerProvider: vi.fn(),
+      registerMediaUnderstandingProvider: vi.fn(),
+      registerNodeInvokePolicy: vi.fn(),
+    };
+
+    registerAnthropicPlugin(api as unknown as Parameters<typeof registerAnthropicPlugin>[0]);
+    const backend = registerCliBackend.mock.calls[0]?.[0] as ReturnType<
+      typeof buildAnthropicCliBackend
+    >;
+    const startup = registerHook.mock.calls.find(([event]) => event === "gateway:startup")?.[1] as
+      | (() => Promise<void>)
+      | undefined;
+    expect(startup).toBeTypeOf("function");
+    expect(runCommandWithTimeout).not.toHaveBeenCalled();
+
+    await startup?.();
+    expect(runCommandWithTimeout).toHaveBeenCalledOnce();
+    expect(runCommandWithTimeout).toHaveBeenCalledWith(
+      ["claude", "--version"],
+      expect.objectContaining({ timeoutMs: 1_500 }),
+    );
+    expect(
+      backend.resolveExecutionArgs?.({
+        workspaceDir: "/tmp",
+        provider: "claude-cli",
+        modelId: "claude-haiku-4-5",
+        useResume: false,
+        baseArgs: backend.config.args,
+      }),
+    ).toContain(CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG);
+    expect(runCommandWithTimeout).toHaveBeenCalledOnce();
+  });
+
   it("leaves claude cli subscription-managed, restricts setting sources, and clears inherited env overrides", () => {
     const backend = buildAnthropicCliBackend();
 
@@ -774,11 +853,13 @@ describe("normalizeClaudeBackendConfig", () => {
     expect(backend.nativeToolMode).toBe("selectable");
     expect(backend.config.args).toContain("--setting-sources");
     expect(backend.config.args).toContain("user");
-    expect(backend.config.args).toContain(CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG);
+    expect(backend.config.args).not.toContain(CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG);
     expectDefaultDisallowedTools(backend.config.args);
     expect(backend.config.resumeArgs).toContain("--setting-sources");
     expect(backend.config.resumeArgs).toContain("user");
-    expect(backend.config.resumeArgs).toContain(CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG);
+    expect(backend.config.resumeArgs).not.toContain(
+      CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
+    );
     expectDefaultDisallowedTools(backend.config.resumeArgs);
     expect(backend.config.clearEnv).toEqual([...CLAUDE_CLI_CLEAR_ENV]);
     expect(backend.config.clearEnv).toContain("ANTHROPIC_API_TOKEN");

@@ -18,7 +18,6 @@ import {
   CLAUDE_CLI_CLEAR_ENV,
   CLAUDE_CLI_MODEL_ALIASES,
   CLAUDE_CLI_SESSION_ID_FIELDS,
-  CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
   normalizeClaudeBackendConfig,
   resolveClaudeCliAutoCompactEnv,
   resolveClaudeCliExecutionArgs,
@@ -116,7 +115,11 @@ function resolveClaudeCliAuthInput(
 }
 
 /** Build the Claude CLI backend plugin descriptor. */
-export function buildAnthropicCliBackend(): CliBackendPlugin {
+export function buildAnthropicCliBackend(
+  options: {
+    supportsDynamicSystemPromptSections?: () => boolean;
+  } = {},
+): CliBackendPlugin {
   return {
     id: CLAUDE_CLI_BACKEND_ID,
     modelProvider: "anthropic",
@@ -196,7 +199,6 @@ export function buildAnthropicCliBackend(): CliBackendPlugin {
         "stream-json",
         "--include-partial-messages",
         "--verbose",
-        CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
         "--setting-sources",
         "user",
         "--allowedTools",
@@ -210,7 +212,6 @@ export function buildAnthropicCliBackend(): CliBackendPlugin {
         "stream-json",
         "--include-partial-messages",
         "--verbose",
-        CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG,
         "--setting-sources",
         "user",
         "--allowedTools",
@@ -274,6 +275,9 @@ export function buildAnthropicCliBackend(): CliBackendPlugin {
         : undefined;
     },
     parseJsonlEvent: parseClaudeCliJsonlEvent,
-    resolveExecutionArgs: resolveClaudeCliExecutionArgs,
+    resolveExecutionArgs: (context) =>
+      resolveClaudeCliExecutionArgs(context, {
+        excludeDynamicSystemPromptSections: options.supportsDynamicSystemPromptSections?.(),
+      }),
   };
 }

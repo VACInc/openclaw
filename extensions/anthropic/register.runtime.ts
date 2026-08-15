@@ -57,6 +57,7 @@ import {
   CLAUDE_CLI_BACKEND_ID,
   CLAUDE_CLI_DEFAULT_ALLOWLIST_REFS,
   CLAUDE_CLI_OFF_THINKING_PROFILE,
+  supportsClaudeDynamicSystemPromptSections,
 } from "./cli-shared.js";
 import {
   applyAnthropicConfigDefaults,
@@ -1198,7 +1199,27 @@ export function buildAnthropicProvider(): ProviderPlugin {
 
 /** Register Anthropic provider, Claude CLI backend, and media understanding provider. */
 export function registerAnthropicPlugin(api: OpenClawPluginApi): void {
-  api.registerCliBackend(buildAnthropicCliBackend());
+  let supportsDynamicSystemPromptSections = false;
+  api.registerCliBackend(
+    buildAnthropicCliBackend({
+      supportsDynamicSystemPromptSections: () => supportsDynamicSystemPromptSections,
+    }),
+  );
+  api.registerHook(
+    "gateway:startup",
+    async () => {
+      const result = await api.runtime.system
+        .runCommandWithTimeout(["claude", "--version"], {
+          timeoutMs: 1_500,
+          killProcessTree: true,
+          maxOutputBytes: { stdout: 1_024, stderr: 1_024 },
+        })
+        .catch(() => undefined);
+      supportsDynamicSystemPromptSections =
+        result?.code === 0 && supportsClaudeDynamicSystemPromptSections(result.stdout);
+    },
+    { name: "anthropic-claude-cli-cache-control" },
+  );
   api.registerProvider(buildAnthropicProvider());
   api.registerMediaUnderstandingProvider(anthropicMediaUnderstandingProvider);
   registerClaudeSessionDiscovery(api);

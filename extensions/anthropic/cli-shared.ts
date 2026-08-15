@@ -70,6 +70,9 @@ const CLAUDE_PERMISSION_MODE_ARG = "--permission-mode";
 const CLAUDE_SETTING_SOURCES_ARG = "--setting-sources";
 export const CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG =
   "--exclude-dynamic-system-prompt-sections";
+// Claude Code 2.1.98 added this print-mode cache-control flag. Keep older
+// installations on their established argv when the startup probe cannot prove it.
+export const CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_MINIMUM_VERSION = "2.1.98";
 const CLAUDE_SETTINGS_ARG = "--settings";
 const CLAUDE_EFFORT_ARG = "--effort";
 const CLAUDE_BARE_ARG = "--bare";
@@ -131,6 +134,29 @@ export function resolveClaudeCliAutoCompactEnv(
   return {
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(normalizedBudget),
   };
+}
+
+/** Return whether the startup-probed Claude Code build supports the cache-control flag. */
+export function supportsClaudeDynamicSystemPromptSections(
+  versionOutput: string | undefined,
+): boolean {
+  const match = versionOutput?.match(/(?:^|\D)(\d+)\.(\d+)\.(\d+)(?:\D|$)/u);
+  if (!match) {
+    return false;
+  }
+  const version = match.slice(1).map(Number);
+  const minimum =
+    CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_MINIMUM_VERSION.split(".").map(Number);
+  for (const [index, component] of version.entries()) {
+    const minimumComponent = minimum[index];
+    if (component === undefined || minimumComponent === undefined) {
+      return false;
+    }
+    if (component !== minimumComponent) {
+      return component > minimumComponent;
+    }
+  }
+  return true;
 }
 
 function isOpenClawRequestedYolo(context?: CliBackendNormalizeConfigContext): boolean {
@@ -464,6 +490,7 @@ function resolveClaudeCliRestrictedExecutionArgs(
 /** Resolve final Claude CLI execution args for one backend invocation. */
 export function resolveClaudeCliExecutionArgs(
   context: CliBackendResolveExecutionArgsContext,
+  options: { excludeDynamicSystemPromptSections?: boolean } = {},
 ): string[] {
   const executionArgs = (() => {
     if (context.executionMode === "side-question") {
@@ -481,10 +508,12 @@ export function resolveClaudeCliExecutionArgs(
         return action satisfies never;
     }
   })();
-  if (!context.toolAvailability) {
-    return executionArgs;
-  }
-  return resolveClaudeCliRestrictedExecutionArgs(executionArgs, context.toolAvailability);
+  const resolvedArgs = context.toolAvailability
+    ? resolveClaudeCliRestrictedExecutionArgs(executionArgs, context.toolAvailability)
+    : executionArgs;
+  return options.excludeDynamicSystemPromptSections && context.executionMode !== "side-question"
+    ? [...resolvedArgs, CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG]
+    : resolvedArgs;
 }
 
 /** Normalize Claude CLI backend config before registration or execution. */

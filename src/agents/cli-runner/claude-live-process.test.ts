@@ -118,7 +118,7 @@ describe("Claude live configured exec policy", () => {
 });
 
 describe("Claude live process", () => {
-  it("keeps a reused Claude live session cached when only dynamic prompt context changes", async () => {
+  it("keeps moved dynamic guidance visible on fresh and resumed Claude live turns", async () => {
     let userTurn = 0;
     const live = mockClaudeLiveRun(supervisorSpawnMock, {
       onWrite: ({ data, emit }) => {
@@ -140,6 +140,7 @@ describe("Claude live process", () => {
     const backend = {
       resumeArgs: ["-p", "--output-format", "stream-json", "--resume={sessionId}"],
       liveSession: "claude-stdio" as const,
+      systemPromptMode: "append" as const,
       systemPromptWhen: "always" as const,
     };
 
