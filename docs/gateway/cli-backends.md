@@ -225,20 +225,24 @@ Anthropic owns `claude-cli` and Google owns `google-gemini-cli`. OpenAI Codex ag
 
 The bundled Anthropic plugin registers for `claude-cli`:
 
-| Key                      | Value                                                                                                                                                                                                                                                  |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `command`                | `claude`                                                                                                                                                                                                                                               |
-| `args`                   | `-p --output-format stream-json --include-partial-messages --verbose --exclude-dynamic-system-prompt-sections --setting-sources user --allowedTools mcp__openclaw__* --disallowedTools ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor` |
-| `output`                 | `jsonl`                                                                                                                                                                                                                                                |
-| `input`                  | `stdin`                                                                                                                                                                                                                                                |
-| `modelArg`               | `--model`                                                                                                                                                                                                                                              |
-| `sessionArgs`            | `["--session-id", "{sessionId}"]`                                                                                                                                                                                                                      |
-| `sessionMode`            | `always`                                                                                                                                                                                                                                               |
-| live-session requirement | `msg_lifecycle_v1` (first observed in Claude Code 2.1.206)                                                                                                                                                                                             |
-| `imageArg`               | `@`                                                                                                                                                                                                                                                    |
-| `imagePathScope`         | `workspace`                                                                                                                                                                                                                                            |
-| `systemPromptFileArg`    | `--append-system-prompt-file`                                                                                                                                                                                                                          |
-| `systemPromptMode`       | `append`                                                                                                                                                                                                                                               |
+| Key                      | Value                                                                                                                                                                                                         |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `command`                | `claude`                                                                                                                                                                                                      |
+| `args`                   | `-p --output-format stream-json --include-partial-messages --verbose --setting-sources user --allowedTools mcp__openclaw__* --disallowedTools ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor` |
+| `output`                 | `jsonl`                                                                                                                                                                                                       |
+| `input`                  | `stdin`                                                                                                                                                                                                       |
+| `modelArg`               | `--model`                                                                                                                                                                                                     |
+| `sessionArgs`            | `["--session-id", "{sessionId}"]`                                                                                                                                                                             |
+| `sessionMode`            | `always`                                                                                                                                                                                                      |
+| live-session requirement | `msg_lifecycle_v1` (first observed in Claude Code 2.1.206)                                                                                                                                                    |
+| `imageArg`               | `@`                                                                                                                                                                                                           |
+| `imagePathScope`         | `workspace`                                                                                                                                                                                                   |
+| `systemPromptFileArg`    | `--append-system-prompt-file`                                                                                                                                                                                 |
+| `systemPromptMode`       | `append`                                                                                                                                                                                                      |
+
+On Claude Code 2.1.98 or newer, the bundled backend adds
+`--exclude-dynamic-system-prompt-sections` after its bounded Gateway-startup
+version probe. Older, unknown, or failed probes keep the established argv.
 
 The bundled Google plugin registers for `google-gemini-cli`:
 

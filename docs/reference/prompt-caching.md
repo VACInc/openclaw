@@ -121,7 +121,7 @@ Source: `src/agents/embedded-agent-runner/google-prompt-cache.ts`.
 
 CLI backends that emit JSONL usage events (`jsonlDialect: "claude-stream-json"` or `"gemini-stream-json"`) go through a shared usage parser that recognizes several field-name variants, including a plain `cached` counter mapped to `cacheRead`. When the CLI's JSON payload omits a direct input-token field, OpenClaw derives it as `input_tokens - cached`. This is usage normalization only - it does not create Anthropic/OpenAI-style prompt-cache markers for these CLI-driven models.
 
-Claude Code has no `cache_control` breakpoint on `--append-system-prompt-file`. OpenClaw therefore writes only the stable system-prompt prefix to that file and prepends the volatile suffix to the user turn. Bundled `claude-cli` also passes `--exclude-dynamic-system-prompt-sections` so Claude's own cwd/env/git-status block stays off the native system prefix. `cacheRetention` still has no effect on this path.
+Claude Code has no `cache_control` breakpoint on `--append-system-prompt-file`. OpenClaw therefore writes only the stable system-prompt prefix to that file and prepends the volatile suffix to the user turn. When the bounded Gateway-startup probe finds Claude Code 2.1.98 or newer, bundled `claude-cli` also passes `--exclude-dynamic-system-prompt-sections` so Claude's own cwd/env/git-status block stays off the native system prefix; an older, unknown, or failed probe keeps the established argv. `cacheRetention` still has no effect on this path.
 
 Source: `src/agents/cli-output.ts` (`toCliUsage`).
 
