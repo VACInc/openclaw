@@ -843,6 +843,41 @@ describe("normalizeClaudeBackendConfig", () => {
     expect(runCommandWithTimeout).toHaveBeenCalledOnce();
   });
 
+  it("keeps the established argv when the startup version probe fails", async () => {
+    const runCommandWithTimeout = vi.fn().mockRejectedValue(new Error("claude is unavailable"));
+    const registerCliBackend = vi.fn();
+    const registerHook = vi.fn();
+    const api = {
+      pluginConfig: { sessionCatalog: { enabled: false } },
+      runtime: { system: { runCommandWithTimeout } },
+      registerCliBackend,
+      registerHook,
+      registerProvider: vi.fn(),
+      registerMediaUnderstandingProvider: vi.fn(),
+      registerNodeInvokePolicy: vi.fn(),
+    };
+
+    registerAnthropicPlugin(api as unknown as Parameters<typeof registerAnthropicPlugin>[0]);
+    const backend = registerCliBackend.mock.calls[0]?.[0] as ReturnType<
+      typeof buildAnthropicCliBackend
+    >;
+    const startup = registerHook.mock.calls.find(([event]) => event === "gateway:startup")?.[1] as
+      | (() => Promise<void>)
+      | undefined;
+
+    await startup?.();
+    expect(runCommandWithTimeout).toHaveBeenCalledOnce();
+    expect(
+      backend.resolveExecutionArgs?.({
+        workspaceDir: "/tmp",
+        provider: "claude-cli",
+        modelId: "claude-haiku-4-5",
+        useResume: false,
+        baseArgs: backend.config.args,
+      }),
+    ).not.toContain(CLAUDE_EXCLUDE_DYNAMIC_SYSTEM_PROMPT_SECTIONS_ARG);
+  });
+
   it("leaves claude cli subscription-managed, restricts setting sources, and clears inherited env overrides", () => {
     const backend = buildAnthropicCliBackend();
 

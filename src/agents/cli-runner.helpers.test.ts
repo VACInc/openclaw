@@ -284,6 +284,8 @@ describe("buildCliArgs", () => {
   });
 
   it("strips the internal cache boundary from CLI system prompt args", () => {
+    // The boundary is internal prompt-cache metadata and must never reach the
+    // downstream CLI as literal text.
     expect(
       buildCliArgs({
         backend: {
@@ -690,7 +692,7 @@ describe("writeCliImages", () => {
 });
 
 describe("writeCliSystemPromptFile", () => {
-  it("writes marker-free system prompts to a private temp file", async () => {
+  it("writes stripped system prompts to a private temp file", async () => {
     const written = await writeCliSystemPromptFile({
       backend: {
         command: "codex",

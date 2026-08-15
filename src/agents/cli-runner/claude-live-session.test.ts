@@ -307,6 +307,78 @@ describe("runClaudeTurn", () => {
     expect(supervisorSpawnMock).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    {
+      name: "ignores the system_prompt field",
+      responses: [{ subtype: "success" }],
+    },
+    {
+      name: "rejects the live refresh",
+      responses: [
+        {
+          subtype: "error",
+          error: "set_model: system_prompt must be a non-empty string when present",
+        },
+        { subtype: "error", error: "unsupported" },
+      ],
+    },
+  ])("restarts when Claude $name", async ({ responses }) => {
+    let controlRequest = 0;
+    mockClaudeLiveRun(supervisorSpawnMock, {
+      cancelable: true,
+      onWrite: ({ data, emit }) => {
+        const parsed = JSON.parse(data) as { type: string; request_id?: string };
+        if (parsed.type === "control_request") {
+          const response = responses[controlRequest];
+          controlRequest += 1;
+          emit([
+            {
+              type: "control_response",
+              response: {
+                request_id: parsed.request_id,
+                ...response,
+              },
+            },
+          ]);
+          return;
+        }
+        emit([
+          { type: "system", subtype: "init", session_id: "live-rejected-prompt" },
+          { type: "result", session_id: "live-rejected-prompt", result: "one" },
+        ]);
+      },
+    });
+    mockClaudeLiveRun(supervisorSpawnMock, {
+      events: [
+        { type: "system", subtype: "init", session_id: "live-rejected-prompt" },
+        { type: "result", session_id: "live-rejected-prompt", result: "two" },
+      ],
+    });
+    const backend = {
+      resumeArgs: ["-p", "--output-format", "stream-json", "--resume={sessionId}"],
+      liveSession: "claude-stdio" as const,
+      systemPromptWhen: "always" as const,
+    };
+
+    await executePreparedCliRun(
+      buildPreparedCliRunContext({
+        backend,
+        systemPrompt: `Stable instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}First metadata`,
+      }),
+    );
+    const second = await executePreparedCliRun(
+      buildPreparedCliRunContext({
+        backend,
+        systemPrompt: `Stable instructions${SYSTEM_PROMPT_CACHE_BOUNDARY}Second metadata`,
+      }),
+      "live-rejected-prompt",
+    );
+
+    expect(second.text).toBe("two");
+    expect(supervisorSpawnMock).toHaveBeenCalledTimes(2);
+    expect(controlRequest).toBe(responses.length);
+  });
+
   it("restarts on marker-free prompt changes instead of weakening prompt identity", async () => {
     mockClaudeLiveRun(supervisorSpawnMock, {
       events: [
