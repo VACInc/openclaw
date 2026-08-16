@@ -367,7 +367,7 @@ function collectQueuedPromptMedia(
       imageOrder.push(...item.imageOrder);
     }
     if (currentTurnImagesPrepared) {
-      const itemSlots =
+      const itemSlots: MediaImageLayout["slots"] =
         internalItem.mediaImageLayout?.slots ?? item.imageOrder?.map((kind) => ({ kind })) ?? [];
       mediaImageSlots.push(
         ...itemSlots.map((slot) => ({
