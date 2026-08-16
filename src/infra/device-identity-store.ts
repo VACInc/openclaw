@@ -1,6 +1,5 @@
 // Canonical SQLite storage for gateway/device Ed25519 identities.
 import crypto from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
 import { asSafeIntegerInRange } from "@openclaw/normalization-core/number-coercion";
 import type { Insertable, Selectable } from "kysely";
