@@ -524,13 +524,6 @@ function loadStoredOperatorDeviceAuthToken(
   }
 }
 
-function hasStoredOperatorDeviceAuthToken(
-  deviceIdentity: DeviceIdentity | null,
-  deviceAuthScope?: string,
-): boolean {
-  return Boolean(loadStoredOperatorDeviceAuthToken(deviceIdentity, deviceAuthScope)?.token);
-}
-
 function resolveGatewayCallAuth(config: OpenClawConfig) {
   return resolveGatewayAuth({
     authConfig: config.gateway?.auth,
@@ -562,7 +555,13 @@ function ensureGatewayCallCanAuthenticate(params: {
   const hasStoredAuth =
     params.storedAuth !== undefined
       ? Boolean(params.storedAuth?.token)
-      : hasStoredOperatorDeviceAuthToken(params.deviceIdentity, params.deviceAuthScope);
+      : Boolean(
+          loadStoredOperatorDeviceAuthToken(
+            params.deviceIdentity,
+            params.deviceAuthScope,
+            params.opts.sharedStateMode,
+          )?.token,
+        );
   if (hasStoredAuth) {
     return;
   }
