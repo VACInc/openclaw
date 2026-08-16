@@ -370,10 +370,11 @@ function collectQueuedPromptMedia(
       const itemSlots: MediaImageLayout["slots"] =
         internalItem.mediaImageLayout?.slots ?? item.imageOrder?.map((kind) => ({ kind })) ?? [];
       mediaImageSlots.push(
-        ...itemSlots.map((slot) => ({
-          kind: slot.kind,
-          ...(slot.factIndex === undefined ? {} : { factIndex: slot.factIndex + mediaOffset }),
-        })),
+        ...itemSlots.map((slot) =>
+          slot.factIndex === undefined
+            ? { kind: slot.kind }
+            : { kind: slot.kind, factIndex: slot.factIndex + mediaOffset },
+        ),
       );
       suppressedFactIndexes.push(
         ...(internalItem.mediaImageLayout?.suppressedFactIndexes ?? []).map(
