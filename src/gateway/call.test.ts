@@ -49,7 +49,7 @@ const deviceIdentityState = vi.hoisted(() => ({
   throwOnLoad: false,
 }));
 const loadOrCreateDeviceIdentityMock = vi.hoisted(() => vi.fn());
-const loadDeviceIdentityIfPresentMock = vi.hoisted(() => vi.fn());
+const loadDeviceIdentityIfPresentReadOnlyMock = vi.hoisted(() => vi.fn());
 const loadDeviceAuthTokenMock = vi.hoisted(() =>
   vi.fn<(...args: unknown[]) => DeviceAuthEntry | null>(() => null),
 );
@@ -142,8 +142,8 @@ vi.mock("../infra/device-identity.js", async (importOriginal) => {
       }
       return deviceIdentityState.value;
     },
-    loadDeviceIdentityIfPresent: () => {
-      loadDeviceIdentityIfPresentMock();
+    loadDeviceIdentityIfPresentReadOnly: () => {
+      loadDeviceIdentityIfPresentReadOnlyMock();
       if (deviceIdentityState.throwOnLoad) {
         throw new Error("read-only identity dir");
       }
@@ -340,7 +340,7 @@ function resetGatewayCallMocks() {
   gatewayClientStopAndWait = async () => {};
   deviceIdentityState.throwOnLoad = false;
   loadOrCreateDeviceIdentityMock.mockReset();
-  loadDeviceIdentityIfPresentMock.mockReset();
+  loadDeviceIdentityIfPresentReadOnlyMock.mockReset();
   loadDeviceAuthTokenMock.mockReset();
   loadDeviceAuthTokenMock.mockReturnValue({
     token: "paired-device-token",
@@ -1016,7 +1016,8 @@ describe("callGateway url resolution", () => {
     });
 
     expect(lastClientOptions?.deviceIdentity).toEqual(deviceIdentityState.value);
-    expect(loadDeviceIdentityIfPresentMock).toHaveBeenCalledOnce();
+    expect(lastClientOptions?.sharedStateMode).toBe("read-only");
+    expect(loadDeviceIdentityIfPresentReadOnlyMock).toHaveBeenCalledOnce();
     expect(loadOrCreateDeviceIdentityMock).not.toHaveBeenCalled();
     expect(loadOriginDeviceTokenReadOnlyMock).toHaveBeenCalledWith({
       gatewayScope: "wss://remote.example:18789",
