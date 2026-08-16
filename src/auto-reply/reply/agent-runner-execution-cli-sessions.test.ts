@@ -128,11 +128,10 @@ describe("executeAgentTurn: CLI session routing", () => {
     const followupRun = createFollowupRun();
     followupRun.run.provider = "claude-cli";
     followupRun.run.model = "claude-opus-5";
-    const preparedFollowupRun =
-      followupRun as typeof followupRun & {
-        currentTurnImagesPrepared?: true;
-        mediaImageLayout?: typeof mediaImageLayout;
-      };
+    const preparedFollowupRun = followupRun as typeof followupRun & {
+      currentTurnImagesPrepared?: true;
+      mediaImageLayout?: typeof mediaImageLayout;
+    };
     preparedFollowupRun.currentTurnImagesPrepared = true;
     preparedFollowupRun.mediaImageLayout = mediaImageLayout;
     followupRun.images = images;

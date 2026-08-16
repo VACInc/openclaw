@@ -693,13 +693,12 @@ describe("runCliAgent spawn path", () => {
         execNode: "node-a",
       },
     });
-    const preparedParams =
-      context.params as typeof context.params & {
-        mediaImageLayout?: {
-          slots: Array<{ kind: "inline" | "offloaded"; factIndex?: number }>;
-          suppressedFactIndexes: number[];
-        };
+    const preparedParams = context.params as typeof context.params & {
+      mediaImageLayout?: {
+        slots: Array<{ kind: "inline" | "offloaded"; factIndex?: number }>;
+        suppressedFactIndexes: number[];
       };
+    };
     preparedParams.mediaImageLayout = {
       slots: [{ kind: "offloaded", factIndex: 0 }],
       suppressedFactIndexes: [],
