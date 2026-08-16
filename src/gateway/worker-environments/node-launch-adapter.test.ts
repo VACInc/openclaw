@@ -48,7 +48,6 @@ function launchInput(): NodeWorkerLaunchInput {
   return {
     launchId: "turn-1",
     gatewayNamespace: "gateway-1",
-    installKind: "local",
     expectedBundleHash: WORKER_RUNS.bundleHash,
     placementGeneration: 4,
     descriptor: {
@@ -119,7 +118,7 @@ function transportWith(
   invoke: NodeWorkerSupervisorTransport["invoke"],
   listCurrentNodes: NodeWorkerSupervisorTransport["listCurrentNodes"] = async () => [nodeProof()],
 ): NodeWorkerSupervisorTransport {
-  return { invoke, listCurrentNodes };
+  return { invoke, isCurrent: () => true, listCurrentNodes };
 }
 
 function launchRequest(input = launchInput()) {
@@ -138,14 +137,12 @@ describe("node worker launch adapter", () => {
     const onDispatchReady = vi.fn();
     const adapter = createNodeWorkerLaunchAdapter({
       getTransport: () => transportWith(vi.fn(), async () => []),
-      availabilityTimeoutMs: 100,
-      pollIntervalMs: 10,
     });
     try {
       const launch = adapter
-        .launch({ ...launchRequest(), timeoutMs: 1_000, onDispatchReady })
+        .launch({ ...launchRequest(), timeoutMs: 30_000, onDispatchReady })
         .catch((error: unknown) => error);
-      await vi.advanceTimersByTimeAsync(100);
+      await vi.runAllTimersAsync();
 
       expect(await launch).toMatchObject({
         name: "WorkerRunnerUnavailableError",

@@ -232,6 +232,8 @@ export async function ensureConfigReady(
   const commandPath = params.commandPath ?? [];
   const commandName = commandPath[0];
   const subcommandName = commandPath[1];
+  const isRestartController =
+    (commandName === "gateway" || commandName === "daemon") && subcommandName === "restart";
   let preflightSnapshot: Awaited<ReturnType<typeof readConfigFileSnapshot>> | null = null;
   const shouldConsiderStateMigration =
     !params.validateConfigOnly &&
@@ -241,6 +243,9 @@ export async function ensureConfigReady(
     commandName !== "sessions" &&
     // Remote RPC clients must not migrate state owned by the running gateway.
     !(commandName === "gateway" && subcommandName === "call") &&
+    // A newer restart client may be controlling an older live Gateway. Validate
+    // config without advancing the persistent schema owned by that process.
+    !isRestartController &&
     !(commandName === "update" && subcommandName === "status");
   const requiresLegacyStateInput = shouldRunStateMigrationOnlyWithLegacyInputs(commandPath);
   const runStateMigrationPreflight = async () => {
@@ -291,7 +296,9 @@ export async function ensureConfigReady(
     ? ({ observe: false, skipPluginValidation: true } as const)
     : commandName === "logs"
       ? ({ observe: false, skipPluginValidation: true } as const)
-      : commandName === "status" || (commandName === "gateway" && subcommandName === "call")
+      : commandName === "status" ||
+          (commandName === "gateway" && subcommandName === "call") ||
+          isRestartController
         ? ({ observe: false } as const)
         : undefined;
   let snapshot =
