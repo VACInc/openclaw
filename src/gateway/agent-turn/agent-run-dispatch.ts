@@ -12,6 +12,7 @@ import { isTimeoutError } from "../../agents/failover-error.js";
 import type { MainSessionRecoveryPendingTarget } from "../../agents/main-session-recovery/main-session-recovery-store.js";
 import { isAgentRunRestartAbortReason } from "../../agents/run-termination.js";
 import { normalizeAgentRunTimeoutPhase } from "../../agents/run-timeout-attribution.js";
+import { readAgentRunTerminalOutcome } from "../../channels/turn/agent-run-terminal-outcome.js";
 import { agentCommandFromGatewayIngress } from "../../commands/agent.js";
 import { isAbortError } from "../../infra/abort-signal.js";
 import { clearAgentRunContext } from "../../infra/agent-run-registry.js";
@@ -172,7 +173,10 @@ export function dispatchAgentRunFromGateway(params: {
     }
   };
   const cronCreatorAuthorityCapability = params.cronCreatorAuthority
-    ? createCronCreatorAuthorityCapability(params.cronCreatorAuthority.runId)
+    ? createCronCreatorAuthorityCapability(
+        params.cronCreatorAuthority.runId,
+        params.cronCreatorAuthority.callerOrigin,
+      )
     : undefined;
   const runAgent = () =>
     agentCommandFromGatewayIngress(
@@ -194,6 +198,7 @@ export function dispatchAgentRunFromGateway(params: {
     : runAgent();
   void agentRun
     .then(async (result) => {
+      const recordedOutcome = readAgentRunTerminalOutcome(result);
       const signalStopReason = resolveResolvedAgentTimeoutStopReason(
         result?.meta,
         params.abortController.signal,
@@ -209,7 +214,9 @@ export function dispatchAgentRunFromGateway(params: {
         status:
           aborted || result?.meta?.stopReason === "timeout" || timeoutPhase
             ? "timeout"
-            : result?.meta?.error || result?.meta?.stopReason === "error"
+            : recordedOutcome === "failed" ||
+                result?.meta?.error ||
+                result?.meta?.stopReason === "error"
               ? "error"
               : "ok",
         error: result?.meta?.error,

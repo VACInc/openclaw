@@ -11,6 +11,7 @@ import { property } from "lit/decorators.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import { t } from "../../i18n/index.ts";
 import { OpenClawLitElement } from "../../lit/openclaw-element.ts";
+import { scrollbarShadowStyles } from "../../lit/scrollbar-styles.ts";
 import { DockLayoutController, dockPanelStyles } from "../dock-layout-controller.ts";
 import { createDockPanelLayout } from "../dock-panel-layout.ts";
 import { panelTabStripStyles } from "../panel-tab-strip.ts";
@@ -56,8 +57,23 @@ class OpenClawBrowserPanel extends OpenClawLitElement implements BrowserPanelCon
     isAvailable: () => this.available,
   });
   private readonly onToggleRequest = (event: Event) => this.handleToggleRequest(event);
+  private readonly viewportResizeObserver = new ResizeObserver((entries) => {
+    const entry = entries[0];
+    if (entry) {
+      this.browserPanelController.handleViewportResize(
+        entry.contentRect.width,
+        entry.contentRect.height,
+      );
+    }
+  });
+  private observedViewportElement: Element | null = null;
 
-  static override styles = [panelTabStripStyles, dockPanelStyles, browserPanelStyles];
+  static override styles = [
+    panelTabStripStyles,
+    dockPanelStyles,
+    browserPanelStyles,
+    scrollbarShadowStyles,
+  ];
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -73,6 +89,8 @@ class OpenClawBrowserPanel extends OpenClawLitElement implements BrowserPanelCon
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     window.removeEventListener(BROWSER_PANEL_TOGGLE_EVENT, this.onToggleRequest);
+    this.viewportResizeObserver.disconnect();
+    this.observedViewportElement = null;
   }
 
   override updated(changed: Map<string, unknown>): void {
@@ -94,6 +112,15 @@ class OpenClawBrowserPanel extends OpenClawLitElement implements BrowserPanelCon
     }
     this.dockLayout.syncReservation();
     this.browserPanelController.paintOverlay();
+    const viewportElement = this.renderRoot.querySelector(".bp-viewport");
+    if (viewportElement !== this.observedViewportElement) {
+      // The viewport is transient while the dock opens, closes, or becomes unavailable.
+      this.viewportResizeObserver.disconnect();
+      this.observedViewportElement = viewportElement;
+      if (viewportElement) {
+        this.viewportResizeObserver.observe(viewportElement);
+      }
+    }
   }
 
   browserPanelIsOpen(): boolean {
