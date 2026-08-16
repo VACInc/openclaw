@@ -1,8 +1,5 @@
 // Tests media-only get-reply runs and sandboxed media attachment handling.
 import { expectDefined } from "@openclaw/normalization-core";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "../../config/sessions.js";
 import { withSystemEventOwner } from "../../infra/system-event-ownership.js";
@@ -494,8 +491,6 @@ function requireLastRunReplyAgentCall() {
 }
 
 describe("runPreparedReply media-only handling", () => {
-  const cleanupPaths: string[] = [];
-
   beforeAll(async () => {
     // Preload the runtime seams directly so test setup does not need a synthetic
     // reply turn with registry and session side effects.
@@ -524,11 +519,6 @@ describe("runPreparedReply media-only handling", () => {
   afterEach(async () => {
     vi.useRealTimers();
     resetSystemEventsForTest();
-    await Promise.all(
-      cleanupPaths.splice(0).map((cleanupPath) =>
-        rm(cleanupPath, { recursive: true, force: true }),
-      ),
-    );
     expect(preparedReplyMockState.unexpectedCalls).toEqual([]);
   });
 
@@ -1915,22 +1905,24 @@ describe("runPreparedReply media-only handling", () => {
   });
 
   it("indexes the runtime image layout against filtered prompt media", async () => {
-    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-followup-image-"));
-    cleanupPaths.push(tmpDir);
     const imageData = Buffer.from("runtime image bytes");
-    const imagePath = path.join(tmpDir, "current.png");
-    await writeFile(imagePath, imageData);
+    const imagePath = "/tmp/current.png";
+    resolveCurrentTurnImagesMock.mockResolvedValueOnce({
+      images: [{ type: "image", data: imageData.toString("base64"), mimeType: "image/png" }],
+      imageOrder: ["inline"],
+      imageSourceIndexes: [1],
+    });
 
     const result = await runPrepared({
       ctx: {
         ...createInboundBody("describe the image"),
         media: [
           {
-            path: path.join(tmpDir, "voice.ogg"),
+            path: "/tmp/voice.ogg",
             contentType: "audio/ogg",
             transcribed: true,
           },
-          { path: imagePath, contentType: "image/png", workspaceDir: tmpDir },
+          { path: imagePath, contentType: "image/png", workspaceDir: "/tmp" },
         ],
         OriginatingChannel: "webchat",
         OriginatingTo: "webchat:local",
@@ -1951,7 +1943,7 @@ describe("runPreparedReply media-only handling", () => {
     expect(call.followupRun.media?.[0]).toMatchObject({
       path: imagePath,
       contentType: "image/png",
-      workspaceDir: tmpDir,
+      workspaceDir: "/tmp",
     });
     expect(call.followupRun.images).toEqual([
       {
