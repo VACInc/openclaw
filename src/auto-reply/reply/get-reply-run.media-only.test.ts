@@ -1,5 +1,8 @@
 // Tests media-only get-reply runs and sandboxed media attachment handling.
 import { expectDefined } from "@openclaw/normalization-core";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "../../config/sessions.js";
 import { withSystemEventOwner } from "../../infra/system-event-ownership.js";
@@ -491,6 +494,8 @@ function requireLastRunReplyAgentCall() {
 }
 
 describe("runPreparedReply media-only handling", () => {
+  const cleanupPaths: string[] = [];
+
   beforeAll(async () => {
     // Preload the runtime seams directly so test setup does not need a synthetic
     // reply turn with registry and session side effects.
@@ -519,6 +524,11 @@ describe("runPreparedReply media-only handling", () => {
   afterEach(async () => {
     vi.useRealTimers();
     resetSystemEventsForTest();
+    await Promise.all(
+      cleanupPaths.splice(0).map((cleanupPath) =>
+        rm(cleanupPath, { recursive: true, force: true }),
+      ),
+    );
     expect(preparedReplyMockState.unexpectedCalls).toEqual([]);
   });
 
