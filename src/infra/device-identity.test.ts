@@ -289,6 +289,19 @@ describe("device identity SQLite store", () => {
     });
   });
 
+  it("reads an existing identity without changing canonical SQLite artifacts", async () => {
+    await withTempDir("openclaw-device-identity-artifact-preserving-", async (rootDir) => {
+      const options = storeOptions(rootDir);
+      const created = loadOrCreateDeviceIdentity(options);
+      closeOpenClawStateDatabaseForTest();
+      const databaseDirectory = path.dirname(options.path!);
+      const artifactsBeforeRead = fs.readdirSync(databaseDirectory).toSorted();
+
+      expect(loadDeviceIdentityIfPresentReadOnly(options)).toEqual(created);
+      expect(fs.readdirSync(databaseDirectory).toSorted()).toEqual(artifactsBeforeRead);
+    });
+  });
+
   it("creates and reuses the primary identity in SQLite", async () => {
     await withTempDir("openclaw-device-identity-create-", async (rootDir) => {
       const options = storeOptions(rootDir);

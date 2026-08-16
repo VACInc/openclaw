@@ -190,7 +190,7 @@ function isGatewayStartupCommand(commandPath: string[]): boolean {
 }
 
 async function getConfigSnapshot(
-  options?: { observe: false; skipPluginValidation?: true },
+  options?: { observe: false; pluginValidation?: "skip" | "core-only" },
   measure?: ConfigSnapshotReadMeasure,
 ) {
   if (options?.observe === false) {
@@ -290,12 +290,12 @@ export async function ensureConfigReady(
     preflightSnapshot = await runStateMigrationPreflight();
   }
 
-  // Read-only diagnostics must not record config health; logs also skips plugin
-  // metadata discovery because opening the shared state DB creates SQLite sidecars.
+  // Read-only diagnostics must not record config health. Core-only validation
+  // also skips plugin metadata discovery, whose state reads create SQLite sidecars.
   const configSnapshotOptions = params.validateConfigOnly
-    ? ({ observe: false, skipPluginValidation: true } as const)
+    ? ({ observe: false, pluginValidation: "core-only" } as const)
     : commandName === "logs"
-      ? ({ observe: false, skipPluginValidation: true } as const)
+      ? ({ observe: false, pluginValidation: "core-only" } as const)
       : commandName === "status" ||
           (commandName === "gateway" && subcommandName === "call") ||
           isRestartController

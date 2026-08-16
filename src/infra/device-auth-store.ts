@@ -8,7 +8,7 @@ import {
   normalizeDeviceAuthRole,
   normalizeDeviceAuthScopes,
 } from "../shared/device-auth.js";
-import { withExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-state-db-readonly.js";
+import { withExistingOpenClawStateDatabaseArtifactPreservingReadOnly } from "../state/openclaw-state-db-readonly.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
   openOpenClawStateDatabase,
@@ -140,7 +140,7 @@ export function loadDeviceAuthTokenReadOnly(params: {
 }): DeviceAuthEntry | null {
   assertNoLegacyDeviceAuth(params.env);
   return (
-    withExistingOpenClawStateDatabaseReadOnly(
+    withExistingOpenClawStateDatabaseArtifactPreservingReadOnly(
       ({ db }) => {
         const row = executeSqliteQueryTakeFirstSync(
           db,
@@ -265,7 +265,7 @@ export function loadOriginDeviceTokenReadOnly(params: {
 }): DeviceAuthEntry | null {
   assertNoLegacyDeviceAuth(params.env);
   return (
-    withExistingOpenClawStateDatabaseReadOnly(
+    withExistingOpenClawStateDatabaseArtifactPreservingReadOnly(
       ({ db }) => {
         const row = executeSqliteQueryTakeFirstSync(
           db,

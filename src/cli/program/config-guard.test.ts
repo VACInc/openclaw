@@ -268,7 +268,7 @@ describe("ensureConfigReady", () => {
 
     expect(readConfigFileSnapshotMock).toHaveBeenCalledWith({
       observe: false,
-      skipPluginValidation: true,
+      pluginValidation: "core-only",
     });
   });
 
@@ -281,7 +281,7 @@ describe("ensureConfigReady", () => {
 
     expect(readConfigFileSnapshotMock).toHaveBeenCalledWith({
       observe: false,
-      skipPluginValidation: true,
+      pluginValidation: "core-only",
     });
     expect(loadAndMaybeMigrateDoctorConfigMock).not.toHaveBeenCalled();
   });
