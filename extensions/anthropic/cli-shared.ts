@@ -140,7 +140,9 @@ export function resolveClaudeCliAutoCompactEnv(
 export function supportsClaudeDynamicSystemPromptSections(
   versionOutput: string | undefined,
 ): boolean {
-  const match = versionOutput?.match(/(?:^|\D)(\d+)\.(\d+)\.(\d+)(?:\D|$)/u);
+  // Only stable version tokens prove flag support. A prerelease suffix could
+  // predate the stable release and turn every local invocation into an argv error.
+  const match = versionOutput?.match(/(?:^|\D)(\d+)\.(\d+)\.(\d+)(?=$|\s)/u);
   if (!match) {
     return false;
   }

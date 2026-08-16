@@ -768,6 +768,8 @@ describe("normalizeClaudeBackendConfig", () => {
   it("gates the Claude cache-control flag on the startup capability probe", () => {
     expect(supportsClaudeDynamicSystemPromptSections("Claude Code 2.1.97")).toBe(false);
     expect(supportsClaudeDynamicSystemPromptSections("Claude Code 2.1.98")).toBe(true);
+    expect(supportsClaudeDynamicSystemPromptSections("Claude Code 2.1.98-beta.1")).toBe(false);
+    expect(supportsClaudeDynamicSystemPromptSections("2.1.98 (Claude Code)")).toBe(true);
     expect(supportsClaudeDynamicSystemPromptSections("unparseable")).toBe(false);
 
     const unsupported = buildAnthropicCliBackend({
