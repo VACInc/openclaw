@@ -701,6 +701,30 @@ describe("gateway chat metadata runtime", () => {
     expect(result).not.toBe(timedOut);
   });
 
+  test("retries an unavailable owner on the next read once it is published again", async () => {
+    const harness = createHarness();
+    await harness.runtime.refresh();
+
+    harness.getPreparedOwner.mockReturnValue(undefined);
+    await expect(harness.runtime.refresh()).rejects.toThrow(
+      'prepared chat metadata owner is unavailable for agent "main"',
+    );
+    await expect(harness.runtime.read({ agentId: "main" })).rejects.toThrow(
+      'prepared chat metadata owner is unavailable for agent "main"',
+    );
+
+    const recovered = createOwner(
+      { agents: { list: [{ id: "main", default: true }] } },
+      "recovered",
+    );
+    harness.setOwner(recovered);
+    harness.getPreparedOwner.mockReturnValue(recovered);
+
+    await expect(harness.runtime.read({ agentId: "main" })).resolves.toMatchObject({
+      models: [expect.objectContaining({ id: "recovered" })],
+    });
+  });
+
   test("rejects replacement waiters on failure and recovers on a later generation", async () => {
     const harness = createHarness();
     await harness.runtime.refresh();
