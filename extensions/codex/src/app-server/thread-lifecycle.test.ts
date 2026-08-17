@@ -2194,6 +2194,49 @@ describe("Codex plugin binding recovery", () => {
     vi.restoreAllMocks();
   });
 
+  it("records ownership before committing a newly created durable thread", async () => {
+    const params = createThreadLifecycleParams(
+      path.join(tempDir, "session-managed.jsonl"),
+      path.join(tempDir, "workspace-managed"),
+    );
+    params.agentDir = path.join(tempDir, "agent");
+    const mark = vi.fn(async () => undefined);
+    const stateStore = createCodexTestBindingStateStore();
+    const bindingStore = Object.assign(createCodexAppServerBindingStore(stateStore), {
+      managedThreads: { mark, snapshot: vi.fn(async () => new Map()) },
+    });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/start") {
+        return threadStartResult("thread-managed");
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    await startOrResumeThreadImpl({
+      client: {
+        request,
+        getRuntimeIdentity: () => ({ codexHome: path.join(tempDir, "agent", "codex-home") }),
+      } as never,
+      params,
+      cwd: params.workspaceDir!,
+      dynamicTools: [],
+      appServer: createThreadLifecycleAppServerOptions(),
+      bindingStore,
+    });
+
+    expect(mark).toHaveBeenCalledOnce();
+    expect(mark).toHaveBeenCalledWith({
+      sourceHomeId: expect.stringMatching(/^[a-f0-9]{64}$/),
+      threadId: "thread-managed",
+    });
+    expect(stateStore.entries().map((entry) => entry.value)).toContainEqual(
+      expect.objectContaining({
+        state: "active",
+        binding: expect.objectContaining({ threadId: "thread-managed" }),
+      }),
+    );
+  });
+
   it("does not rebuild a binding whose configured plugin is a settled negative", async () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");

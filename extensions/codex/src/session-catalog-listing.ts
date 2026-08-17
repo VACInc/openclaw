@@ -28,6 +28,7 @@ import {
   CODEX_LOCAL_SESSION_HOST_ID,
   DEFAULT_TRANSCRIPT_PAGE_LIMIT,
   filterCatalogPageByTitle,
+  MAX_TITLE_SEARCH_CATALOG_PAGES,
   MAX_CURSOR_LENGTH,
   MAX_HOST_COUNT,
   MAX_SESSION_ID_LENGTH,
@@ -52,32 +53,83 @@ import type {
   CodexSessionCatalogControl,
   CodexSessionCatalogControlFactory,
   CodexSessionCatalogHost,
+  CodexSessionCatalogPage,
   CodexSessionCatalogParams,
   CodexSessionCatalogResult,
   CodexSessionTranscriptPage,
 } from "./session-catalog-types.js";
+
+async function listVisibleGatewayPage(params: {
+  control: CodexSessionCatalogControl;
+  cursor?: string;
+  excludedThreadIds?: ReadonlySet<string>;
+  query: ReturnType<typeof readGatewayParams>;
+}): Promise<CodexSessionCatalogPage> {
+  const excluded = params.excludedThreadIds;
+  if (!excluded?.size) {
+    return parseCatalogPage(
+      await params.control.listPage({
+        limit: params.query.limitPerHost,
+        ...(params.cursor ? { cursor: params.cursor } : {}),
+        ...(params.query.search ? { searchTerm: params.query.search } : {}),
+      }),
+    );
+  }
+  const sessions: ReturnType<typeof parseCatalogPage>["sessions"] = [];
+  let cursor = params.cursor;
+  let nextCursor: string | undefined;
+  let backwardsCursor: string | undefined;
+  const seenCursors = new Set<string>();
+  for (let pageIndex = 0; pageIndex < MAX_TITLE_SEARCH_CATALOG_PAGES; pageIndex += 1) {
+    const page = parseCatalogPage(
+      await params.control.listPage({
+        limit: params.query.limitPerHost - sessions.length,
+        ...(cursor ? { cursor } : {}),
+        ...(params.query.search ? { searchTerm: params.query.search } : {}),
+      }),
+    );
+    if (pageIndex === 0) {
+      backwardsCursor = page.backwardsCursor;
+    }
+    sessions.push(...page.sessions.filter((session) => !excluded.has(session.threadId)));
+    nextCursor = page.nextCursor;
+    if (!nextCursor || sessions.length >= params.query.limitPerHost) {
+      break;
+    }
+    if (seenCursors.has(nextCursor)) {
+      throw new Error("Codex session catalog returned a repeated exclusion cursor");
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+  return {
+    sessions: sessions.slice(0, params.query.limitPerHost),
+    ...(nextCursor ? { nextCursor } : {}),
+    ...(backwardsCursor ? { backwardsCursor } : {}),
+  };
+}
 
 async function listGatewayHost(params: {
   agentId: string;
   bindingStore: CodexAppServerBindingStore;
   config?: OpenClawConfig;
   control: CodexSessionCatalogControl;
-  query: CodexSessionCatalogParams;
+  query: ReturnType<typeof readGatewayParams>;
   runtime: PluginRuntime;
   sessionEntries?: SessionCatalogEntrySnapshot;
   source?: CodexCatalogHome;
+  excludedThreadIds?: ReadonlySet<string>;
 }): Promise<CodexSessionCatalogHost> {
   const hostId = params.source?.hostId ?? CODEX_LOCAL_SESSION_HOST_ID;
   const label = params.source?.label ?? "Local Codex";
   const sourceHomeId = params.source?.sourceHomeId ?? CODEX_LOCAL_SESSION_HOST_ID;
   try {
-    const page = parseCatalogPage(
-      await params.control.listPage({
-        limit: params.query.limitPerHost,
-        ...(params.query.cursors?.[hostId] ? { cursor: params.query.cursors[hostId] } : {}),
-        ...(params.query.search ? { searchTerm: params.query.search } : {}),
-      }),
-    );
+    const page = await listVisibleGatewayPage({
+      control: params.control,
+      cursor: params.query.cursors?.[hostId],
+      excludedThreadIds: params.excludedThreadIds,
+      query: params.query,
+    });
     const adoptedSessions = await listAdoptedSessionEntries({
       agentId: params.agentId,
       bindingStore: params.bindingStore,
@@ -146,6 +198,7 @@ export async function listCodexSessionCatalog(params: {
     (!requestedHostIds || requestedHostIds.has(CODEX_LOCAL_SESSION_HOST_ID))
       ? [undefined]
       : []);
+  const managedThreads = await params.bindingStore.managedThreads?.snapshot();
   const localHosts = localSources.map((source) =>
     listGatewayHost({
       agentId,
@@ -155,6 +208,7 @@ export async function listCodexSessionCatalog(params: {
       query,
       runtime: params.runtime,
       sessionEntries: params.sessionEntries,
+      excludedThreadIds: source ? managedThreads?.get(source.sourceHomeId) : undefined,
       ...(source ? { source } : {}),
     }),
   );

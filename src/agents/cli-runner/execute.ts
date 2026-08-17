@@ -298,6 +298,15 @@ export async function executePreparedCliRun(
   let forkResumeClaimed = false;
   let forkSuccessorObserved = false;
   let forkSuccessorPersistence: Promise<void> | undefined;
+  const recordManagedSession = async (sessionId: string) => {
+    if (params.controlOperation || params.isolatedCompletion) {
+      return;
+    }
+    await context.backendResolved.recordManagedSession?.({
+      sessionId,
+      ...(nodePlacement ? { nodeId: nodePlacement.nodeId } : {}),
+    });
+  };
   const observeForkSuccessor = (sessionId: string) => {
     if (
       forkSuccessorObserved ||
@@ -308,7 +317,9 @@ export async function executePreparedCliRun(
       return;
     }
     forkSuccessorObserved = true;
-    forkSuccessorPersistence = params.persistCliSessionForkSuccessor?.(sessionId);
+    forkSuccessorPersistence = recordManagedSession(sessionId).then(async () => {
+      await params.persistCliSessionForkSuccessor?.(sessionId);
+    });
     void forkSuccessorPersistence?.catch(() => undefined);
   };
   const finishForkSuccessorPersistence = async () => {
@@ -596,6 +607,9 @@ export async function executePreparedCliRun(
     });
   };
   try {
+    if (!useResume && resolvedSessionId) {
+      await recordManagedSession(resolvedSessionId);
+    }
     completedOutput = await enqueueCliRun(queueKey, async () => {
       if (params.abortSignal?.aborted) {
         throw createCliAbortError();
@@ -626,6 +640,13 @@ export async function executePreparedCliRun(
       await params.restoreCliSessionFork?.();
       forkResumeClaimed = false;
       throw new Error("forked CLI session did not report a successor session id");
+    }
+    if (
+      !useResume &&
+      completedOutput.sessionId &&
+      completedOutput.sessionId !== resolvedSessionId
+    ) {
+      await recordManagedSession(completedOutput.sessionId);
     }
   } catch (error) {
     executionError = error;

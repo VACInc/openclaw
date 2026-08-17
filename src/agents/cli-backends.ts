@@ -58,6 +58,7 @@ export type ResolvedCliBackend = {
   ownsNativeCompaction?: boolean;
   manualCompaction?: CliBackendPlugin["manualCompaction"];
   prepareExecution?: CliBackendPlugin["prepareExecution"];
+  recordManagedSession?: CliBackendPlugin["recordManagedSession"];
   resolveExecutionArgs?: CliBackendPlugin["resolveExecutionArgs"];
   parseJsonlEvent?: CliBackendPlugin["parseJsonlEvent"];
   toolAvailabilityEnforcement?: CliBackendToolAvailabilityEnforcement;
@@ -100,6 +101,7 @@ type FallbackCliBackendPolicy = {
   ownsNativeCompaction?: boolean;
   manualCompaction?: CliBackendPlugin["manualCompaction"];
   prepareExecution?: CliBackendPlugin["prepareExecution"];
+  recordManagedSession?: CliBackendPlugin["recordManagedSession"];
   resolveExecutionArgs?: CliBackendPlugin["resolveExecutionArgs"];
   parseJsonlEvent?: CliBackendPlugin["parseJsonlEvent"];
   toolAvailabilityEnforcement?: CliBackendToolAvailabilityEnforcement;
@@ -169,6 +171,7 @@ function resolveSetupCliBackendPolicy(provider: string): FallbackCliBackendPolic
     ownsNativeCompaction: entry.backend.ownsNativeCompaction,
     manualCompaction: entry.backend.manualCompaction,
     prepareExecution: entry.backend.prepareExecution,
+    recordManagedSession: entry.backend.recordManagedSession,
     resolveExecutionArgs: entry.backend.resolveExecutionArgs,
     parseJsonlEvent: entry.backend.parseJsonlEvent,
     toolAvailabilityEnforcement: entry.backend.toolAvailabilityEnforcement,
@@ -430,6 +433,7 @@ export function resolveCliBackendConfig(
       ownsNativeCompaction: registered.ownsNativeCompaction,
       manualCompaction: registered.manualCompaction,
       prepareExecution: registered.prepareExecution,
+      recordManagedSession: registered.recordManagedSession,
       resolveExecutionArgs: registered.resolveExecutionArgs,
       parseJsonlEvent: registered.parseJsonlEvent,
       toolAvailabilityEnforcement: resolveToolAvailabilityEnforcement(registered),
@@ -466,6 +470,7 @@ export function resolveCliBackendConfig(
     ownsNativeCompaction: fallbackPolicy.ownsNativeCompaction,
     manualCompaction: fallbackPolicy.manualCompaction,
     prepareExecution: fallbackPolicy.prepareExecution,
+    recordManagedSession: fallbackPolicy.recordManagedSession,
     resolveExecutionArgs: fallbackPolicy.resolveExecutionArgs,
     parseJsonlEvent: fallbackPolicy.parseJsonlEvent,
     toolAvailabilityEnforcement: fallbackPolicy.toolAvailabilityEnforcement,

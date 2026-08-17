@@ -590,6 +590,67 @@ describe("Codex supervision catalog", () => {
     expect(sessions.get(homeB.hostId)).not.toHaveProperty("sessionKey");
   });
 
+  it("bulk-loads managed thread ids once and backfills visible catalog pages", async () => {
+    const homeA: CodexCatalogHome = {
+      sourceHomeId: "home-a",
+      hostId: CODEX_LOCAL_SESSION_HOST_ID,
+      label: "home-a",
+      agentDir: "/agents/main",
+      appServer: {} as CodexCatalogHome["appServer"],
+      usesProcessHomeFallback: false,
+    };
+    const homeB: CodexCatalogHome = {
+      ...homeA,
+      sourceHomeId: "home-b",
+      hostId: `${CODEX_LOCAL_SESSION_HOST_ID}:home-b`,
+      label: "home-b",
+    };
+    const snapshot = vi.fn(
+      async () => new Map<string, ReadonlySet<string>>([["home-a", new Set(["thread-managed"])]]),
+    );
+    const bindingStore = Object.assign(createCodexTestBindingStore(), {
+      managedThreads: { mark: vi.fn(), snapshot },
+    });
+    const listPage = vi.fn(async (params?: { cursor?: string; limit?: number }) =>
+      params?.cursor === "next"
+        ? {
+            sessions: [
+              { threadId: "thread-visible-2", status: "idle", source: "cli", archived: false },
+            ],
+          }
+        : {
+            sessions: [
+              { threadId: "thread-managed", status: "idle", source: "vscode", archived: false },
+              { threadId: "thread-visible-1", status: "idle", source: "cli", archived: false },
+            ],
+            nextCursor: "next",
+          },
+    );
+    const control = createControl({ listPage });
+
+    const result = await listCodexSessionCatalog({
+      agentId: "main",
+      bindingStore,
+      config,
+      runtime: createRuntime().runtime,
+      control,
+      query: { limitPerHost: 2 },
+      localHomes: [homeA, homeB],
+      listNodes: async () => ({ nodes: [] }),
+    });
+
+    expect(snapshot).toHaveBeenCalledOnce();
+    expect(listPage).toHaveBeenCalledTimes(3);
+    expect(result.hosts[0]?.sessions.map((session) => session.threadId)).toEqual([
+      "thread-visible-1",
+      "thread-visible-2",
+    ]);
+    expect(result.hosts[1]?.sessions.map((session) => session.threadId)).toEqual([
+      "thread-managed",
+      "thread-visible-1",
+    ]);
+  });
+
   it("uses a sanitized preview only when Codex has no thread name", async () => {
     const pluginConfig = { supervision: { enabled: true } };
     commandRpcMocks.codexControlRequest.mockResolvedValue({
