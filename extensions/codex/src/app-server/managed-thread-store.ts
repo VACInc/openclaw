@@ -53,7 +53,7 @@ export async function markStartedCodexManagedThread(
 }
 
 /** Recovers CODEX_HOME from a canonical rollout path under CODEX_HOME/sessions. */
-export function codexHomeFromRolloutPath(rolloutPath: string): string | undefined {
+function codexHomeFromRolloutPath(rolloutPath: string): string | undefined {
   const resolved = path.resolve(rolloutPath);
   const segments = resolved.split(path.sep);
   const sessionsIndex = segments.lastIndexOf("sessions");

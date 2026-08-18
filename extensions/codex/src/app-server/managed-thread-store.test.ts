@@ -5,8 +5,8 @@ import type { PluginStateSyncKeyedStore } from "openclaw/plugin-sdk/plugin-state
 import { describe, expect, it } from "vitest";
 import { codexCatalogHomeId } from "../session-catalog-home-id.js";
 import {
-  codexHomeFromRolloutPath,
   createCodexManagedThreadStore,
+  markStartedCodexManagedThread,
   type StoredCodexManagedThread,
 } from "./managed-thread-store.js";
 
@@ -59,11 +59,17 @@ describe("Codex managed thread store", () => {
     await expect(createCodexManagedThreadStore(state).snapshot()).resolves.toEqual(new Map());
   });
 
-  it("derives the catalog home from nested rollout paths", () => {
-    expect(codexHomeFromRolloutPath("/tmp/codex/sessions/2026/08/rollout.jsonl")).toBe(
-      "/tmp/codex",
-    );
-    expect(codexHomeFromRolloutPath("/tmp/codex/not-sessions/rollout.jsonl")).toBeUndefined();
+  it("records the catalog home derived from a nested rollout path", async () => {
+    const { state, values } = createStateStore();
+    await markStartedCodexManagedThread(createCodexManagedThreadStore(state), {
+      threadId: "thread-1",
+      rolloutPath: "/tmp/codex/sessions/2026/08/rollout.jsonl",
+    });
+
+    expect([...values.values()][0]).toMatchObject({
+      sourceHomeId: codexCatalogHomeId("/tmp/codex"),
+      threadId: "thread-1",
+    });
   });
 
   it("uses the same source identity for a symlinked configured home", async () => {
