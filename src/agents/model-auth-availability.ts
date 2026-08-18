@@ -301,6 +301,32 @@ export function createModelAuthAvailabilityResolver(
     ...external.map((profile) => profile.profileId),
     ...getRuntimeExternalCliProfileIds(runtimeStore ?? store),
   ]);
+  // Runtime-owned CLI credentials are authoritative over legacy config metadata
+  // that described their canonical profile slots before OAuth was imported.
+  // Normalize only those exact marked profiles for read-only selection.
+  let readOnlyAuthProfiles:
+    | NonNullable<NonNullable<OpenClawConfig["auth"]>["profiles"]>
+    | undefined;
+  for (const profileId of externalCliRefreshProfileIds) {
+    const credential = store.profiles[profileId];
+    const configured = params.cfg.auth?.profiles?.[profileId];
+    if (
+      credential?.type !== "oauth" ||
+      !configured ||
+      (configured.provider === credential.provider && configured.mode === credential.type)
+    ) {
+      continue;
+    }
+    readOnlyAuthProfiles ??= { ...params.cfg.auth?.profiles };
+    readOnlyAuthProfiles[profileId] = {
+      ...configured,
+      provider: credential.provider,
+      mode: credential.type,
+    };
+  }
+  const readOnlyAuthConfig = readOnlyAuthProfiles
+    ? { ...params.cfg, auth: { ...params.cfg.auth, profiles: readOnlyAuthProfiles } }
+    : params.cfg;
   const providerConfig = (provider: string) =>
     resolveMergedModelProviderConfig(params.cfg, provider);
   const prepareAuthTarget = (provider: string, ref: ModelAuthAvailabilityRef): AuthTarget => {
@@ -354,7 +380,7 @@ export function createModelAuthAvailabilityResolver(
       return cached;
     }
     const resolution = resolveAuthProfileOrderWithMetadata({
-      cfg: params.cfg,
+      cfg: readOnlyAuthConfig,
       store: orderStore,
       provider: normalized,
       preferredProfile: preferredProfileId,
@@ -382,7 +408,7 @@ export function createModelAuthAvailabilityResolver(
         ? store
         : { ...store, profiles: { ...store.profiles, [profileId]: credential } };
     const eligibility = resolveAuthProfileEligibility({
-      cfg: params.cfg,
+      cfg: readOnlyAuthConfig,
       store: effectiveStore,
       provider: normalizeProvider(provider),
       profileId,

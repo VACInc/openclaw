@@ -1339,6 +1339,11 @@ describe("models.list", () => {
           ]);
 
           const runtimeConfig = {
+            auth: {
+              profiles: {
+                "anthropic:claude-cli": { provider: "anthropic", mode: "token" },
+              },
+            },
             agents: {
               defaults: {
                 models: {
