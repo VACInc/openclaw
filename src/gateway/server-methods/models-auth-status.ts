@@ -24,6 +24,7 @@ import {
   removeProviderAuthProfilesWithLock,
   resolvePersistedAuthProfileOwnerAgentDir,
 } from "../../agents/auth-profiles.js";
+import { getRuntimeExternalCliProfileIds } from "../../agents/auth-profiles/runtime-external-profile-references.js";
 import {
   listProviderEnvAuthLookupKeys,
   resolveProviderEnvAuthLookupMaps,
@@ -292,6 +293,7 @@ function mapProvider(
   apiKeys: ReadonlyMap<string, ModelAuthStatusProvider["apiKey"]>,
   logoutProfileIds: ReadonlySet<string>,
   configBoundProfileIds: ReadonlySet<string>,
+  externalCliProfileIds: ReadonlySet<string>,
 ): ModelAuthStatusProvider {
   const usageProfile =
     prov.profiles.find((profile) => profile.type === "oauth" || profile.type === "token") ??
@@ -300,11 +302,29 @@ function mapProvider(
     credentialType: usageProfile?.type,
   });
   const usage = usageKey ? usageByProvider.get(usageKey) : undefined;
-  const rollup = aggregateRefreshableAuthStatus(
+  const rawRollup = aggregateRefreshableAuthStatus(
     prov,
     Date.now(),
     expectsOAuthSet.has(prov.provider),
   );
+  const effectiveProfiles = prov.effectiveProfiles ?? prov.profiles;
+  const effectiveOAuthProfiles = effectiveProfiles.filter((profile) => profile.type === "oauth");
+  const statusProfiles =
+    effectiveOAuthProfiles.length > 0
+      ? effectiveOAuthProfiles
+      : effectiveProfiles.filter((profile) => profile.type === "token");
+  // External CLI access tokens rotate without operator action. Keep their raw
+  // profile expiry diagnostic, but do not turn it into a provider login warning.
+  const externalCliOwnsOAuthRefresh =
+    statusProfiles.length > 0 &&
+    statusProfiles.every(
+      (profile) => profile.type === "oauth" && externalCliProfileIds.has(profile.profileId),
+    );
+  const rollup: ModelAuthStatusRollup =
+    externalCliOwnsOAuthRefresh &&
+    (rawRollup.status === "expired" || rawRollup.status === "expiring")
+      ? { status: "ok" }
+      : rawRollup;
   const apiKey = apiKeys.get(normalizeProviderId(prov.provider));
   const hasRefreshableProfile = prov.profiles.some(
     (profile) => profile.type === "oauth" || profile.type === "token",
@@ -703,6 +723,7 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
       });
 
       const externalProfileIds = new Set(store.runtimeExternalProfileIds ?? []);
+      const externalCliProfileIds = new Set(getRuntimeExternalCliProfileIds(store));
       const logoutProfileIds = new Set(
         Object.entries(store.profiles)
           .filter(
@@ -721,6 +742,7 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
           apiKeys,
           logoutProfileIds,
           configBoundProfileIds,
+          externalCliProfileIds,
         ),
       );
       const providerCapabilities = buildProviderCapabilities({

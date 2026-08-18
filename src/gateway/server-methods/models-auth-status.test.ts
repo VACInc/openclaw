@@ -637,6 +637,116 @@ describe("models.authStatus", () => {
     expect(provider?.profiles[0]?.logoutSupported).toBeUndefined();
   });
 
+  it("reports external CLI-managed OAuth as signed in across access-token expiry", async () => {
+    const profileId = "anthropic:claude-cli";
+    const profile = {
+      profileId,
+      provider: "claude-cli",
+      type: "oauth",
+      status: "expired",
+      expiresAt: 1,
+      remainingMs: -1,
+      source: "store",
+      label: profileId,
+    } satisfies AuthHealthSummary["profiles"][number];
+    setPreparedAuthStore(
+      Object.assign(
+        {
+          version: 1,
+          profiles: {
+            [profileId]: {
+              type: "oauth",
+              provider: "claude-cli",
+              access: "expired-access",
+              refresh: "cli-owned-refresh",
+              expires: 1,
+            } satisfies AuthProfileStore["profiles"][string],
+          },
+        },
+        { runtimeExternalCliProfileIds: [profileId] },
+      ),
+    );
+    mocks.buildAuthHealthSummary.mockReturnValue({
+      now: 2,
+      warnAfterMs: 0,
+      profiles: [profile],
+      providers: [
+        {
+          provider: "claude-cli",
+          status: "expired",
+          expiresAt: 1,
+          remainingMs: -1,
+          profiles: [profile],
+        },
+      ],
+    });
+
+    const provider = await firstAuthStatusProvider();
+
+    expect(provider).toMatchObject({
+      provider: "claude-cli",
+      status: "ok",
+      profiles: [{ profileId, status: "expired" }],
+    });
+    expect(provider?.expiry).toBeUndefined();
+  });
+
+  it("preserves expiry when an effective OAuth sibling is not CLI-owned", async () => {
+    const cliProfileId = "anthropic:claude-cli";
+    const manualProfileId = "anthropic:manual";
+    const profiles = [cliProfileId, manualProfileId].map(
+      (profileId) =>
+        ({
+          profileId,
+          provider: "claude-cli",
+          type: "oauth",
+          status: "expired",
+          expiresAt: 1,
+          remainingMs: -1,
+          source: "store",
+          label: profileId,
+        }) satisfies AuthHealthSummary["profiles"][number],
+    );
+    setPreparedAuthStore(
+      Object.assign(
+        {
+          version: 1,
+          profiles: Object.fromEntries(
+            profiles.map((profile) => [
+              profile.profileId,
+              {
+                type: "oauth",
+                provider: "claude-cli",
+                access: "expired-access",
+                refresh: "stored-refresh",
+                expires: 1,
+              },
+            ]),
+          ),
+        },
+        { runtimeExternalCliProfileIds: [cliProfileId] },
+      ),
+    );
+    mocks.buildAuthHealthSummary.mockReturnValue({
+      now: 2,
+      warnAfterMs: 0,
+      profiles,
+      providers: [
+        {
+          provider: "claude-cli",
+          status: "expired",
+          expiresAt: 1,
+          remainingMs: -1,
+          profiles,
+        },
+      ],
+    });
+
+    const provider = await firstAuthStatusProvider();
+
+    expect(provider).toMatchObject({ provider: "claude-cli", status: "expired" });
+  });
+
   it("does not offer logout for config-bound token profiles", async () => {
     const profileId = "openrouter:token";
     const profile = {

@@ -7,7 +7,7 @@ import type { ExecApprovalRequest } from "../app/exec-approval.ts";
 import { t } from "../i18n/index.ts";
 import { isCronJobActiveFailure, isCronJobRunning } from "../lib/cron-status.ts";
 import { clampText } from "../lib/format.ts";
-import { isMonitoredAuthProvider } from "../lib/model-auth.ts";
+import { isMonitoredAuthProvider, listEffectiveModelAuthProviders } from "../lib/model-auth.ts";
 import type { IconName } from "./icons.ts";
 import type { SidebarAttentionKind } from "./sidebar-attention-dismissals.ts";
 
@@ -108,7 +108,9 @@ export function buildSidebarAttentionItems(params: {
     });
   }
 
-  const monitored = (params.modelAuthStatus?.providers ?? []).filter(isMonitoredAuthProvider);
+  const monitored = listEffectiveModelAuthProviders(params.modelAuthStatus?.providers ?? []).filter(
+    isMonitoredAuthProvider,
+  );
   const expired = monitored.filter(
     (provider) => provider.status === "expired" || provider.status === "missing",
   );

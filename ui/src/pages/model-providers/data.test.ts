@@ -174,6 +174,28 @@ describe("buildModelProviderCards", () => {
     ]);
   });
 
+  it("ignores a credential-less missing alias when CLI OAuth exists", () => {
+    const cards = buildModelProviderCards({
+      ...EMPTY_INPUT,
+      authStatus: authStatus([
+        {
+          provider: "anthropic",
+          displayName: "Claude",
+          status: "missing",
+          profiles: [],
+        },
+        {
+          provider: "claude-cli",
+          displayName: "Claude",
+          status: "expiring",
+          profiles: [{ profileId: "anthropic:claude-cli", type: "oauth", status: "expiring" }],
+        },
+      ]),
+    });
+
+    expect(firstCard(cards).auth).toMatchObject({ kind: "expiring", profileCount: 1 });
+  });
+
   it("prefers usage.status snapshots over the auth-status embed", () => {
     const cards = buildModelProviderCards({
       ...EMPTY_INPUT,

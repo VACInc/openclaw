@@ -204,6 +204,34 @@ describe("model auth attention", () => {
     expect(authItems("main")[0]?.signature).toBe("agent:main\nopenai");
     expect(authItems("writer")[0]?.signature).toBe("agent:writer\nopenai");
   });
+
+  it("ignores a missing canonical alias when CLI OAuth exists", () => {
+    const items = buildSidebarAttentionItems({
+      cronJobs: [],
+      modelAuthStatus: {
+        ts: 1,
+        providers: [
+          {
+            provider: "anthropic",
+            displayName: "Claude",
+            status: "missing",
+            profiles: [],
+          },
+          {
+            provider: "claude-cli",
+            displayName: "Claude",
+            status: "expiring",
+            profiles: [{ profileId: "anthropic:claude-cli", type: "oauth", status: "expiring" }],
+          },
+        ],
+      },
+      modelAuthAgentId: "main",
+      approvalQueue: [],
+      now: 0,
+    });
+
+    expect(items.some((item) => item.kind === "modelAuthExpired")).toBe(false);
+  });
 });
 
 describe("sidebar attention refresh ownership", () => {
