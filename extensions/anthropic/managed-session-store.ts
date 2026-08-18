@@ -4,7 +4,12 @@ import { z } from "zod";
 
 export const CLAUDE_MANAGED_SESSION_NAMESPACE = "claude-cli-managed-sessions";
 export const CLAUDE_MANAGED_SESSION_MAX_ENTRIES = 50_001;
-const CLAUDE_MANAGED_SESSION_BACKFILL_KEY = "migration:binding-backfill:v1";
+const CLAUDE_MANAGED_SESSION_BACKFILL_KEY = "migration:managed-provenance-backfill:v2";
+
+type ManagedSessionCandidate = { hostId: string; sessionId: string };
+type ManagedSessionCandidateSource =
+  | readonly ManagedSessionCandidate[]
+  | (() => Promise<readonly ManagedSessionCandidate[]>);
 
 const managedSessionSchema = z.object({
   version: z.literal(1),
@@ -14,8 +19,8 @@ const managedSessionSchema = z.object({
 });
 
 const migrationSchema = z.object({
-  version: z.literal(1),
-  kind: z.literal("binding-backfill-complete"),
+  version: z.literal(2),
+  kind: z.literal("managed-provenance-backfill-complete"),
 });
 
 export type StoredClaudeManagedSession =
@@ -25,7 +30,7 @@ export type StoredClaudeManagedSession =
 export type ClaudeManagedSessionStore = {
   mark(params: { hostId: string; sessionId: string }): Promise<void>;
   snapshot(
-    legacyCandidates?: readonly { hostId: string; sessionId: string }[],
+    legacyCandidates?: ManagedSessionCandidateSource,
   ): Promise<ReadonlyMap<string, ReadonlySet<string>>>;
 };
 
@@ -56,7 +61,7 @@ export function createClaudeManagedSessionStore(
   };
   return {
     mark,
-    async snapshot(legacyCandidates = []) {
+    async snapshot(legacyCandidateSource = []) {
       const byHost = new Map<string, Set<string>>();
       const entries = state.entries();
       for (const entry of entries) {
@@ -69,6 +74,10 @@ export function createClaudeManagedSessionStore(
         byHost.set(parsed.data.hostId, ids);
       }
       if (!entries.some((entry) => entry.key === CLAUDE_MANAGED_SESSION_BACKFILL_KEY)) {
+        const legacyCandidates =
+          typeof legacyCandidateSource === "function"
+            ? await legacyCandidateSource()
+            : legacyCandidateSource;
         for (const candidate of legacyCandidates) {
           await mark(candidate);
           const ids = byHost.get(candidate.hostId) ?? new Set<string>();
@@ -76,8 +85,8 @@ export function createClaudeManagedSessionStore(
           byHost.set(candidate.hostId, ids);
         }
         state.registerIfAbsent(CLAUDE_MANAGED_SESSION_BACKFILL_KEY, {
-          version: 1,
-          kind: "binding-backfill-complete",
+          version: 2,
+          kind: "managed-provenance-backfill-complete",
         });
       }
       return byHost;

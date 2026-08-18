@@ -37,6 +37,15 @@ export {
   readLocalClaudeTranscriptPage,
 } from "./session-catalog-listing.js";
 
+async function listLegacyManagedClaudeSessionCandidates(): Promise<
+  Array<{ hostId: string; sessionId: string }>
+> {
+  const sessions = await listClaudeSessions(currentHomeDir(), gatewayClaudeScanOptions(true));
+  return sessions
+    .filter((session) => session.openClawManaged === true)
+    .map((session) => ({ hostId: CLAUDE_LOCAL_SESSION_HOST_ID, sessionId: session.threadId }));
+}
+
 function toGenericClaudeItem(item: ClaudeTranscriptItem): SessionCatalogTranscriptItem {
   const allowed = new Set<SessionCatalogTranscriptItem["type"]>([
     "userMessage",
@@ -129,9 +138,10 @@ export function createClaudeSessionCatalogRuntime(
       const adopted = managedSessions
         ? listAdoptedClaudeSessions(api, query.agentId, query.sessionEntries)
         : listBoundClaudeSessions(api, query.agentId, query.sessionEntries);
-      const managedSessionIds = await managedSessions?.snapshot(
-        listManagedClaudeSessionCandidates(api, query.sessionEntries),
-      );
+      const managedSessionIds = await managedSessions?.snapshot(async () => [
+        ...listManagedClaudeSessionCandidates(api, query.sessionEntries),
+        ...(await listLegacyManagedClaudeSessionCandidates()),
+      ]);
       const localCliAvailable = catalogTerminal.isClaudeCliAvailable();
       const {
         allowProcessHomeFallback,

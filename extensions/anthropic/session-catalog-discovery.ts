@@ -39,6 +39,7 @@ const CLAUDE_METADATA_READ_CHUNK_BYTES = 16 * 1024;
 const MAX_CATALOG_METADATA_SCAN_BYTES = 64 * 1024 * 1024;
 const CLI_ENTRYPOINTS = new Set(["cli", "sdk-cli"]);
 const OPENCLAW_INBOUND_CONTEXT_MARKER = "⟦openclaw:ctx⟧";
+const OPENCLAW_INTER_SESSION_PROMPT_PREFIX = "[Inter-session message]";
 
 type CatalogDiscoveryCacheEntry = {
   // The module-global cache is keyed by canonical transcript path, so an entry must also record the
@@ -121,8 +122,15 @@ export type CatalogRecord = ClaudeSessionCatalogSession & {
   openClawManaged?: true;
 };
 
+function hasOpenClawManagedFirstPrompt(prompt: string): boolean {
+  return (
+    prompt.includes(OPENCLAW_INBOUND_CONTEXT_MARKER) ||
+    prompt.trimStart().startsWith(OPENCLAW_INTER_SESSION_PROMPT_PREFIX)
+  );
+}
+
 function hasOpenClawInboundContext(fragments: readonly string[]): boolean {
-  return fragments.some((fragment) => fragment.includes(OPENCLAW_INBOUND_CONTEXT_MARKER));
+  return fragments.some(hasOpenClawManagedFirstPrompt);
 }
 
 function pullRequestState(value: unknown): SessionCatalogPullRequestSummary["state"] | undefined {
@@ -356,7 +364,9 @@ async function readIndexRecords(context: ClaudeSessionScanContext): Promise<{
         : {}),
       archived: false,
       filePath: safeFile.filePath,
-      ...(firstPrompt?.includes(OPENCLAW_INBOUND_CONTEXT_MARKER) ? { openClawManaged: true } : {}),
+      ...(firstPrompt && hasOpenClawManagedFirstPrompt(firstPrompt)
+        ? { openClawManaged: true }
+        : {}),
     });
   }
   return { records, sidechainIds };

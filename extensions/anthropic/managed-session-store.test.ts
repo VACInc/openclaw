@@ -5,7 +5,7 @@ import {
   type StoredClaudeManagedSession,
 } from "./managed-session-store.js";
 
-const BACKFILL_KEY = "migration:binding-backfill:v1";
+const BACKFILL_KEY = "migration:managed-provenance-backfill:v2";
 
 function createState() {
   const values = new Map<string, StoredClaudeManagedSession>();
@@ -41,12 +41,17 @@ describe("Claude managed session store", () => {
     );
   });
 
-  it("backfills legacy bindings once before recording completion", async () => {
+  it("backfills managed provenance once before recording completion", async () => {
     const fixture = createState();
     const store = createClaudeManagedSessionStore(fixture.state);
-    await store.snapshot([{ hostId: "gateway:local", sessionId: "legacy" }]);
-    await store.snapshot([{ hostId: "gateway:local", sessionId: "ignored-later" }]);
+    const candidates = vi
+      .fn()
+      .mockResolvedValueOnce([{ hostId: "gateway:local", sessionId: "legacy" }])
+      .mockResolvedValueOnce([{ hostId: "gateway:local", sessionId: "ignored-later" }]);
+    await store.snapshot(candidates);
+    await store.snapshot(candidates);
     expect(fixture.values.has(BACKFILL_KEY)).toBe(true);
+    expect(candidates).toHaveBeenCalledTimes(1);
     await expect(store.snapshot()).resolves.toEqual(
       new Map([["gateway:local", new Set(["legacy"])]]),
     );

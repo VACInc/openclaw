@@ -668,28 +668,47 @@ describe("Claude session catalog", () => {
   it("hides historical OpenClaw-authored Claude transcripts by durable prompt provenance", async () => {
     const home = await createHome();
     const managedId = "openclaw-managed";
+    const interSessionId = "openclaw-inter-session";
     const nativeId = "native-session";
+    const nativeLaterForwardedId = "native-later-forwarded";
     const managedPrompt =
       'Conversation info: ⟦openclaw:ctx⟧\n```json\n{"message_id":"private"}\n```\n\nTask';
+    const interSessionPrompt =
+      "[Inter-session message] sourceTool=subagent_announce isUser=false\n\nChild result";
     await writeProject({
       home,
       entries: [
         { sessionId: managedId, firstPrompt: managedPrompt, isSidechain: false },
+        { sessionId: interSessionId, firstPrompt: interSessionPrompt, isSidechain: false },
         {
           sessionId: nativeId,
           firstPrompt: "Conversation info: ordinary native text",
           isSidechain: false,
         },
+        {
+          sessionId: nativeLaterForwardedId,
+          firstPrompt: "ordinary native opening prompt",
+          isSidechain: false,
+        },
       ],
       transcripts: {
         [managedId]: [message(managedId, "user", managedPrompt, 1)],
+        [interSessionId]: [message(interSessionId, "user", interSessionPrompt, 1)],
         [nativeId]: [message(nativeId, "user", "Conversation info: ordinary native text", 1)],
+        [nativeLaterForwardedId]: [
+          message(nativeLaterForwardedId, "user", "ordinary native opening prompt", 1),
+          message(nativeLaterForwardedId, "user", interSessionPrompt, 2),
+        ],
       },
     });
 
-    await expect(listLocalClaudeSessionPage({}, home)).resolves.toMatchObject({
-      sessions: [expect.objectContaining({ threadId: nativeId })],
-    });
+    const page = await listLocalClaudeSessionPage({}, home);
+    expect(page.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ threadId: nativeId }),
+        expect.objectContaining({ threadId: nativeLaterForwardedId }),
+      ]),
+    );
   });
 
   it("adopts a local CLI row with a locked one-shot fork binding", async () => {
