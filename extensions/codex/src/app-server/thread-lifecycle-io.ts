@@ -626,18 +626,13 @@ export async function startFreshCodexThread(
         );
       }
     };
-    try {
-      await lifecycleTiming.measure("thread-start-mark-managed", () =>
-        markStartedCodexManagedThread(params.bindingStore.managedThreads, {
-          codexHome: () => params.client.getRuntimeIdentity()?.codexHome,
-          threadId: response.thread.id,
-          ...(rolloutPath ? { rolloutPath } : {}),
-        }),
-      );
-    } catch (error) {
-      await cleanupUncommittedSuccessor(error);
-      throw error;
-    }
+    await lifecycleTiming.measure("thread-start-mark-managed", () =>
+      markStartedCodexManagedThread(params.bindingStore.managedThreads, {
+        codexHome: () => params.client.getRuntimeIdentity()?.codexHome,
+        threadId: response.thread.id,
+        ...(rolloutPath ? { rolloutPath } : {}),
+      }),
+    );
     let committed: boolean;
     try {
       committed = await lifecycleTiming.measure("thread-start-write-binding", () =>

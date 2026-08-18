@@ -64,47 +64,36 @@ async function listVisiblePage(params: {
   cursor?: string;
   cwd?: string;
   excludedThreadIds?: ReadonlySet<string>;
-  filterTitle?: boolean;
   limit: number;
-  onExcludedThreadId?: (threadId: string) => Promise<void>;
+  onExcludedThread?: (thread: { threadId: string; rolloutPath?: string }) => Promise<void>;
   searchTerm?: string;
 }): Promise<CodexSessionCatalogPage> {
   const excluded = params.excludedThreadIds;
-  if (!excluded?.size) {
-    const page = parseCatalogPage(
-      await params.control.listPage({
-        limit: params.limit,
-        ...(params.cursor ? { cursor: params.cursor } : {}),
-        ...(params.searchTerm ? { searchTerm: params.searchTerm } : {}),
-        ...(params.cwd ? { cwd: params.cwd } : {}),
-      }),
-    );
-    return params.filterTitle ? filterCatalogPageByTitle(page, params.searchTerm) : page;
-  }
   const sessions: ReturnType<typeof parseCatalogPage>["sessions"] = [];
   let cursor = params.cursor;
   let nextCursor: string | undefined;
   let backwardsCursor: string | undefined;
   const seenCursors = new Set<string>();
   for (let pageIndex = 0; pageIndex < MAX_TITLE_SEARCH_CATALOG_PAGES; pageIndex += 1) {
-    const listed = parseCatalogPage(
-      await params.control.listPage({
-        limit: params.limit - sessions.length,
-        ...(cursor ? { cursor } : {}),
-        ...(params.searchTerm ? { searchTerm: params.searchTerm } : {}),
-        ...(params.cwd ? { cwd: params.cwd } : {}),
-      }),
-    );
-    const page = params.filterTitle ? filterCatalogPageByTitle(listed, params.searchTerm) : listed;
+    const rawPage = await params.control.listPage({
+      limit: params.limit - sessions.length,
+      ...(cursor ? { cursor } : {}),
+      ...(params.searchTerm ? { searchTerm: params.searchTerm } : {}),
+      ...(params.cwd ? { cwd: params.cwd } : {}),
+    });
+    const page = filterCatalogPageByTitle(parseCatalogPage(rawPage), params.searchTerm);
     if (pageIndex === 0) {
       backwardsCursor = page.backwardsCursor;
     }
+    for (const managed of rawPage.managedThreads ?? []) {
+      await params.onExcludedThread?.(managed);
+    }
     for (const session of page.sessions) {
-      if (!excluded.has(session.threadId)) {
+      if (!excluded?.has(session.threadId)) {
         sessions.push(session);
         continue;
       }
-      await params.onExcludedThreadId?.(session.threadId);
+      await params.onExcludedThread?.({ threadId: session.threadId });
     }
     nextCursor = page.nextCursor;
     if (!nextCursor || sessions.length >= params.limit) {
@@ -146,7 +135,7 @@ async function listGatewayHost(params: {
   sessionEntries?: SessionCatalogEntrySnapshot;
   source?: CodexCatalogHome;
   excludedThreadIds?: ReadonlySet<string>;
-  onExcludedThreadId?: (threadId: string) => Promise<void>;
+  onExcludedThread?: (thread: { threadId: string; rolloutPath?: string }) => Promise<void>;
 }): Promise<CodexSessionCatalogHost> {
   const hostId = params.source?.hostId ?? CODEX_LOCAL_SESSION_HOST_ID;
   const label = params.source?.label ?? "Local Codex";
@@ -157,7 +146,7 @@ async function listGatewayHost(params: {
       cursor: params.query.cursors?.[hostId],
       excludedThreadIds: params.excludedThreadIds,
       limit: params.query.limitPerHost,
-      onExcludedThreadId: params.onExcludedThreadId,
+      onExcludedThread: params.onExcludedThread,
       searchTerm: params.query.search,
     });
     const adoptedSessions = await listAdoptedSessionEntries({
@@ -250,11 +239,12 @@ export async function listCodexSessionCatalog(params: {
         excludedThreadIds: mergeThreadIds(managedThreadIds, activeOrdinaryThreadIds),
         ...(ownershipSource && params.bindingStore.managedThreads
           ? {
-              onExcludedThreadId: async (threadId: string) => {
-                if (activeOrdinaryThreadIds?.has(threadId) && !managedThreadIds?.has(threadId)) {
+              onExcludedThread: async ({ threadId, rolloutPath }) => {
+                if (!managedThreadIds?.has(threadId)) {
                   await params.bindingStore.managedThreads?.mark({
                     sourceHomeId: ownershipSource.sourceHomeId,
                     threadId,
+                    ...(rolloutPath ? { rolloutPath } : {}),
                   });
                 }
               },
@@ -367,18 +357,15 @@ export function createCodexSessionCatalogNodeHostCommands(
             cursor: pageParams.cursor,
             cwd: pageParams.cwd,
             excludedThreadIds: mergeThreadIds(managedThreadIds, activeOrdinaryThreadIds),
-            filterTitle: true,
             limit: pageParams.limit,
             ...(sourceHomeId && bindingStore?.managedThreads
               ? {
-                  onExcludedThreadId: async (threadId: string) => {
-                    if (
-                      activeOrdinaryThreadIds?.has(threadId) &&
-                      !managedThreadIds?.has(threadId)
-                    ) {
+                  onExcludedThread: async ({ threadId, rolloutPath }) => {
+                    if (!managedThreadIds?.has(threadId)) {
                       await bindingStore.managedThreads?.mark({
                         sourceHomeId,
                         threadId,
+                        ...(rolloutPath ? { rolloutPath } : {}),
                       });
                     }
                   },

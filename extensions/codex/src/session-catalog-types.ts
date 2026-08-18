@@ -44,6 +44,8 @@ export type CodexSessionCatalogSession = {
 
 export type CodexSessionCatalogPage = {
   sessions: CodexSessionCatalogSession[];
+  /** Internal provenance filtered before this page reaches the provider catalog. */
+  managedThreads?: Array<{ threadId: string; rolloutPath?: string }>;
   nextCursor?: string;
   backwardsCursor?: string;
 };

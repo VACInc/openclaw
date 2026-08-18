@@ -38,6 +38,7 @@ const BINDING_LEASE_RENEW_INTERVAL_MS = Math.floor(BINDING_LEASE_STALE_MS / 3);
 // Physical session keys cannot have a successor generation. Retain their
 // retirement fence only long enough for bounded stale lease work to drain.
 const PHYSICAL_SESSION_RETIRE_TTL_MS = BINDING_LEASE_WAIT_MS;
+const STABLE_SESSION_RETIRE_TTL_MS = 30 * 24 * 60 * 60_000;
 
 type ProviderAuthAliasLookupParams = Parameters<typeof resolveProviderIdForAuth>[1];
 type ProviderAuthAliasConfig = NonNullable<ProviderAuthAliasLookupParams>["config"];
@@ -550,8 +551,14 @@ export function createStoredCodexAppServerBinding(
 
 type BindingStateStore = Pick<
   PluginStateSyncKeyedStore<StoredCodexAppServerBinding>,
-  "entries" | "lookup" | "update"
+  "delete" | "entries" | "lookup" | "update"
 >;
+
+function sessionRetirementTtlMs(key: string): number {
+  return key.startsWith("session-key:")
+    ? STABLE_SESSION_RETIRE_TTL_MS
+    : PHYSICAL_SESSION_RETIRE_TTL_MS;
+}
 
 type BindingLeaseOwner = {
   token: string;
@@ -610,15 +617,7 @@ export function scopeCodexRunBindingStore(params: {
   const mapIdentity = (identity: CodexAppServerBindingIdentity) =>
     identity.kind === "session" ? mapSessionIdentity(identity) : identity;
   return {
-    ...(params.bindingStore.managedThreads
-      ? { managedThreads: params.bindingStore.managedThreads }
-      : {}),
-    ...(params.bindingStore.listActiveOrdinaryThreadIds
-      ? {
-          listActiveOrdinaryThreadIds: () =>
-            params.bindingStore.listActiveOrdinaryThreadIds?.() ?? Promise.resolve(new Set()),
-        }
-      : {}),
+    ...params.bindingStore,
     read: (identity) => params.bindingStore.read(mapIdentity(identity)),
     hasOtherThreadOwner: (threadId, identity) =>
       params.bindingStore.hasOtherThreadOwner(
@@ -690,6 +689,32 @@ export function createCodexAppServerBindingStore(
   const update = state.update?.bind(state);
   if (!update) {
     throw new Error("Codex app-server bindings require atomic plugin-state updates");
+  }
+  try {
+    const now = Date.now();
+    for (const entry of state.entries()) {
+      const stored = readStoredCodexAppServerBinding(entry.value);
+      if (
+        entry.createdAt <= 0 ||
+        !entry.key.startsWith("session-key:") ||
+        stored?.state !== "cleared" ||
+        stored.retired !== true ||
+        (stored.lease?.expiresAt ?? 0) > now
+      ) {
+        continue;
+      }
+      const remaining = STABLE_SESSION_RETIRE_TTL_MS - (now - entry.createdAt);
+      if (remaining <= 0) {
+        state.delete(entry.key);
+        continue;
+      }
+      const { lease: _lease, ...retired } = stored;
+      update(entry.key, () => retired, { ttlMs: remaining });
+    }
+  } catch (error) {
+    // Startup cleanup is capacity maintenance, not binding authority. A cleanup
+    // failure must not make otherwise valid existing sessions unavailable.
+    embeddedAgentLog.warn("failed to apply Codex retired binding retention", { error });
   }
   const leaseContext = new AsyncLocalStorage<Map<string, BindingLeaseOwner>>();
   const archiveContext = new AsyncLocalStorage<boolean>();
@@ -1166,7 +1191,7 @@ export function createCodexAppServerBindingStore(
               },
             };
           },
-          identity.sessionKey?.trim() ? undefined : PHYSICAL_SESSION_RETIRE_TTL_MS,
+          sessionRetirementTtlMs(key),
         );
       });
     },
@@ -1274,7 +1299,7 @@ export function createCodexAppServerBindingStore(
                   raw,
                   (current) => current.state === "cleared" && current.retired === true,
                 ),
-              key.startsWith("session:") ? { ttlMs: PHYSICAL_SESSION_RETIRE_TTL_MS } : undefined,
+              key.startsWith("session") ? { ttlMs: sessionRetirementTtlMs(key) } : undefined,
             );
             if (!releasedRetired) {
               update(

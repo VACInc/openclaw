@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
+import { embeddedAgentLog } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { PluginStateSyncKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
 import { z } from "zod";
 
 export const CLAUDE_MANAGED_SESSION_NAMESPACE = "claude-cli-managed-sessions";
-export const CLAUDE_MANAGED_SESSION_MAX_ENTRIES = 50_001;
+export const CLAUDE_MANAGED_SESSION_MAX_ENTRIES = 20_000;
 const CLAUDE_MANAGED_SESSION_BACKFILL_KEY = "migration:managed-provenance-backfill:v3";
 
 type ManagedSessionCandidate = { hostId: string; sessionId: string };
@@ -28,7 +29,7 @@ export type StoredClaudeManagedSession =
   | z.infer<typeof migrationSchema>;
 
 export type ClaudeManagedSessionStore = {
-  mark(params: { hostId: string; sessionId: string }): Promise<void>;
+  mark(params: { hostId: string; sessionId: string }): Promise<boolean>;
   snapshot(
     legacyCandidates?: ManagedSessionCandidateSource,
   ): Promise<ReadonlyMap<string, ReadonlySet<string>>>;
@@ -51,13 +52,21 @@ export function createClaudeManagedSessionStore(
   >,
 ): ClaudeManagedSessionStore {
   const mark = async (params: { hostId: string; sessionId: string }) => {
-    const value = managedSessionSchema.parse({
-      version: 1,
-      kind: "managed-session",
-      hostId: params.hostId.trim(),
-      sessionId: params.sessionId.trim(),
-    });
-    state.registerIfAbsent(managedSessionKey(value.hostId, value.sessionId), value);
+    try {
+      const value = managedSessionSchema.parse({
+        version: 1,
+        kind: "managed-session",
+        hostId: params.hostId.trim(),
+        sessionId: params.sessionId.trim(),
+      });
+      state.registerIfAbsent(managedSessionKey(value.hostId, value.sessionId), value);
+      return true;
+    } catch (error) {
+      // This index changes catalog visibility only. Session execution must survive
+      // a full or temporarily unavailable plugin-state store.
+      embeddedAgentLog.warn("failed to record Claude managed session ownership", { error });
+      return false;
+    }
   };
   return {
     mark,
@@ -78,16 +87,23 @@ export function createClaudeManagedSessionStore(
           typeof legacyCandidateSource === "function"
             ? await legacyCandidateSource()
             : legacyCandidateSource;
+        let complete = true;
         for (const candidate of legacyCandidates) {
-          await mark(candidate);
+          complete = (await mark(candidate)) && complete;
           const ids = byHost.get(candidate.hostId) ?? new Set<string>();
           ids.add(candidate.sessionId);
           byHost.set(candidate.hostId, ids);
         }
-        state.registerIfAbsent(CLAUDE_MANAGED_SESSION_BACKFILL_KEY, {
-          version: 3,
-          kind: "managed-provenance-backfill-complete",
-        });
+        if (complete) {
+          try {
+            state.registerIfAbsent(CLAUDE_MANAGED_SESSION_BACKFILL_KEY, {
+              version: 3,
+              kind: "managed-provenance-backfill-complete",
+            });
+          } catch (error) {
+            embeddedAgentLog.warn("failed to complete Claude managed session backfill", { error });
+          }
+        }
       }
       return byHost;
     },

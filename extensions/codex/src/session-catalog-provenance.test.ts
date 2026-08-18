@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { zstdCompressSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CodexThread } from "./app-server/protocol.js";
 import { isOpenClawManagedCodexThread } from "./session-catalog-provenance.js";
@@ -45,6 +46,24 @@ describe("Codex catalog provenance", () => {
 
     await expect(
       isOpenClawManagedCodexThread({ id: "large-managed-thread", path: file } as CodexThread),
+    ).resolves.toBe(true);
+  });
+
+  it("reads a compressed rollout when Codex retains the missing plain path", async () => {
+    const file = await writeRollout({
+      id: "compressed-managed-thread",
+      originator: "openclaw",
+      source: "vscode",
+    });
+    const compressed = `${file}.zst`;
+    await fs.writeFile(compressed, zstdCompressSync(await fs.readFile(file)));
+    await fs.rm(file);
+
+    await expect(
+      isOpenClawManagedCodexThread({
+        id: "compressed-managed-thread",
+        path: file,
+      } as CodexThread),
     ).resolves.toBe(true);
   });
 

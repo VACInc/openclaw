@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
+import { embeddedAgentLog } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { PluginStateSyncKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
 import { z } from "zod";
+import { canonicalCodexCatalogHome, codexCatalogHomeId } from "../session-catalog-home-id.js";
 
 export const CODEX_MANAGED_THREAD_NAMESPACE = "app-server-managed-threads";
-export const CODEX_MANAGED_THREAD_MAX_ENTRIES = 50_001;
+export const CODEX_MANAGED_THREAD_MAX_ENTRIES = 20_000;
 
 const managedThreadSchema = z.object({
   version: z.literal(1),
@@ -18,7 +19,7 @@ const managedThreadSchema = z.object({
 export type StoredCodexManagedThread = z.infer<typeof managedThreadSchema>;
 
 export type CodexManagedThreadStore = {
-  mark(params: { sourceHomeId: string; threadId: string; rolloutPath?: string }): Promise<void>;
+  mark(params: { sourceHomeId: string; threadId: string; rolloutPath?: string }): Promise<boolean>;
   snapshot(): Promise<ReadonlyMap<string, ReadonlySet<string>>>;
 };
 
@@ -33,30 +34,22 @@ export async function markStartedCodexManagedThread(
     (params.rolloutPath ? codexHomeFromRolloutPath(params.rolloutPath) : undefined) ??
     params.codexHome?.();
   if (!codexHome) {
-    throw new Error("Codex managed thread ownership requires a resolvable Codex home");
+    embeddedAgentLog.warn("codex managed thread ownership has no resolvable Codex home", {
+      threadId: params.threadId,
+    });
+    return;
   }
-  await store.mark({
-    sourceHomeId: codexManagedThreadSourceHomeId(codexHome),
-    threadId: params.threadId,
-    ...(params.rolloutPath ? { rolloutPath: params.rolloutPath } : {}),
-  });
-}
-
-function canonicalCodexHome(value: string): string {
-  const resolved = path.resolve(value);
   try {
-    return fs.realpathSync.native(resolved);
-  } catch {
-    return resolved;
+    await store.mark({
+      sourceHomeId: codexCatalogHomeId(codexHome),
+      threadId: params.threadId,
+      ...(params.rolloutPath ? { rolloutPath: params.rolloutPath } : {}),
+    });
+  } catch (error) {
+    // Keep this boundary fail-open even for a custom or legacy store implementation.
+    // A catalog duplicate is less harmful than rejecting an otherwise valid new session.
+    embeddedAgentLog.warn("failed to record Codex managed thread ownership", { error });
   }
-}
-
-/** Stable opaque identity shared by runtime ownership rows and catalog homes. */
-export function codexManagedThreadSourceHomeId(codexHome: string): string {
-  return createHash("sha256")
-    .update("openclaw:codex-session-catalog-home:v1\0")
-    .update(canonicalCodexHome(codexHome))
-    .digest("hex");
 }
 
 /** Recovers CODEX_HOME from a canonical rollout path under CODEX_HOME/sessions. */
@@ -68,7 +61,7 @@ export function codexHomeFromRolloutPath(rolloutPath: string): string | undefine
     return undefined;
   }
   const home = segments.slice(0, sessionsIndex).join(path.sep) || path.parse(resolved).root;
-  return canonicalCodexHome(home);
+  return canonicalCodexCatalogHome(home);
 }
 
 function managedThreadStoreKey(sourceHomeId: string, threadId: string): string {
@@ -86,14 +79,22 @@ export function createCodexManagedThreadStore(
 ): CodexManagedThreadStore {
   return {
     async mark(params) {
-      const value = managedThreadSchema.parse({
-        version: 1,
-        kind: "managed-thread",
-        sourceHomeId: params.sourceHomeId.trim(),
-        threadId: params.threadId.trim(),
-        ...(params.rolloutPath?.trim() ? { rolloutPath: params.rolloutPath.trim() } : {}),
-      });
-      state.registerIfAbsent(managedThreadStoreKey(value.sourceHomeId, value.threadId), value);
+      try {
+        const value = managedThreadSchema.parse({
+          version: 1,
+          kind: "managed-thread",
+          sourceHomeId: params.sourceHomeId.trim(),
+          threadId: params.threadId.trim(),
+          ...(params.rolloutPath?.trim() ? { rolloutPath: params.rolloutPath.trim() } : {}),
+        });
+        state.registerIfAbsent(managedThreadStoreKey(value.sourceHomeId, value.threadId), value);
+        return true;
+      } catch (error) {
+        // Catalog ownership is advisory bookkeeping. Losing an old catalog exclusion is safer
+        // than aborting a real Codex session start when plugin state is full or unavailable.
+        embeddedAgentLog.warn("failed to record Codex managed thread ownership", { error });
+        return false;
+      }
     },
     async snapshot() {
       const byHome = new Map<string, Set<string>>();

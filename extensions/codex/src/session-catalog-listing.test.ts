@@ -651,6 +651,70 @@ describe("Codex supervision catalog", () => {
     ]);
   });
 
+  it("backfills a provenance-filtered first page through the real listing path", async () => {
+    const root = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-provenance-page-")),
+    );
+    tempDirs.push(root);
+    const rolloutPath = path.join(root, "managed.jsonl");
+    await fs.writeFile(
+      rolloutPath,
+      `${JSON.stringify({
+        type: "session_meta",
+        payload: { id: "thread-managed", originator: "openclaw" },
+      })}\n`,
+    );
+    commandRpcMocks.codexControlRequest.mockImplementation(
+      async (_pluginConfig: unknown, method: string, params: { cursor?: string }) => {
+        expect(method).toBe("thread/list");
+        return params.cursor === "native-page"
+          ? { data: [idleThread({ id: "thread-native", source: "cli" })] }
+          : {
+              data: [
+                idleThread({
+                  id: "thread-managed",
+                  path: rolloutPath,
+                  source: "vscode",
+                }),
+              ],
+              nextCursor: "native-page",
+            };
+      },
+    );
+    const runtimeConfig = config;
+    const control = createCodexSessionCatalogControlFactory({
+      env: { ...process.env, CODEX_HOME: root },
+      getPluginConfig: () => ({ supervision: { enabled: true } }),
+      getRuntimeConfig: () => runtimeConfig,
+    });
+    const home = control.homesForAgent("main")[0]!;
+    const mark = vi.fn(async () => true);
+    const bindingStore = Object.assign(createCodexTestBindingStore(), {
+      managedThreads: {
+        mark,
+        snapshot: vi.fn(async () => new Map<string, ReadonlySet<string>>()),
+      },
+    });
+
+    const result = await listCodexSessionCatalog({
+      agentId: "main",
+      bindingStore,
+      config: runtimeConfig,
+      runtime: createRuntime().runtime,
+      control,
+      query: { limitPerHost: 1 },
+      localHomes: [home],
+      listNodes: async () => ({ nodes: [] }),
+    });
+
+    expect(result.hosts[0]?.sessions.map((session) => session.threadId)).toEqual(["thread-native"]);
+    expect(mark).toHaveBeenCalledWith({
+      sourceHomeId: home.sourceHomeId,
+      threadId: "thread-managed",
+      rolloutPath,
+    });
+  });
+
   it("hides legacy active OpenClaw bindings and records their observed catalog home", async () => {
     const home: CodexCatalogHome = {
       sourceHomeId: "home-observed",

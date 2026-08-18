@@ -445,6 +445,40 @@ describe("executePreparedCliRun supervisor output capture", () => {
     expect(recordManagedSession).toHaveBeenCalledWith({ sessionId: "managed-fresh" });
   });
 
+  it("does not abort a fresh session when catalog ownership bookkeeping fails", async () => {
+    const resultEvent = `${JSON.stringify({
+      type: "result",
+      session_id: "managed-without-index",
+      result: "done",
+    })}\n`;
+    supervisorSpawnMock.mockImplementation(async (...args: unknown[]) => {
+      const input = args[0] as SupervisorSpawnInput;
+      input.onStdout?.(resultEvent);
+      return createManagedRun({
+        reason: "exit",
+        exitCode: 0,
+        exitSignal: null,
+        durationMs: 50,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+        noOutputTimedOut: false,
+      });
+    });
+
+    await expect(
+      executePreparedCliRun(
+        buildPreparedCliRunContext({
+          output: "jsonl",
+          provider: "claude-cli",
+          recordManagedSession: async () => {
+            throw new Error("ownership index unavailable");
+          },
+        }),
+      ),
+    ).resolves.toMatchObject({ text: "done", sessionId: "managed-without-index" });
+  });
+
   it("parses oversized resume JSONL output from the effective resume output mode", async () => {
     const largeToolEvent = `${JSON.stringify({
       type: "stream_event",

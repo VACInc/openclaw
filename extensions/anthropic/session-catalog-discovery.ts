@@ -38,10 +38,10 @@ const CLAUDE_METADATA_PREFIX_BYTES = 1024 * 1024;
 const CLAUDE_METADATA_READ_CHUNK_BYTES = 16 * 1024;
 const MAX_CATALOG_METADATA_SCAN_BYTES = 64 * 1024 * 1024;
 const CLI_ENTRYPOINTS = new Set(["cli", "sdk-cli"]);
-const OPENCLAW_INBOUND_CONTEXT_MARKER = "⟦openclaw:ctx⟧";
-const OPENCLAW_INTER_SESSION_PROMPT_PREFIX = "[Inter-session message]";
-const OPENCLAW_CRON_PROMPT_PREFIX = "[cron:";
-const OPENCLAW_INTERNAL_PROMPT_MARKERS = [
+const INBOUND_CONTEXT_MARKER = "⟦openclaw:ctx⟧";
+const INTER_SESSION_PROMPT_PREFIX = "[Inter-session message]";
+const CRON_PROMPT_PREFIX = "[cron:";
+const INTERNAL_PROMPT_MARKERS = [
   "[System]",
   "[Subagent Context]",
   "[Subagent Task]",
@@ -131,10 +131,10 @@ export type CatalogRecord = ClaudeSessionCatalogSession & {
 
 function hasOpenClawManagedFirstPrompt(prompt: string): boolean {
   return (
-    prompt.includes(OPENCLAW_INBOUND_CONTEXT_MARKER) ||
-    prompt.trimStart().startsWith(OPENCLAW_INTER_SESSION_PROMPT_PREFIX) ||
-    prompt.trimStart().startsWith(OPENCLAW_CRON_PROMPT_PREFIX) ||
-    OPENCLAW_INTERNAL_PROMPT_MARKERS.some((marker) => prompt.includes(marker))
+    prompt.includes(INBOUND_CONTEXT_MARKER) ||
+    prompt.trimStart().startsWith(INTER_SESSION_PROMPT_PREFIX) ||
+    prompt.trimStart().startsWith(CRON_PROMPT_PREFIX) ||
+    INTERNAL_PROMPT_MARKERS.some((marker) => prompt.includes(marker))
   );
 }
 

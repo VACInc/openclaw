@@ -125,8 +125,9 @@ export default definePluginEntry({
     // store only when a proxied runtime performs the first binding operation.
     const lazyBindingStateStore: Pick<
       PluginStateSyncKeyedStore<StoredCodexAppServerBinding>,
-      "entries" | "lookup" | "update"
+      "delete" | "entries" | "lookup" | "update"
     > = {
+      delete: (key) => openBindingStateStore().delete(key),
       entries: () => openBindingStateStore().entries(),
       lookup: (key) => openBindingStateStore().lookup(key),
       get update() {
@@ -138,7 +139,9 @@ export default definePluginEntry({
       (managedThreadStateStore ??= api.runtime.state.openSyncKeyedStore<StoredCodexManagedThread>({
         namespace: CODEX_MANAGED_THREAD_NAMESPACE,
         maxEntries: CODEX_MANAGED_THREAD_MAX_ENTRIES,
-        overflowPolicy: "reject-new",
+        // Catalog-only ownership may evict its oldest row. Modern rollouts/transcripts are
+        // rediscovered from provenance; very old markerless sessions may reappear after eviction.
+        overflowPolicy: "evict-oldest",
       }));
     const lazyManagedThreadStateStore: Pick<
       PluginStateSyncKeyedStore<StoredCodexManagedThread>,

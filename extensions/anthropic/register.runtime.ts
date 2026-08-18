@@ -74,6 +74,7 @@ import {
 import { anthropicMediaUnderstandingProvider } from "./media-understanding-provider.js";
 import manifest from "./openclaw.plugin.json" with { type: "json" };
 import { resolveClaudeCliSyntheticAuth } from "./provider-discovery.js";
+import { CLAUDE_LOCAL_SESSION_HOST_ID } from "./session-catalog-adoption.js";
 import {
   createClaudeSessionNodeInvokePolicies,
   registerClaudeSessionDiscovery,
@@ -1211,7 +1212,9 @@ export function registerAnthropicPlugin(api: OpenClawPluginApi): void {
     (managedSessionState ??= api.runtime.state.openSyncKeyedStore<StoredClaudeManagedSession>({
       namespace: CLAUDE_MANAGED_SESSION_NAMESPACE,
       maxEntries: CLAUDE_MANAGED_SESSION_MAX_ENTRIES,
-      overflowPolicy: "reject-new",
+      // Catalog-only ownership is bounded independently from other Anthropic state. If the oldest
+      // row is evicted, modern local transcripts are rediscovered from their opening provenance.
+      overflowPolicy: "evict-oldest",
     }));
   const managedSessions = createClaudeManagedSessionStore({
     entries: () => openManagedSessionState().entries(),
@@ -1236,11 +1239,12 @@ export function registerAnthropicPlugin(api: OpenClawPluginApi): void {
   api.registerCliBackend(
     buildAnthropicCliBackend({
       ensureDynamicSystemPromptSectionsSupport: () => dynamicSystemPromptSectionsProbe,
-      recordManagedSession: ({ sessionId, nodeId }) =>
-        managedSessions.mark({
-          hostId: nodeId ? `node:${nodeId}` : "gateway:local",
+      recordManagedSession: async ({ sessionId, nodeId }) => {
+        await managedSessions.mark({
+          hostId: nodeId ? `node:${nodeId}` : CLAUDE_LOCAL_SESSION_HOST_ID,
           sessionId,
-        }),
+        });
+      },
       supportsDynamicSystemPromptSections: () => supportsDynamicSystemPromptSections,
     }),
   );

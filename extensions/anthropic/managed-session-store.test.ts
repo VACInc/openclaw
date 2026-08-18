@@ -56,4 +56,19 @@ describe("Claude managed session store", () => {
       new Map([["gateway:local", new Set(["legacy"])]]),
     );
   });
+
+  it("retries migration when durable ownership registration fails", async () => {
+    const fixture = createState();
+    fixture.state.registerIfAbsent = vi.fn(() => {
+      throw new Error("plugin state full");
+    });
+    const store = createClaudeManagedSessionStore(fixture.state);
+    const candidates = vi.fn(async () => [{ hostId: "gateway:local", sessionId: "legacy" }]);
+
+    await store.snapshot(candidates);
+    await store.snapshot(candidates);
+
+    expect(candidates).toHaveBeenCalledTimes(2);
+    expect(fixture.values.has(BACKFILL_KEY)).toBe(false);
+  });
 });

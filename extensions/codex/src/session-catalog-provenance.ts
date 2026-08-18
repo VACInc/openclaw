@@ -1,4 +1,5 @@
-import fs from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { createZstdDecompress } from "node:zlib";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { CodexThread } from "./app-server/protocol.js";
 
@@ -22,52 +23,57 @@ function cacheProvenance(path: string, value: boolean): void {
 
 /** Undefined means the metadata line is not durable enough to cache yet. */
 async function readOpenClawOriginator(
-  path: string,
+  rolloutPath: string,
   threadId: string,
 ): Promise<boolean | undefined> {
-  const handle = await fs.open(path, "r").catch(() => undefined);
-  if (!handle) {
-    return undefined;
-  }
-  try {
-    const chunks: Buffer[] = [];
-    let bytesReadTotal = 0;
-    let line: string | undefined;
-    while (bytesReadTotal < MAX_SESSION_META_BYTES) {
-      const buffer = Buffer.allocUnsafe(
-        Math.min(SESSION_META_READ_CHUNK_BYTES, MAX_SESSION_META_BYTES - bytesReadTotal),
-      );
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, bytesReadTotal);
-      if (bytesRead === 0) {
-        break;
-      }
-      bytesReadTotal += bytesRead;
-      const chunk = buffer.subarray(0, bytesRead);
-      const newline = chunk.indexOf(0x0a);
-      chunks.push(newline >= 0 ? chunk.subarray(0, newline) : chunk);
-      if (newline >= 0) {
-        line = Buffer.concat(chunks).toString("utf8");
-        break;
-      }
-    }
-    if (!line) {
-      return undefined;
-    }
-    let parsed: unknown;
+  const candidates = rolloutPath.endsWith(".zst")
+    ? [rolloutPath, rolloutPath.slice(0, -".zst".length)]
+    : [rolloutPath, `${rolloutPath}.zst`];
+  for (const candidate of candidates) {
+    const input = createReadStream(candidate, { highWaterMark: SESSION_META_READ_CHUNK_BYTES });
+    const reader = candidate.endsWith(".zst") ? input.pipe(createZstdDecompress()) : input;
     try {
-      parsed = JSON.parse(line) as unknown;
+      const chunks: Buffer[] = [];
+      let bytesReadTotal = 0;
+      let line: string | undefined;
+      for await (const value of reader) {
+        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+        const remaining = MAX_SESSION_META_BYTES - bytesReadTotal;
+        if (remaining <= 0) {
+          break;
+        }
+        const bounded = chunk.subarray(0, remaining);
+        bytesReadTotal += bounded.length;
+        const newline = bounded.indexOf(0x0a);
+        chunks.push(newline >= 0 ? bounded.subarray(0, newline) : bounded);
+        if (newline >= 0) {
+          line = Buffer.concat(chunks).toString("utf8");
+          break;
+        }
+      }
+      if (!line) {
+        continue;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line) as unknown;
+      } catch {
+        continue;
+      }
+      if (!isRecord(parsed) || parsed.type !== "session_meta" || !isRecord(parsed.payload)) {
+        return false;
+      }
+      const payload = parsed.payload;
+      const recordedId = payload.id ?? payload.session_id;
+      return recordedId === threadId && payload.originator === "openclaw";
     } catch {
-      return undefined;
+      continue;
+    } finally {
+      reader.destroy();
+      input.destroy();
     }
-    if (!isRecord(parsed) || parsed.type !== "session_meta" || !isRecord(parsed.payload)) {
-      return false;
-    }
-    const payload = parsed.payload;
-    const recordedId = payload.id ?? payload.session_id;
-    return recordedId === threadId && payload.originator === "openclaw";
-  } finally {
-    await handle.close();
   }
+  return undefined;
 }
 
 /**

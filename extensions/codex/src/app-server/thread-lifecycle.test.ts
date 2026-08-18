@@ -2420,6 +2420,42 @@ describe("Codex plugin binding recovery", () => {
     );
   });
 
+  it("starts a durable thread when catalog ownership bookkeeping fails", async () => {
+    const params = createThreadLifecycleParams(
+      path.join(tempDir, "session-managed-failure.jsonl"),
+      path.join(tempDir, "workspace-managed-failure"),
+    );
+    const stateStore = createCodexTestBindingStateStore();
+    const bindingStore = Object.assign(createCodexAppServerBindingStore(stateStore), {
+      managedThreads: {
+        mark: vi.fn(async () => {
+          throw new Error("managed ownership unavailable");
+        }),
+        snapshot: vi.fn(async () => new Map()),
+      },
+    });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/start") {
+        return threadStartResult("thread-managed-without-index");
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    await expect(
+      startOrResumeThreadImpl({
+        client: {
+          request,
+          getRuntimeIdentity: () => ({ codexHome: path.join(tempDir, "codex-home") }),
+        } as never,
+        params,
+        cwd: params.workspaceDir!,
+        dynamicTools: [],
+        appServer: createThreadLifecycleAppServerOptions(),
+        bindingStore,
+      }),
+    ).resolves.toMatchObject({ threadId: "thread-managed-without-index" });
+  });
+
   it("does not rebuild a binding whose configured plugin is a settled negative", async () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");

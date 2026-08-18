@@ -302,10 +302,16 @@ export async function executePreparedCliRun(
     if (params.controlOperation || params.isolatedCompletion) {
       return;
     }
-    await context.backendResolved.recordManagedSession?.({
-      sessionId,
-      ...(nodePlacement ? { nodeId: nodePlacement.nodeId } : {}),
-    });
+    try {
+      await context.backendResolved.recordManagedSession?.({
+        sessionId,
+        ...(nodePlacement ? { nodeId: nodePlacement.nodeId } : {}),
+      });
+    } catch (error) {
+      // Provider ownership is catalog bookkeeping, not execution authority. A stale duplicate
+      // catalog row is preferable to rejecting a provider session that can otherwise run.
+      cliBackendLog.warn(`cli managed-session bookkeeping failed: ${formatErrorMessage(error)}`);
+    }
   };
   const observeForkSuccessor = (sessionId: string) => {
     if (
