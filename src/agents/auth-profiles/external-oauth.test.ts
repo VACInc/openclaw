@@ -198,6 +198,28 @@ describe("auth external oauth helpers", () => {
     expect(getRuntimeExternalCliProfileIds(prepared)).toEqual([profileId]);
   });
 
+  it("bootstraps a missing Claude CLI profile from an Anthropic provider scope", () => {
+    const profileId = "anthropic:claude-cli";
+    readClaudeCliCredentialsCachedMock.mockReturnValueOnce(
+      createCredential({
+        provider: "anthropic",
+        access: "fresh-claude-access",
+        refresh: "fresh-claude-refresh",
+        expires: createUsableOAuthExpiry(),
+      }),
+    );
+
+    const prepared = overlayExternalAuthProfiles(createStore(), {
+      externalCliProviderIds: ["anthropic"],
+    });
+
+    expect(prepared.profiles[profileId]).toMatchObject({
+      provider: "claude-cli",
+      access: "fresh-claude-access",
+    });
+    expect(getRuntimeExternalCliProfileIds(prepared)).toEqual([profileId]);
+  });
+
   it("restores runtime CLI ownership for a steady-state persisted Claude profile", () => {
     const profileId = "anthropic:claude-cli";
     const prepared = overlayExternalAuthProfiles(
