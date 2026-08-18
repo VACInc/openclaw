@@ -43,6 +43,7 @@ export function buildStartedCodexThreadBinding(input: {
     cwd: params.cwd,
     ...(input.rolloutPath ? { rolloutPath: input.rolloutPath } : {}),
     authProfileId: params.params.authProfileId,
+    agentWorkspaceDeveloperInstructions: params.agentWorkspaceDeveloperInstructions,
     model: response.model ?? startParams.model ?? params.params.modelId,
     modelProvider: response.modelProvider ?? input.startModelProvider ?? input.modelProvider,
     dynamicToolsFingerprint: context.dynamicToolsFingerprint,

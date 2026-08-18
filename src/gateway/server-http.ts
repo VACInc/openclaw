@@ -23,6 +23,7 @@ import type { AuthRateLimiter } from "./auth-rate-limit.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
 import {
   CONTROL_UI_CATALOG_ICON_PATH_PREFIX,
+  CONTROL_UI_CHANNEL_AVATAR_PATH_PREFIX,
   CONTROL_UI_PLUGIN_ICON_PATH_PREFIX,
   CONTROL_UI_WORKSPACE_ICON_PATH_PREFIX,
 } from "./control-ui-contract.js";
@@ -99,6 +100,9 @@ const getMcpAppStandaloneModule = createLazyRuntimeModule(() => import("./mcp-ap
 const getPluginIconHttpModule = createLazyRuntimeModule(() => import("./plugin-icon-http.js"));
 const getWorkspaceIconHttpModule = createLazyRuntimeModule(
   () => import("./workspace-icon-http.js"),
+);
+const getChannelAvatarHttpModule = createLazyRuntimeModule(
+  () => import("./channel-avatar-http.js"),
 );
 const getModelsHttpModule = createLazyRuntimeModule(() => import("./models-http.js"));
 const getOpenAiHttpModule = createLazyRuntimeModule(() => import("./openai-http.js"));
@@ -611,6 +615,18 @@ export function createGatewayHttpServer(opts: {
             controlUiRouteOptions,
           ),
       );
+      addRequestStage(
+        controlUiEnabled &&
+          scopedRequestPath.startsWith(
+            `${controlUiRouteBasePath}${CONTROL_UI_CHANNEL_AVATAR_PATH_PREFIX}/`,
+          ),
+        async () =>
+          (await getChannelAvatarHttpModule()).handleChannelAvatarHttpRequest(
+            req,
+            res,
+            controlUiRouteOptions,
+          ),
+      );
       addRequestStage(controlUiEnabled, async () =>
         (await getControlUiModule()).handleControlUiAssistantMediaRequest(req, res, {
           ...controlUiRouteOptions,
@@ -645,7 +661,4 @@ export function createGatewayHttpServer(opts: {
   return httpServer;
 }
 
-export {
-  attachGatewayUpgradeHandler,
-  attachWorkerGatewayUpgradeHandler,
-} from "./server-http-upgrades.js";
+export { attachGatewayUpgradeHandler } from "./server-http-upgrades.js";

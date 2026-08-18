@@ -39,6 +39,7 @@ import {
 } from "./chat-state-refresh.ts";
 import { resolveChatAgentId, selectedChatSessionRow } from "./chat-state-route.ts";
 import { releaseChatMediaResourceSubscriber } from "./components/chat-message-media.ts";
+import { retireSessionWorkspaceCheckout } from "./components/chat-session-workspace.ts";
 import {
   reconcileStaleChatRunAfterSessionStatePublication,
   replayPendingChatAbort,
@@ -262,7 +263,7 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
       this.swarmHydrator?.dispose();
       this.swarmHydrator = null;
       this.taskSuggestionsRequestVersion += 1;
-      this.taskSuggestions = [];
+      this.setTaskSuggestions([]);
       this.taskSuggestionBusyIds.clear();
       this.taskSuggestionOperations.clear();
       this.resetTaskSuggestionCloudProfiles();
@@ -294,6 +295,9 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
     state.connected = snapshot.phase === "connected";
     state.connectionEpoch = this.connectionGeneration;
     state.hello = snapshot.hello;
+    if (sourceChanged) {
+      retireSessionWorkspaceCheckout(state);
+    }
     if (!sourceChanged && previousMediaAuthToken !== resolveAssistantAttachmentAuthToken(state)) {
       releaseChatMediaResourceSubscriber(state.requestUpdate);
     }

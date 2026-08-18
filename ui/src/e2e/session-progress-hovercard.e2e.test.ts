@@ -35,7 +35,7 @@ const suite = createChatFlowE2eSuite();
 suite.define(() => {
   it("renders safe progress markdown and refreshes the hovered card after a change event", async () => {
     const selectedSessionKey = "agent:main:selected";
-    const sessionKey = "agent:main:building-release";
+    const sessionKey = "agent:main:other-session";
     const initialMarkdown = [
       "**Building** phase 2",
       "",
@@ -60,6 +60,13 @@ suite.define(() => {
       async ({ page }) => {
         const gateway = await installMockGateway(page, {
           featureMethods: ["chat.metadata", "chat.startup", "progressCard.get"],
+          historyMessages: [
+            {
+              role: "assistant",
+              timestamp: 1,
+              content: [{ type: "text", text: `Follow progress in ${sessionKey}.` }],
+            },
+          ],
           methodResponses: {
             "progressCard.get": {
               cases: [
@@ -95,7 +102,8 @@ suite.define(() => {
               {
                 key: sessionKey,
                 kind: "direct",
-                label: "Building release",
+                label: "Other session",
+                displayName: "Other session",
                 updatedAt: 2,
               },
             ]),
@@ -109,9 +117,24 @@ suite.define(() => {
         const row = page.locator(`.sidebar-recent-session[data-session-key="${sessionKey}"]`);
         await row.waitFor({ state: "visible" });
         await row.hover();
-
         const card = page.locator(".session-progress-hovercard");
+        expect(await card.count()).toBe(0);
+        expect(
+          (await gateway.getRequests("progressCard.get")).filter(
+            (request) => isRecord(request.params) && request.params.sessionKey === sessionKey,
+          ),
+        ).toHaveLength(0);
+
+        const link = page.locator(
+          `.chat-thread a.markdown-session-link[data-session-key="${sessionKey}"]`,
+        );
+        await link.waitFor({ state: "visible" });
+        await expect.poll(() => link.textContent()).toBe("Other session");
+        expect(await link.getAttribute("href")).toBe("/chat/main/other-session");
+        await link.hover();
+
         await card.waitFor({ state: "visible" });
+        expect(["bottom", "top"]).toContain(await card.getAttribute("data-side"));
         await expect.poll(() => card.locator("strong").textContent()).toContain("Building");
 
         const progress = card.locator("progress");
@@ -136,7 +159,7 @@ suite.define(() => {
           .poll(() => card.locator(".session-progress-card__step--pending").textContent())
           .toContain("Publish");
         expect(await page.evaluate(() => "__progressCardPwned" in window)).toBe(false);
-        await captureProof(page, "sidebar-hovercard-open.png");
+        await captureProof(page, "chat-link-hovercard-open.png");
 
         await gateway.setMethodResponse("progressCard.get", {
           cases: [
@@ -179,7 +202,101 @@ suite.define(() => {
     );
   });
 
-  it("keeps the hover surface closed when the session has no progress card", async () => {
+  it("keeps the portaled progress dialog keyboard-reachable and viewport-contained", async () => {
+    const selectedSessionKey = "agent:main:selected-focus";
+    const sessionKey = "agent:main:focusable-progress";
+
+    await suite.withPage(
+      {
+        hasTouch: false,
+        locale: "en-US",
+        serviceWorkers: "block",
+        viewport: { height: 900, width: 1280 },
+      },
+      async ({ page }) => {
+        const gateway = await installMockGateway(page, {
+          featureMethods: ["chat.metadata", "chat.startup", "progressCard.get"],
+          historyMessages: [
+            {
+              role: "assistant",
+              timestamp: 1,
+              content: [{ type: "text", text: `Open ${sessionKey} for the build log.` }],
+            },
+          ],
+          methodResponses: {
+            "progressCard.get": {
+              cases: [
+                { match: { sessionKey: selectedSessionKey }, response: { card: null } },
+                {
+                  match: { sessionKey },
+                  response: {
+                    card: {
+                      markdown: "[Open build log](https://example.com/build)",
+                      revision: 1,
+                      sessionKey,
+                      updatedAt: 1,
+                    },
+                  },
+                },
+              ],
+            },
+            "sessions.list": chatSessionListResponse([
+              {
+                key: selectedSessionKey,
+                kind: "direct",
+                label: "Selected session",
+                updatedAt: 2,
+              },
+              {
+                key: sessionKey,
+                kind: "direct",
+                label: "Focusable progress",
+                updatedAt: 1,
+              },
+            ]),
+          },
+          sessionKey: selectedSessionKey,
+        });
+
+        await page.goto(controlUiSessionUrl(suite.server.baseUrl, selectedSessionKey));
+        const trigger = page.locator(
+          `.chat-thread a.markdown-session-link[data-session-key="${sessionKey}"]`,
+        );
+        const card = page.locator(".session-progress-hovercard");
+        await trigger.waitFor({ state: "visible" });
+        await trigger.focus();
+        expect(await trigger.evaluate((element) => document.activeElement === element)).toBe(true);
+        await expect
+          .poll(
+            async () =>
+              (await gateway.getRequests("progressCard.get")).filter(
+                (request) => isRecord(request.params) && request.params.sessionKey === sessionKey,
+              ).length,
+          )
+          .toBe(1);
+
+        await card.waitFor({ state: "visible" });
+        expect(await card.getAttribute("role")).toBe("dialog");
+        expect(await trigger.getAttribute("aria-haspopup")).toBe("dialog");
+        expect(await trigger.getAttribute("aria-expanded")).toBe("true");
+        expect(await trigger.getAttribute("aria-controls")).toBe(await card.getAttribute("id"));
+        const box = await card.boundingBox();
+        expect(box).not.toBeNull();
+        expect(box?.x).toBeGreaterThanOrEqual(0);
+        expect(box?.y).toBeGreaterThanOrEqual(0);
+        expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(1280);
+        expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(900);
+
+        await page.keyboard.press("Tab");
+        await expect
+          .poll(() => page.locator(":focus").getAttribute("href"))
+          .toBe("https://example.com/build");
+        await captureProof(page, "keyboard-focus.png");
+      },
+    );
+  });
+
+  it("quietly leaves a titled link when the session has no progress card", async () => {
     const sessionKey = "agent:main:no-progress-card";
 
     await suite.withPage(
@@ -192,6 +309,13 @@ suite.define(() => {
       async ({ page }) => {
         const gateway = await installMockGateway(page, {
           featureMethods: ["chat.metadata", "chat.startup", "progressCard.get"],
+          historyMessages: [
+            {
+              role: "assistant",
+              timestamp: 1,
+              content: [{ type: "text", text: `No card yet for ${sessionKey}.` }],
+            },
+          ],
           methodResponses: {
             "progressCard.get": { card: null },
             "sessions.list": chatSessionListResponse([
@@ -199,6 +323,7 @@ suite.define(() => {
                 key: sessionKey,
                 kind: "direct",
                 label: "No progress card",
+                displayName: "No progress card",
                 updatedAt: 1,
               },
             ]),
@@ -209,8 +334,19 @@ suite.define(() => {
         await page.goto(controlUiSessionUrl(suite.server.baseUrl, sessionKey));
         const row = page.locator(`.sidebar-recent-session[data-session-key="${sessionKey}"]`);
         await row.waitFor({ state: "visible" });
+        expect(await row.getAttribute("title")).toBeNull();
+        expect(await row.locator(".sidebar-recent-session__link").getAttribute("title")).toBeNull();
         await row.hover();
+        expect(await page.locator(".session-progress-hovercard").count()).toBe(0);
 
+        const link = page.locator(
+          `.chat-thread a.markdown-session-link[data-session-key="${sessionKey}"]`,
+        );
+        await link.waitFor({ state: "visible" });
+        await expect.poll(() => link.textContent()).toBe("No progress card");
+        expect(await link.getAttribute("href")).toBe("/chat/main/no-progress-card");
+        expect(await link.getAttribute("title")).toBe(sessionKey);
+        await link.hover();
         await expect.poll(() => gateway.getRequests("progressCard.get")).toHaveLength(1);
         await expect.poll(() => page.locator(".session-progress-hovercard").count()).toBe(0);
       },

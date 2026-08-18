@@ -7,7 +7,7 @@ import "../components/gateway-url-confirmation.ts";
 import "../components/github-link-hovercard-registration.ts";
 import "../components/login-gate.ts";
 import "../components/openclaw-mascot.ts";
-import "../components/tooltip.ts";
+import { installNativeTitleGuard } from "../components/tooltip.ts";
 import { t } from "../i18n/index.ts";
 import { normalizeAgentId } from "../lib/sessions/session-key.ts";
 import { isTerminalAvailable } from "../lib/terminal-availability.ts";
@@ -114,7 +114,8 @@ export class OpenClawApp extends OpenClawLightDomElement {
       .watch(
         () => (this.terminalOnly ? this.context?.agentSelection : undefined),
         (selection, notify) => selection.subscribe(notify),
-      );
+      )
+      .effect(() => this.ownerDocument, installNativeTitleGuard);
   }
 
   override connectedCallback() {
@@ -363,18 +364,17 @@ export class OpenClawApp extends OpenClawLightDomElement {
     return html`
       <openclaw-tooltip-provider>
         <openclaw-github-link-hovercard-provider .client=${gatewaySnapshot.client}>
-          <openclaw-session-link-hovercard-provider
+          <openclaw-session-progress-hovercard-provider
             .client=${gatewaySnapshot.client}
             .context=${context}
+            .gateway=${context.gateway}
           >
-            <openclaw-session-progress-hovercard-provider .gateway=${context.gateway}>
-              ${gatewayUrlConfirmation}
-              <openclaw-app-shell
-                .runtime=${runtime}
-                .onboarding=${this.onboarding}
-              ></openclaw-app-shell>
-            </openclaw-session-progress-hovercard-provider>
-          </openclaw-session-link-hovercard-provider>
+            ${gatewayUrlConfirmation}
+            <openclaw-app-shell
+              .runtime=${runtime}
+              .onboarding=${this.onboarding}
+            ></openclaw-app-shell>
+          </openclaw-session-progress-hovercard-provider>
         </openclaw-github-link-hovercard-provider>
       </openclaw-tooltip-provider>
     `;
