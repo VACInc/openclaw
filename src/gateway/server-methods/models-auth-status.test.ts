@@ -720,7 +720,7 @@ describe("models.authStatus", () => {
                 access: "expired-access",
                 refresh: "stored-refresh",
                 expires: 1,
-              },
+              } satisfies AuthProfileStore["profiles"][string],
             ]),
           ),
         },
