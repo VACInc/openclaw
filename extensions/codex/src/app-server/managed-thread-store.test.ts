@@ -1,7 +1,6 @@
 import type { PluginStateSyncKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
 import { describe, expect, it } from "vitest";
 import {
-  CODEX_MANAGED_THREAD_BACKFILL_KEY,
   codexHomeFromRolloutPath,
   codexManagedThreadSourceHomeId,
   createCodexManagedThreadStore,
@@ -47,12 +46,8 @@ describe("Codex managed thread store", () => {
     );
   });
 
-  it("ignores migration and malformed rows when building a snapshot", async () => {
+  it("ignores malformed rows when building a snapshot", async () => {
     const { state, values } = createStateStore();
-    values.set(CODEX_MANAGED_THREAD_BACKFILL_KEY, {
-      version: 1,
-      kind: "binding-backfill-complete",
-    });
     values.set("malformed", {
       version: 1,
       kind: "managed-thread",

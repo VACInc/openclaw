@@ -551,6 +551,8 @@ function bindingLeaseLostError(key: string, cause?: unknown): Error {
 export type CodexAppServerBindingStore = {
   /** Durable ownership rows kept separate from replaceable session bindings. */
   managedThreads?: CodexManagedThreadStore;
+  /** Active OpenClaw-owned threads, excluding adopted native supervision sources. */
+  listActiveOrdinaryThreadIds?(): Promise<ReadonlySet<string>>;
   read(identity: CodexAppServerBindingIdentity): Promise<CodexAppServerThreadBinding | undefined>;
   hasOtherThreadOwner(
     threadId: string,
@@ -596,6 +598,12 @@ export function scopeCodexRunBindingStore(params: {
   return {
     ...(params.bindingStore.managedThreads
       ? { managedThreads: params.bindingStore.managedThreads }
+      : {}),
+    ...(params.bindingStore.listActiveOrdinaryThreadIds
+      ? {
+          listActiveOrdinaryThreadIds: () =>
+            params.bindingStore.listActiveOrdinaryThreadIds?.() ?? Promise.resolve(new Set()),
+        }
       : {}),
     read: (identity) => params.bindingStore.read(mapIdentity(identity)),
     hasOtherThreadOwner: (threadId, identity) =>
@@ -675,6 +683,7 @@ export function createCodexAppServerBindingStore(
   let pendingArchives = 0;
   let archiveTail = Promise.resolve();
   let bindingMutationsDrained: (() => void)[] = [];
+  let activeOrdinaryThreadIdsCache: ReadonlySet<string> | undefined;
 
   const waitForBindingMutations = async (): Promise<void> => {
     if (activeBindingMutations === 0) {
@@ -796,6 +805,7 @@ export function createCodexAppServerBindingStore(
         throw failure;
       }
       if (!busy) {
+        activeOrdinaryThreadIdsCache = undefined;
         return result;
       }
       if (Date.now() >= deadline) {
@@ -806,6 +816,32 @@ export function createCodexAppServerBindingStore(
   };
 
   return {
+    async listActiveOrdinaryThreadIds() {
+      if (activeOrdinaryThreadIdsCache) {
+        return activeOrdinaryThreadIdsCache;
+      }
+      const threadIds = new Set<string>();
+      for (const { key, value } of state.entries()) {
+        const stored = readStoredCodexAppServerBinding(value);
+        if (!stored) {
+          throw new Error(`Invalid Codex app-server binding row: ${key}`);
+        }
+        if (stored.state !== "active") {
+          continue;
+        }
+        const binding = stored.binding;
+        if (
+          binding.connectionScope === "supervision" &&
+          binding.threadId === binding.supervisionSourceThreadId
+        ) {
+          continue;
+        }
+        threadIds.add(binding.threadId);
+      }
+      activeOrdinaryThreadIdsCache = threadIds;
+      return activeOrdinaryThreadIdsCache;
+    },
+
     async read(identity) {
       const key = bindingStoreKey(identity);
       const raw = state.lookup(key);

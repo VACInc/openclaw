@@ -15,14 +15,7 @@ const managedThreadSchema = z.object({
   rolloutPath: z.string().min(1).optional(),
 });
 
-const migrationSchema = z.object({
-  version: z.literal(1),
-  kind: z.literal("binding-backfill-complete"),
-});
-
-export type StoredCodexManagedThread =
-  | z.infer<typeof managedThreadSchema>
-  | z.infer<typeof migrationSchema>;
+export type StoredCodexManagedThread = z.infer<typeof managedThreadSchema>;
 
 export type CodexManagedThreadStore = {
   mark(params: { sourceHomeId: string; threadId: string; rolloutPath?: string }): Promise<void>;
@@ -48,8 +41,6 @@ export async function markStartedCodexManagedThread(
     ...(params.rolloutPath ? { rolloutPath: params.rolloutPath } : {}),
   });
 }
-
-export const CODEX_MANAGED_THREAD_BACKFILL_KEY = "migration:binding-backfill:v1";
 
 function canonicalCodexHome(value: string): string {
   const resolved = path.resolve(value);

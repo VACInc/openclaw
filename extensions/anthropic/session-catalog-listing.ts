@@ -53,49 +53,6 @@ const NODE_INVOKE_TIMEOUT_MS = 30_000;
 const NODE_CATALOG_LIST_RESPONSE_TIMEOUT_MS = 8_000;
 const CLAUDE_HISTORY_IMPORT_MAX_ITEMS = 200;
 const CLAUDE_HISTORY_IMPORT_MAX_BYTES = 512 * 1024;
-const MAX_MANAGED_SESSION_BACKFILL_PAGES = 100;
-
-async function listVisibleClaudeSessionPage(params: {
-  cursor?: string;
-  excluded: ReadonlySet<string>;
-  limit: number;
-  read: (request: { cursor?: string; limit: number }) => Promise<ClaudeSessionCatalogPage>;
-}): Promise<ClaudeSessionCatalogPage> {
-  if (params.excluded.size === 0) {
-    return await params.read({
-      ...(params.cursor !== undefined ? { cursor: params.cursor } : {}),
-      limit: params.limit,
-    });
-  }
-  const sessions: ClaudeSessionCatalogSession[] = [];
-  const seenCursors = new Set<string>();
-  let cursor = params.cursor;
-  let nextCursor: string | undefined;
-  for (
-    let pageIndex = 0;
-    sessions.length < params.limit && pageIndex < MAX_MANAGED_SESSION_BACKFILL_PAGES;
-    pageIndex += 1
-  ) {
-    const page = await params.read({
-      ...(cursor !== undefined ? { cursor } : {}),
-      limit: params.limit - sessions.length,
-    });
-    sessions.push(...page.sessions.filter((session) => !params.excluded.has(session.threadId)));
-    nextCursor = page.nextCursor;
-    if (!nextCursor) {
-      break;
-    }
-    if (nextCursor === cursor || seenCursors.has(nextCursor)) {
-      throw new Error("Claude session catalog returned a repeated exclusion cursor");
-    }
-    seenCursors.add(nextCursor);
-    cursor = nextCursor;
-  }
-  return {
-    sessions,
-    ...(nextCursor ? { nextCursor } : {}),
-  };
-}
 
 export async function listLocalClaudeSessionPage(
   value: unknown,
@@ -253,7 +210,6 @@ export async function listClaudeSessionCatalog(params: {
   allowProcessHomeFallback?: boolean;
   listNodes?: Parameters<SessionCatalogProvider["list"]>[0]["listNodes"];
   onHost?: (host: ClaudeSessionCatalogHost) => void;
-  managedSessionIds?: ReadonlyMap<string, ReadonlySet<string>>;
 }): Promise<ClaudeSessionCatalogResult> {
   const query = parseGatewayQuery(params.query);
   const requested = query.hostIds ? new Set(query.hostIds) : undefined;
@@ -269,24 +225,17 @@ export async function listClaudeSessionCatalog(params: {
                 label: "Local Claude",
                 kind: "gateway",
                 connected: true,
-                ...(await listVisibleClaudeSessionPage({
-                  limit: query.limitPerHost,
-                  excluded:
-                    params.managedSessionIds?.get(CLAUDE_LOCAL_SESSION_HOST_ID) ?? new Set(),
-                  ...(query.cursors?.[CLAUDE_LOCAL_SESSION_HOST_ID] !== undefined
-                    ? { cursor: query.cursors[CLAUDE_LOCAL_SESSION_HOST_ID] }
-                    : {}),
-                  read: async ({ cursor, limit }) =>
-                    await listLocalClaudeSessionPage(
-                      {
-                        limit,
-                        ...(query.search ? { searchTerm: query.search } : {}),
-                        ...(cursor !== undefined ? { cursor } : {}),
-                      },
-                      currentHomeDir(),
-                      scanOptions,
-                    ),
-                })),
+                ...(await listLocalClaudeSessionPage(
+                  {
+                    limit: query.limitPerHost,
+                    ...(query.search ? { searchTerm: query.search } : {}),
+                    ...(query.cursors?.[CLAUDE_LOCAL_SESSION_HOST_ID] !== undefined
+                      ? { cursor: query.cursors[CLAUDE_LOCAL_SESSION_HOST_ID] }
+                      : {}),
+                  },
+                  currentHomeDir(),
+                  scanOptions,
+                )),
               };
             } catch {
               return {
@@ -366,26 +315,18 @@ export async function listClaudeSessionCatalog(params: {
       }
       const eventualHost = Promise.resolve()
         .then(async () => {
-          const page = await listVisibleClaudeSessionPage({
-            limit: query.limitPerHost,
-            excluded: params.managedSessionIds?.get(hostId) ?? new Set(),
-            ...(query.cursors?.[hostId] !== undefined ? { cursor: query.cursors[hostId] } : {}),
-            read: async ({ cursor, limit }) => {
-              const raw = await params.runtime.nodes.invoke({
-                nodeId: node.nodeId,
-                command: CLAUDE_SESSIONS_LIST_COMMAND,
-                params: {
-                  limit,
-                  ...(query.search ? { searchTerm: query.search } : {}),
-                  ...(cursor !== undefined ? { cursor } : {}),
-                },
-                timeoutMs: NODE_INVOKE_TIMEOUT_MS,
-                scopes: ["operator.write"],
-              });
-              return parseCatalogPage(unwrapNodePayload(raw));
+          const raw = await params.runtime.nodes.invoke({
+            nodeId: node.nodeId,
+            command: CLAUDE_SESSIONS_LIST_COMMAND,
+            params: {
+              limit: query.limitPerHost,
+              ...(query.search ? { searchTerm: query.search } : {}),
+              ...(query.cursors?.[hostId] !== undefined ? { cursor: query.cursors[hostId] } : {}),
             },
+            timeoutMs: NODE_INVOKE_TIMEOUT_MS,
+            scopes: ["operator.write"],
           });
-          return Object.assign({}, common, page);
+          return Object.assign({}, common, parseCatalogPage(unwrapNodePayload(raw)));
         })
         .catch(
           (): ClaudeSessionCatalogHost =>

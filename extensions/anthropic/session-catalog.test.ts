@@ -10,16 +10,12 @@ import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
 import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
 import type { SessionCatalogProvider as RegisteredSessionCatalogProvider } from "openclaw/plugin-sdk/session-catalog";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ClaudeManagedSessionStore } from "./managed-session-store.js";
 import { adoptedSourceKey } from "./session-catalog-adoption.js";
 import {
   createClaudeSessionNodeInvokePolicies,
   registerClaudeSessionDiscovery,
 } from "./session-catalog-registration.js";
-import {
-  listBoundClaudeSessions,
-  listManagedClaudeSessionCandidates,
-} from "./session-catalog-runtime.js";
+import { listBoundClaudeSessions } from "./session-catalog-runtime.js";
 import {
   CLAUDE_CLI_NODE_RUN_COMMAND,
   CLAUDE_SESSIONS_LIST_COMMAND,
@@ -80,17 +76,11 @@ function bindTestCatalogOwner(provider: RegisteredSessionCatalogProvider): Sessi
   } as SessionCatalogProvider;
 }
 
-function registerClaudeSessionCatalog(
-  api: OpenClawPluginApi,
-  managedSessions?: ClaudeManagedSessionStore,
-): void {
-  registerClaudeSessionDiscovery(
-    {
-      ...api,
-      registerNodeHostCommand: api.registerNodeHostCommand ?? (() => {}),
-    },
-    managedSessions,
-  );
+function registerClaudeSessionCatalog(api: OpenClawPluginApi): void {
+  registerClaudeSessionDiscovery({
+    ...api,
+    registerNodeHostCommand: api.registerNodeHostCommand ?? (() => {}),
+  });
 }
 
 function createClaudeSessionNodeHostCommands(): OpenClawPluginNodeHostCommand[] {
@@ -107,26 +97,20 @@ function createClaudeSessionNodeHostCommands(): OpenClawPluginNodeHostCommand[] 
   return commands;
 }
 
-function captureCatalogProvider(
-  runtime: PluginRuntime,
-  managedSessions?: ClaudeManagedSessionStore,
-): SessionCatalogProvider {
+function captureCatalogProvider(runtime: PluginRuntime): SessionCatalogProvider {
   let provider: SessionCatalogProvider | undefined;
   const runtimeWithSession = {
     ...runtime,
     agent: runtime.agent ?? { session: { listSessionEntries: () => [] } },
   } as PluginRuntime;
-  registerClaudeSessionCatalog(
-    {
-      id: "anthropic",
-      config: {},
-      runtime: runtimeWithSession,
-      registerSessionCatalog: (candidate: RegisteredSessionCatalogProvider) => {
-        provider = bindTestCatalogOwner(candidate);
-      },
-    } as unknown as OpenClawPluginApi,
-    managedSessions,
-  );
+  registerClaudeSessionCatalog({
+    id: "anthropic",
+    config: {},
+    runtime: runtimeWithSession,
+    registerSessionCatalog: (candidate: RegisteredSessionCatalogProvider) => {
+      provider = bindTestCatalogOwner(candidate);
+    },
+  } as unknown as OpenClawPluginApi);
   if (!provider) {
     throw new Error("expected Anthropic session catalog registration");
   }
@@ -617,104 +601,6 @@ describe("Claude session catalog", () => {
     );
   });
 
-  it("backfills ordinary and forked bindings without claiming adopted source sessions", () => {
-    const api = {
-      id: "anthropic",
-      config: {},
-      runtime: {
-        config: { current: () => ({}) },
-        agent: {
-          session: {
-            listSessionEntries: () => [
-              {
-                sessionKey: "agent:main:ordinary",
-                entry: {
-                  cliSessionBindings: { "claude-cli": { sessionId: "ordinary" } },
-                },
-              },
-              {
-                sessionKey: "agent:main:adopted",
-                entry: {
-                  cliSessionBindings: { "claude-cli": { sessionId: "native-source" } },
-                  pluginOwnerId: "anthropic",
-                  modelSelectionLocked: true,
-                  pluginExtensions: {
-                    anthropic: {
-                      sessionCatalog: {
-                        sourceHostId: "gateway:local",
-                        sourceThreadId: "native-source",
-                      },
-                    },
-                  },
-                },
-              },
-              {
-                sessionKey: "agent:main:forked",
-                entry: {
-                  cliSessionBindings: { "claude-cli": { sessionId: "fork-successor" } },
-                  pluginOwnerId: "anthropic",
-                  modelSelectionLocked: true,
-                  pluginExtensions: {
-                    anthropic: {
-                      sessionCatalog: {
-                        sourceHostId: "node:node-a",
-                        sourceThreadId: "native-source",
-                      },
-                    },
-                  },
-                },
-              },
-            ],
-          },
-        },
-      },
-    } as unknown as OpenClawPluginApi;
-
-    expect(listManagedClaudeSessionCandidates(api)).toEqual([
-      { hostId: "gateway:local", sessionId: "ordinary" },
-      { hostId: "node:node-a", sessionId: "fork-successor" },
-    ]);
-  });
-
-  it("backfills every agent before completing migration under explicit ownership", () => {
-    const api = {
-      id: "anthropic",
-      config: { agents: { ownership: "explicit" } },
-      runtime: {
-        config: { current: () => ({ agents: { ownership: "explicit" } }) },
-        agent: { session: { listSessionEntries: () => [] } },
-      },
-    } as unknown as OpenClawPluginApi;
-    const sessionEntries = {
-      entriesForAgent: () => [],
-      entriesForCatalog: () => [
-        {
-          agentId: "main",
-          sessionKey: "agent:main:managed",
-          entry: {
-            sessionId: "main-openclaw",
-            updatedAt: 1,
-            cliSessionBindings: { "claude-cli": { sessionId: "main-managed" } },
-          },
-        },
-        {
-          agentId: "research",
-          sessionKey: "agent:research:managed",
-          entry: {
-            sessionId: "research-openclaw",
-            updatedAt: 1,
-            cliSessionBindings: { "claude-cli": { sessionId: "research-managed" } },
-          },
-        },
-      ],
-    };
-
-    expect(listManagedClaudeSessionCandidates(api, sessionEntries)).toEqual([
-      { hostId: "gateway:local", sessionId: "main-managed" },
-      { hostId: "gateway:local", sessionId: "research-managed" },
-    ]);
-  });
-
   it("lists an explicit CLAUDE_CONFIG_DIR while isolated", async () => {
     const home = await createHome();
     const configParent = await createHome();
@@ -1085,40 +971,6 @@ describe("Claude session catalog", () => {
 
     const hosts = await provider?.list({});
     expect(hosts?.[0]?.sessions[0]?.sessionKey).toBe("agent:main:claude-bound");
-  });
-
-  it("hides managed Claude sessions and backfills the visible page from one snapshot", async () => {
-    const home = await createHome();
-    process.env.HOME = home;
-    await writeProject({
-      home,
-      entries: [
-        { sessionId: "native-newest", summary: "Native newest", isSidechain: false },
-        { sessionId: "managed-middle", summary: "Managed middle", isSidechain: false },
-        { sessionId: "native-oldest", summary: "Native oldest", isSidechain: false },
-      ],
-      transcripts: {
-        "native-newest": [message("native-newest", "user", "newest", 3)],
-        "managed-middle": [message("managed-middle", "user", "managed", 2)],
-        "native-oldest": [message("native-oldest", "user", "oldest", 1)],
-      },
-    });
-    const snapshot = vi.fn(async () => new Map([["gateway:local", new Set(["managed-middle"])]]));
-    const provider = captureCatalogProvider(
-      {
-        config: { current: () => ({}) },
-        agent: { session: { listSessionEntries: () => [] } },
-        nodes: { list: vi.fn(async () => ({ nodes: [] })) },
-      } as unknown as PluginRuntime,
-      { mark: async () => {}, snapshot },
-    );
-
-    const hosts = await provider.list({ limitPerHost: 2, hostIds: ["gateway:local"] });
-    expect(hosts[0]?.sessions.map((session) => session.threadId)).toEqual([
-      "native-newest",
-      "native-oldest",
-    ]);
-    expect(snapshot).toHaveBeenCalledOnce();
   });
 
   it("continues a local Desktop-app row and lists it as continuable", async () => {

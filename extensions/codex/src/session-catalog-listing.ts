@@ -66,6 +66,7 @@ async function listVisiblePage(params: {
   excludedThreadIds?: ReadonlySet<string>;
   filterTitle?: boolean;
   limit: number;
+  onExcludedThreadId?: (threadId: string) => Promise<void>;
   searchTerm?: string;
 }): Promise<CodexSessionCatalogPage> {
   const excluded = params.excludedThreadIds;
@@ -98,7 +99,13 @@ async function listVisiblePage(params: {
     if (pageIndex === 0) {
       backwardsCursor = page.backwardsCursor;
     }
-    sessions.push(...page.sessions.filter((session) => !excluded.has(session.threadId)));
+    for (const session of page.sessions) {
+      if (!excluded.has(session.threadId)) {
+        sessions.push(session);
+        continue;
+      }
+      await params.onExcludedThreadId?.(session.threadId);
+    }
     nextCursor = page.nextCursor;
     if (!nextCursor || sessions.length >= params.limit) {
       break;
@@ -116,6 +123,19 @@ async function listVisiblePage(params: {
   };
 }
 
+function mergeThreadIds(
+  ...sets: Array<ReadonlySet<string> | undefined>
+): ReadonlySet<string> | undefined {
+  const populated = sets.filter((set): set is ReadonlySet<string> => Boolean(set?.size));
+  if (populated.length === 0) {
+    return undefined;
+  }
+  if (populated.length === 1) {
+    return populated[0]!;
+  }
+  return new Set(populated.flatMap((set) => Array.from(set)));
+}
+
 async function listGatewayHost(params: {
   agentId: string;
   bindingStore: CodexAppServerBindingStore;
@@ -126,6 +146,7 @@ async function listGatewayHost(params: {
   sessionEntries?: SessionCatalogEntrySnapshot;
   source?: CodexCatalogHome;
   excludedThreadIds?: ReadonlySet<string>;
+  onExcludedThreadId?: (threadId: string) => Promise<void>;
 }): Promise<CodexSessionCatalogHost> {
   const hostId = params.source?.hostId ?? CODEX_LOCAL_SESSION_HOST_ID;
   const label = params.source?.label ?? "Local Codex";
@@ -136,6 +157,7 @@ async function listGatewayHost(params: {
       cursor: params.query.cursors?.[hostId],
       excludedThreadIds: params.excludedThreadIds,
       limit: params.query.limitPerHost,
+      onExcludedThreadId: params.onExcludedThreadId,
       searchTerm: params.query.search,
     });
     const adoptedSessions = await listAdoptedSessionEntries({
@@ -206,19 +228,41 @@ export async function listCodexSessionCatalog(params: {
     (!requestedHostIds || requestedHostIds.has(CODEX_LOCAL_SESSION_HOST_ID))
       ? [undefined]
       : []);
-  const managedThreads = await params.bindingStore.managedThreads?.snapshot();
+  const [managedThreads, activeOrdinaryThreadIds] = await Promise.all([
+    params.bindingStore.managedThreads?.snapshot(),
+    params.bindingStore.listActiveOrdinaryThreadIds?.(),
+  ]);
+  const fallbackSource = params.control.homesForAgent(agentId)[0];
   const localHosts = localSources.map((source) =>
-    listGatewayHost({
-      agentId,
-      bindingStore: params.bindingStore,
-      config: params.config,
-      control: params.control.forRequest(agentId, source),
-      query,
-      runtime: params.runtime,
-      sessionEntries: params.sessionEntries,
-      excludedThreadIds: source ? managedThreads?.get(source.sourceHomeId) : undefined,
-      ...(source ? { source } : {}),
-    }),
+    (() => {
+      const ownershipSource = source ?? fallbackSource;
+      const managedThreadIds = ownershipSource
+        ? managedThreads?.get(ownershipSource.sourceHomeId)
+        : undefined;
+      return listGatewayHost({
+        agentId,
+        bindingStore: params.bindingStore,
+        config: params.config,
+        control: params.control.forRequest(agentId, source),
+        query,
+        runtime: params.runtime,
+        sessionEntries: params.sessionEntries,
+        excludedThreadIds: mergeThreadIds(managedThreadIds, activeOrdinaryThreadIds),
+        ...(ownershipSource && params.bindingStore.managedThreads
+          ? {
+              onExcludedThreadId: async (threadId: string) => {
+                if (activeOrdinaryThreadIds?.has(threadId) && !managedThreadIds?.has(threadId)) {
+                  await params.bindingStore.managedThreads?.mark({
+                    sourceHomeId: ownershipSource.sourceHomeId,
+                    threadId,
+                  });
+                }
+              },
+            }
+          : {}),
+        ...(source ? { source } : {}),
+      });
+    })(),
   );
   for (const host of localHosts) {
     if (params.onHost) {
@@ -312,17 +356,34 @@ export function createCodexSessionCatalogNodeHostCommands(
         const request = bindRequest(paramsJSON);
         const pageParams = readPageParams(request.params);
         try {
-          const managedThreads = await bindingStore?.managedThreads?.snapshot();
-          const excludedThreadIds = request.sourceHomeId
-            ? managedThreads?.get(request.sourceHomeId)
-            : undefined;
+          const [managedThreads, activeOrdinaryThreadIds] = await Promise.all([
+            bindingStore?.managedThreads?.snapshot(),
+            bindingStore?.listActiveOrdinaryThreadIds?.(),
+          ]);
+          const sourceHomeId = request.sourceHomeId;
+          const managedThreadIds = sourceHomeId ? managedThreads?.get(sourceHomeId) : undefined;
           const page = await listVisiblePage({
             control: request.control,
             cursor: pageParams.cursor,
             cwd: pageParams.cwd,
-            excludedThreadIds,
+            excludedThreadIds: mergeThreadIds(managedThreadIds, activeOrdinaryThreadIds),
             filterTitle: true,
             limit: pageParams.limit,
+            ...(sourceHomeId && bindingStore?.managedThreads
+              ? {
+                  onExcludedThreadId: async (threadId: string) => {
+                    if (
+                      activeOrdinaryThreadIds?.has(threadId) &&
+                      !managedThreadIds?.has(threadId)
+                    ) {
+                      await bindingStore.managedThreads?.mark({
+                        sourceHomeId,
+                        threadId,
+                      });
+                    }
+                  },
+                }
+              : {}),
             searchTerm: pageParams.searchTerm,
           });
           return JSON.stringify(page);

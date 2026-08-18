@@ -651,6 +651,61 @@ describe("Codex supervision catalog", () => {
     ]);
   });
 
+  it("hides legacy active OpenClaw bindings and records their observed catalog home", async () => {
+    const home: CodexCatalogHome = {
+      sourceHomeId: "home-observed",
+      hostId: CODEX_LOCAL_SESSION_HOST_ID,
+      label: "Local Codex",
+      agentDir: "/agents/main",
+      appServer: {} as CodexCatalogHome["appServer"],
+      usesProcessHomeFallback: false,
+    };
+    const mark = vi.fn(async () => undefined);
+    const bindingStore = Object.assign(createCodexTestBindingStore(), {
+      listActiveOrdinaryThreadIds: vi.fn(async () => new Set(["thread-legacy"])),
+      managedThreads: {
+        mark,
+        snapshot: vi.fn(async () => new Map<string, ReadonlySet<string>>()),
+      },
+    });
+    const listPage = vi.fn(async ({ cursor }: { cursor?: string; limit: number }) =>
+      cursor
+        ? {
+            sessions: [
+              { threadId: "thread-native-2", status: "idle", source: "cli", archived: false },
+            ],
+          }
+        : {
+            sessions: [
+              { threadId: "thread-legacy", status: "idle", source: "vscode", archived: false },
+              { threadId: "thread-native-1", status: "idle", source: "cli", archived: false },
+            ],
+            nextCursor: "next",
+          },
+    );
+
+    const result = await listCodexSessionCatalog({
+      agentId: "main",
+      bindingStore,
+      config,
+      runtime: createRuntime().runtime,
+      control: createControl({ listPage }),
+      query: { limitPerHost: 2 },
+      localHomes: [home],
+      listNodes: async () => ({ nodes: [] }),
+    });
+
+    expect(result.hosts[0]?.sessions.map((session) => session.threadId)).toEqual([
+      "thread-native-1",
+      "thread-native-2",
+    ]);
+    expect(mark).toHaveBeenCalledOnce();
+    expect(mark).toHaveBeenCalledWith({
+      sourceHomeId: "home-observed",
+      threadId: "thread-legacy",
+    });
+  });
+
   it("uses a sanitized preview only when Codex has no thread name", async () => {
     const pluginConfig = { supervision: { enabled: true } };
     commandRpcMocks.codexControlRequest.mockResolvedValue({
