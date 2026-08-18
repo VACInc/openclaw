@@ -211,7 +211,7 @@ export function requireOnlyKeys(
   }
 }
 
-export function readPageParams(value: unknown): CodexSessionCatalogPageParams {
+export function readPageParams(value: unknown): CodexSessionCatalogPageParams & { limit: number } {
   if (!isRecord(value)) {
     throw new CatalogParamsError("Codex session catalog parameters must be an object");
   }

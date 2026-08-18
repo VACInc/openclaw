@@ -59,21 +59,26 @@ import type {
   CodexSessionTranscriptPage,
 } from "./session-catalog-types.js";
 
-async function listVisibleGatewayPage(params: {
+async function listVisiblePage(params: {
   control: CodexSessionCatalogControl;
   cursor?: string;
+  cwd?: string;
   excludedThreadIds?: ReadonlySet<string>;
-  query: ReturnType<typeof readGatewayParams>;
+  filterTitle?: boolean;
+  limit: number;
+  searchTerm?: string;
 }): Promise<CodexSessionCatalogPage> {
   const excluded = params.excludedThreadIds;
   if (!excluded?.size) {
-    return parseCatalogPage(
+    const page = parseCatalogPage(
       await params.control.listPage({
-        limit: params.query.limitPerHost,
+        limit: params.limit,
         ...(params.cursor ? { cursor: params.cursor } : {}),
-        ...(params.query.search ? { searchTerm: params.query.search } : {}),
+        ...(params.searchTerm ? { searchTerm: params.searchTerm } : {}),
+        ...(params.cwd ? { cwd: params.cwd } : {}),
       }),
     );
+    return params.filterTitle ? filterCatalogPageByTitle(page, params.searchTerm) : page;
   }
   const sessions: ReturnType<typeof parseCatalogPage>["sessions"] = [];
   let cursor = params.cursor;
@@ -81,19 +86,21 @@ async function listVisibleGatewayPage(params: {
   let backwardsCursor: string | undefined;
   const seenCursors = new Set<string>();
   for (let pageIndex = 0; pageIndex < MAX_TITLE_SEARCH_CATALOG_PAGES; pageIndex += 1) {
-    const page = parseCatalogPage(
+    const listed = parseCatalogPage(
       await params.control.listPage({
-        limit: params.query.limitPerHost - sessions.length,
+        limit: params.limit - sessions.length,
         ...(cursor ? { cursor } : {}),
-        ...(params.query.search ? { searchTerm: params.query.search } : {}),
+        ...(params.searchTerm ? { searchTerm: params.searchTerm } : {}),
+        ...(params.cwd ? { cwd: params.cwd } : {}),
       }),
     );
+    const page = params.filterTitle ? filterCatalogPageByTitle(listed, params.searchTerm) : listed;
     if (pageIndex === 0) {
       backwardsCursor = page.backwardsCursor;
     }
     sessions.push(...page.sessions.filter((session) => !excluded.has(session.threadId)));
     nextCursor = page.nextCursor;
-    if (!nextCursor || sessions.length >= params.query.limitPerHost) {
+    if (!nextCursor || sessions.length >= params.limit) {
       break;
     }
     if (seenCursors.has(nextCursor)) {
@@ -103,7 +110,7 @@ async function listVisibleGatewayPage(params: {
     cursor = nextCursor;
   }
   return {
-    sessions: sessions.slice(0, params.query.limitPerHost),
+    sessions: sessions.slice(0, params.limit),
     ...(nextCursor ? { nextCursor } : {}),
     ...(backwardsCursor ? { backwardsCursor } : {}),
   };
@@ -124,11 +131,12 @@ async function listGatewayHost(params: {
   const label = params.source?.label ?? "Local Codex";
   const sourceHomeId = params.source?.sourceHomeId ?? CODEX_LOCAL_SESSION_HOST_ID;
   try {
-    const page = await listVisibleGatewayPage({
+    const page = await listVisiblePage({
       control: params.control,
       cursor: params.query.cursors?.[hostId],
       excludedThreadIds: params.excludedThreadIds,
-      query: params.query,
+      limit: params.query.limitPerHost,
+      searchTerm: params.query.search,
     });
     const adoptedSessions = await listAdoptedSessionEntries({
       agentId: params.agentId,
@@ -270,6 +278,7 @@ export async function listCodexSessionCatalog(params: {
 export function createCodexSessionCatalogNodeHostCommands(
   controlFactory: CodexSessionCatalogControlFactory,
   configSources: CodexTerminalConfigSources,
+  bindingStore?: CodexAppServerBindingStore,
 ): OpenClawPluginNodeHostCommand[] {
   // Node commands register before an agent request exists. Bind from the invoke payload so
   // explicit multi-agent Codex homes never collapse to an ambient default.
@@ -289,6 +298,7 @@ export function createCodexSessionCatalogNodeHostCommands(
     return {
       agentId,
       control: controlFactory.forRequest(agentId),
+      sourceHomeId: controlFactory.homesForAgent(agentId)[0]?.sourceHomeId,
       params: request,
       paramsJSON: JSON.stringify(request),
     };
@@ -302,10 +312,19 @@ export function createCodexSessionCatalogNodeHostCommands(
         const request = bindRequest(paramsJSON);
         const pageParams = readPageParams(request.params);
         try {
-          const page = filterCatalogPageByTitle(
-            parseCatalogPage(await request.control.listPage(pageParams)),
-            pageParams.searchTerm,
-          );
+          const managedThreads = await bindingStore?.managedThreads?.snapshot();
+          const excludedThreadIds = request.sourceHomeId
+            ? managedThreads?.get(request.sourceHomeId)
+            : undefined;
+          const page = await listVisiblePage({
+            control: request.control,
+            cursor: pageParams.cursor,
+            cwd: pageParams.cwd,
+            excludedThreadIds,
+            filterTitle: true,
+            limit: pageParams.limit,
+            searchTerm: pageParams.searchTerm,
+          });
           return JSON.stringify(page);
         } catch {
           // App-server stderr and transport details stay on the node boundary.

@@ -173,6 +173,7 @@ export default definePluginEntry({
           getPluginConfig: resolveCurrentPluginConfig,
           getRuntimeConfig: () => resolveCurrentConfig() ?? (api.config as OpenClawConfig),
         },
+        bindingStore,
       )) {
         api.registerNodeHostCommand(command);
       }
