@@ -112,10 +112,25 @@ function resolveExternalAuthProfiles(params: {
   });
   const resolved = resolveExternalCliAuthProfileMap(params);
   const runtimeExternalCliProfileIds = new Set(
-    [...resolved.values()]
-      .filter((profile) => profile.persistence !== "persisted")
-      .map((profile) => profile.profileId),
+    [...resolved.values()].map((profile) => profile.profileId),
   );
+  // Persisted Claude and MiniMax CLI profiles may be usable and identity-complete,
+  // in which case their resolver intentionally avoids rereading the CLI and emits
+  // no overlay. Their canonical profile slots still establish refresh ownership
+  // after a process restart, when runtime-only provenance is no longer available.
+  for (const profileId of [CLAUDE_CLI_PROFILE_ID, MINIMAX_CLI_PROFILE_ID]) {
+    if (
+      params.store.profiles[profileId]?.type === "oauth" &&
+      externalCliSync.isExternalCliAuthProfileInScope({
+        store: params.store,
+        profileId,
+        providerIds: params.externalCli?.externalCliProviderIds,
+        profileIds: params.externalCli?.externalCliProfileIds,
+      })
+    ) {
+      runtimeExternalCliProfileIds.add(profileId);
+    }
+  }
   const pluginProfileIds = new Set<string>();
   const explicitProfileIds = resolveExplicitProfileIds(params.externalCli?.externalCliProfileIds);
   for (const rawProfile of profiles) {

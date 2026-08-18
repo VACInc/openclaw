@@ -54,7 +54,10 @@ export function listEffectiveModelAuthProviders(
     const credentialRows = group.filter(
       (provider) => provider.profiles.length > 0 || Boolean(provider.apiKey),
     );
-    const candidates = credentialRows.length > 0 ? credentialRows : group;
+    const hasClaudeCliCredential = credentialRows.some(
+      (provider) => normalizeProviderId(provider.provider) === "claude-cli",
+    );
+    const candidates = hasClaudeCliCredential ? credentialRows : group;
     const selected = candidates.reduce((worst, candidate) =>
       AUTH_STATUS_PRIORITY.indexOf(candidate.status) < AUTH_STATUS_PRIORITY.indexOf(worst.status)
         ? candidate

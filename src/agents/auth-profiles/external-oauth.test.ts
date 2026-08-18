@@ -27,9 +27,12 @@ const readCodexCliCredentialsCachedMock = vi.hoisted(() => {
   vi.resetModules();
   return vi.fn<(_options?: unknown) => OAuthCredential | null>(() => null);
 });
+const readClaudeCliCredentialsCachedMock = vi.hoisted(() =>
+  vi.fn<(_options?: unknown) => OAuthCredential | null>(() => null),
+);
 
 vi.mock("../cli-credentials.js", () => ({
-  readClaudeCliCredentialsCached: () => null,
+  readClaudeCliCredentialsCached: readClaudeCliCredentialsCachedMock,
   readCodexCliCredentialsCached: readCodexCliCredentialsCachedMock,
   readMiniMaxCliCredentialsCached: () => null,
 }));
@@ -67,6 +70,8 @@ describe("auth external oauth helpers", () => {
     resolveExternalAuthProfilesWithPluginsMock.mockReturnValue([]);
     readCodexCliCredentialsCachedMock.mockReset();
     readCodexCliCredentialsCachedMock.mockReturnValue(null);
+    readClaudeCliCredentialsCachedMock.mockReset();
+    readClaudeCliCredentialsCachedMock.mockReturnValue(null);
     testing.setResolveExternalAuthProfilesForTest(resolveExternalAuthProfilesWithPluginsMock);
   });
 
@@ -160,6 +165,55 @@ describe("auth external oauth helpers", () => {
     expect(loggedOut.lastGood).toBeUndefined();
     expect(loggedOut.usageStats).toBeUndefined();
     expect(getRuntimeExternalCliProfileIds(loggedOut)).toEqual([]);
+  });
+
+  it("marks a refreshed persisted Claude CLI profile as runtime CLI-owned", () => {
+    const profileId = "anthropic:claude-cli";
+    const refresh = "claude-cli-refresh";
+    readClaudeCliCredentialsCachedMock.mockReturnValueOnce(
+      createCredential({
+        provider: "anthropic",
+        access: "fresh-claude-access",
+        refresh,
+        expires: createUsableOAuthExpiry(),
+      }),
+    );
+
+    const prepared = overlayExternalAuthProfiles(
+      createStore({
+        [profileId]: createCredential({
+          provider: "claude-cli",
+          access: "expired-claude-access",
+          refresh,
+          expires: Date.now() - 60_000,
+        }),
+      }),
+      { externalCliProviderIds: ["claude-cli"] },
+    );
+
+    expect(prepared.profiles[profileId]).toMatchObject({
+      provider: "claude-cli",
+      access: "fresh-claude-access",
+    });
+    expect(getRuntimeExternalCliProfileIds(prepared)).toEqual([profileId]);
+  });
+
+  it("restores runtime CLI ownership for a steady-state persisted Claude profile", () => {
+    const profileId = "anthropic:claude-cli";
+    const prepared = overlayExternalAuthProfiles(
+      createStore({
+        [profileId]: createCredential({
+          provider: "claude-cli",
+          access: "usable-claude-access",
+          refresh: "usable-claude-refresh",
+          expires: createUsableOAuthExpiry(),
+          email: "stored@example.com",
+        }),
+      }),
+    );
+
+    expect(readClaudeCliCredentialsCachedMock).not.toHaveBeenCalled();
+    expect(getRuntimeExternalCliProfileIds(prepared)).toEqual([profileId]);
   });
 
   it("preserves a plugin winner that collides with a built-in CLI profile id", () => {
