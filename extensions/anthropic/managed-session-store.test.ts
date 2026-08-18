@@ -5,7 +5,7 @@ import {
   type StoredClaudeManagedSession,
 } from "./managed-session-store.js";
 
-const BACKFILL_KEY = "migration:managed-provenance-backfill:v2";
+const BACKFILL_KEY = "migration:managed-provenance-backfill:v3";
 
 function createState() {
   const values = new Map<string, StoredClaudeManagedSession>();

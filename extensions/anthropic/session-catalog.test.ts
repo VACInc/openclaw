@@ -669,17 +669,36 @@ describe("Claude session catalog", () => {
     const home = await createHome();
     const managedId = "openclaw-managed";
     const interSessionId = "openclaw-inter-session";
+    const cronId = "openclaw-cron";
+    const systemId = "openclaw-system";
+    const subagentId = "openclaw-subagent";
+    const internalCompletionId = "openclaw-internal-completion";
     const nativeId = "native-session";
     const nativeLaterForwardedId = "native-later-forwarded";
     const managedPrompt =
       'Conversation info: ⟦openclaw:ctx⟧\n```json\n{"message_id":"private"}\n```\n\nTask';
     const interSessionPrompt =
       "[Inter-session message] sourceTool=subagent_announce isUser=false\n\nChild result";
+    const cronPrompt = "[cron:job-1 Beszel power watch] Check the power status.";
+    const systemPrompt =
+      "Recovered session state\n\n[System] Continue from the recovered transcript and finish the interrupted work.";
+    const subagentPrompt =
+      "Recovered session state\n\n[Subagent Context] This subagent session is persistent.\n\n[Subagent Task]\nAudit the result.";
+    const internalCompletionPrompt =
+      "Recovered session state\n\n[Internal task completion event]\nA child task completed.";
     await writeProject({
       home,
       entries: [
         { sessionId: managedId, firstPrompt: managedPrompt, isSidechain: false },
         { sessionId: interSessionId, firstPrompt: interSessionPrompt, isSidechain: false },
+        { sessionId: cronId, firstPrompt: cronPrompt, isSidechain: false },
+        { sessionId: systemId, firstPrompt: systemPrompt, isSidechain: false },
+        { sessionId: subagentId, firstPrompt: subagentPrompt, isSidechain: false },
+        {
+          sessionId: internalCompletionId,
+          firstPrompt: internalCompletionPrompt,
+          isSidechain: false,
+        },
         {
           sessionId: nativeId,
           firstPrompt: "Conversation info: ordinary native text",
@@ -694,6 +713,12 @@ describe("Claude session catalog", () => {
       transcripts: {
         [managedId]: [message(managedId, "user", managedPrompt, 1)],
         [interSessionId]: [message(interSessionId, "user", interSessionPrompt, 1)],
+        [cronId]: [message(cronId, "user", cronPrompt, 1)],
+        [systemId]: [message(systemId, "user", systemPrompt, 1)],
+        [subagentId]: [message(subagentId, "user", subagentPrompt, 1)],
+        [internalCompletionId]: [
+          message(internalCompletionId, "user", internalCompletionPrompt, 1),
+        ],
         [nativeId]: [message(nativeId, "user", "Conversation info: ordinary native text", 1)],
         [nativeLaterForwardedId]: [
           message(nativeLaterForwardedId, "user", "ordinary native opening prompt", 1),

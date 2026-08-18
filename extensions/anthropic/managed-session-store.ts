@@ -4,7 +4,7 @@ import { z } from "zod";
 
 export const CLAUDE_MANAGED_SESSION_NAMESPACE = "claude-cli-managed-sessions";
 export const CLAUDE_MANAGED_SESSION_MAX_ENTRIES = 50_001;
-const CLAUDE_MANAGED_SESSION_BACKFILL_KEY = "migration:managed-provenance-backfill:v2";
+const CLAUDE_MANAGED_SESSION_BACKFILL_KEY = "migration:managed-provenance-backfill:v3";
 
 type ManagedSessionCandidate = { hostId: string; sessionId: string };
 type ManagedSessionCandidateSource =
@@ -19,7 +19,7 @@ const managedSessionSchema = z.object({
 });
 
 const migrationSchema = z.object({
-  version: z.literal(2),
+  version: z.literal(3),
   kind: z.literal("managed-provenance-backfill-complete"),
 });
 
@@ -85,7 +85,7 @@ export function createClaudeManagedSessionStore(
           byHost.set(candidate.hostId, ids);
         }
         state.registerIfAbsent(CLAUDE_MANAGED_SESSION_BACKFILL_KEY, {
-          version: 2,
+          version: 3,
           kind: "managed-provenance-backfill-complete",
         });
       }

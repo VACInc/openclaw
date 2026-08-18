@@ -40,6 +40,13 @@ const MAX_CATALOG_METADATA_SCAN_BYTES = 64 * 1024 * 1024;
 const CLI_ENTRYPOINTS = new Set(["cli", "sdk-cli"]);
 const OPENCLAW_INBOUND_CONTEXT_MARKER = "⟦openclaw:ctx⟧";
 const OPENCLAW_INTER_SESSION_PROMPT_PREFIX = "[Inter-session message]";
+const OPENCLAW_CRON_PROMPT_PREFIX = "[cron:";
+const OPENCLAW_INTERNAL_PROMPT_MARKERS = [
+  "[System]",
+  "[Subagent Context]",
+  "[Subagent Task]",
+  "[Internal task completion event]",
+] as const;
 
 type CatalogDiscoveryCacheEntry = {
   // The module-global cache is keyed by canonical transcript path, so an entry must also record the
@@ -125,7 +132,9 @@ export type CatalogRecord = ClaudeSessionCatalogSession & {
 function hasOpenClawManagedFirstPrompt(prompt: string): boolean {
   return (
     prompt.includes(OPENCLAW_INBOUND_CONTEXT_MARKER) ||
-    prompt.trimStart().startsWith(OPENCLAW_INTER_SESSION_PROMPT_PREFIX)
+    prompt.trimStart().startsWith(OPENCLAW_INTER_SESSION_PROMPT_PREFIX) ||
+    prompt.trimStart().startsWith(OPENCLAW_CRON_PROMPT_PREFIX) ||
+    OPENCLAW_INTERNAL_PROMPT_MARKERS.some((marker) => prompt.includes(marker))
   );
 }
 
