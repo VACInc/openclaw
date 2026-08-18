@@ -42,6 +42,7 @@ import {
 import { publishedModelCatalogOwnerMatchesAgent } from "../../agents/prepared-model-catalog-owner.js";
 import { preparedModelRuntimeConfigsMatch } from "../../agents/prepared-model-runtime.js";
 import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
+import { resolveThinkingCatalogReasoning } from "../../auto-reply/thinking.js";
 import { getRuntimeConfigSourceSnapshot } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
@@ -175,8 +176,7 @@ function createModelsListEntryEvaluator(params: {
             }
           : evaluation;
       const provider = normalizeProviderId(entry.provider);
-      // Stored credentials prove presence, not acceptance. Apply the live rejection only to the
-      // profile discovery tested; widening it would hide routes backed by another valid profile.
+      // Apply live rejection only to the tested profile; another profile may back the route.
       return params.providerOutcomes?.some(
         (outcome) =>
           outcome.status === "auth-rejected" &&
@@ -239,8 +239,7 @@ function resolveProviderConfigInventoryEntries(params: {
       continue;
     }
     seen.add(key);
-    // Authored config owns inventory membership. Canonical catalog rows own
-    // route metadata; configured logical overrides are applied by the projector.
+    // Authored config owns inventory; canonical rows own route metadata.
     inventory.push(canonicalByKey.get(key) ?? authoredEntry);
   }
   if (params.discoveryOnlyProviderIds) {
@@ -274,8 +273,7 @@ export function createGatewayAgentModelCatalogProjector(params: {
   lockedProfileId?: string;
   routeResolverFactory?: typeof createOpenAIModelRoutesResolver;
 }) {
-  // The Gateway owns one process-lifecycle plugin metadata snapshot. Carry it
-  // through the whole projection so per-model normalization cannot rediscover it.
+  // Keep normalization on the Gateway's process-lifecycle metadata snapshot.
   const metadataSnapshot = params.metadataSnapshot;
   const workspaceDir =
     resolveAgentWorkspaceDir(params.cfg, params.agentId) ?? resolveDefaultAgentWorkspaceDir();
@@ -371,6 +369,7 @@ export function createGatewayAgentModelCatalogProjector(params: {
 
 async function buildPublicModelsListEntries(params: {
   catalog: ModelCatalogEntry[];
+  thinkingCatalog: ModelCatalogEntry[];
   cfg: OpenClawConfig;
   agentId: string;
   evaluateEntry(entry: ModelCatalogEntry): Promise<ModelAuthAvailabilityEvaluation>;
@@ -387,26 +386,29 @@ async function buildPublicModelsListEntries(params: {
         normalizeProviderId(entry.provider) !== "openai" &&
         hasSyntheticLocalProviderAuthConfig({ cfg: params.cfg, provider: entry.provider });
       const available = evaluation.availability ?? (syntheticLocalAvailable ? true : undefined);
-      // Legacy views keep emitting a boolean because existing clients treat
-      // omission as selectable. Inventory consumers preserve unknown state.
+      // Legacy views emit a boolean because existing clients treat omission as selectable.
       const capabilityProvider = params.apiKeyCapabilities?.resolveProvider(entry.provider);
       const agentRuntime = resolveModelChoiceAgentRuntime({
         cfg: params.cfg,
         agentId: params.agentId,
         entry,
       });
+      const reasoning =
+        resolveThinkingCatalogReasoning(entry, params.thinkingCatalog, agentRuntime?.id) ??
+        entry.reasoning;
+      const publicEntry = { ...entry, reasoning };
       const thinkingProfile =
-        typeof entry.reasoning === "boolean"
+        typeof publicEntry.reasoning === "boolean"
           ? resolveGatewayModelThinkingProfile({
               cfg: params.cfg,
               agentId: params.agentId,
               provider: entry.provider,
               model: entry.id,
-              modelCatalog: params.catalog,
+              modelCatalog: params.thinkingCatalog,
             })
           : undefined;
       return {
-        ...buildPublicModelProjection(entry),
+        ...buildPublicModelProjection(publicEntry),
         ...(agentRuntime ? { agentRuntime } : {}),
         ...thinkingProfile,
         ...(capabilityProvider && params.apiKeyCapabilities?.providers.has(capabilityProvider)
@@ -631,6 +633,7 @@ export async function buildModelsListResult(
     return {
       models: await buildPublicModelsListEntries({
         catalog: inventory,
+        thinkingCatalog: catalog,
         cfg,
         agentId,
         evaluateEntry: inventoryProjector.evaluateEntry,
@@ -698,6 +701,7 @@ export async function buildModelsListResult(
   return {
     models: await buildPublicModelsListEntries({
       catalog: models,
+      thinkingCatalog: catalog,
       cfg,
       agentId,
       evaluateEntry,

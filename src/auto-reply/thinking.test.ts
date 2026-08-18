@@ -224,6 +224,47 @@ describe("listThinkingLevels", () => {
     ).toBe("off");
   });
 
+  it.each([
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-5",
+    "claude-fable-5",
+    "claude-sonnet-4-6",
+  ])("uses the exact CLI runtime catalog row for %s thinking", (model) => {
+    providerRuntimeMocks.resolveProviderThinkingProfile.mockImplementation(({ context }) => ({
+      levels:
+        context.reasoning === true
+          ? [{ id: "off" }, { id: "low" }, { id: "medium" }, { id: "high" }]
+          : [{ id: "off" }],
+      defaultLevel: context.reasoning === true ? "medium" : "off",
+    }));
+    const catalog = [
+      { provider: "anthropic", id: model, name: model, reasoning: false },
+      { provider: "claude-cli", id: model, name: model, reasoning: true },
+    ];
+
+    expect(listThinkingLevels("anthropic", model, catalog, "claude-cli")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+  });
+
+  it("keeps an exact runtime catalog reasoning opt-out authoritative", () => {
+    providerRuntimeMocks.resolveProviderThinkingProfile.mockReturnValue({
+      levels: [{ id: "off" }, { id: "low" }],
+    });
+    const catalog = [
+      { provider: "demo", id: "demo-model", name: "Demo", reasoning: true },
+      { provider: "demo-cli", id: "demo-model", name: "Demo CLI", reasoning: false },
+    ];
+
+    expect(listThinkingLevels("demo", "demo-model", catalog, "demo-cli")).toEqual(["off"]);
+  });
+
   it("preserves provider-authoritative thinking profiles over stale catalog reasoning", () => {
     providerRuntimeMocks.resolveProviderThinkingProfile.mockReturnValue({
       levels: [{ id: "off" }, { id: "minimal" }, { id: "low" }, { id: "medium" }],

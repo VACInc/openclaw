@@ -473,6 +473,72 @@ describe("models.list", () => {
     expect(custom).not.toHaveProperty("apiKeySupported");
   });
 
+  it("projects exact CLI runtime thinking capabilities onto every configured Claude model", async () => {
+    const modelIds = [
+      "claude-opus-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-opus-4-6",
+      "claude-sonnet-5",
+      "claude-fable-5",
+      "claude-sonnet-4-6",
+    ];
+    const runtimeConfig: OpenClawConfig = {
+      agents: {
+        defaults: {
+          models: Object.fromEntries(
+            modelIds.map((modelId) => [
+              `anthropic/${modelId}`,
+              { agentRuntime: { id: "claude-cli" } },
+            ]),
+          ),
+        },
+      },
+    };
+    const loadGatewayModelCatalog = vi.fn(async () =>
+      modelIds.flatMap((modelId) => [
+        {
+          id: modelId,
+          name: modelId,
+          provider: "anthropic",
+          reasoning: false,
+        },
+        {
+          id: modelId,
+          name: `${modelId} (Claude CLI)`,
+          provider: "claude-cli",
+          reasoning: true,
+        },
+      ]),
+    );
+    const { request, respond } = requestModelsList({
+      view: "all",
+      runtimeConfig,
+      loadGatewayModelCatalog,
+    });
+
+    await request;
+
+    const payload = respond.mock.calls[0]?.[1] as
+      | { models: Array<Record<string, unknown>> }
+      | undefined;
+    for (const modelId of modelIds) {
+      expect(
+        payload?.models.find((entry) => entry.provider === "anthropic" && entry.id === modelId),
+      ).toMatchObject({
+        reasoning: true,
+        agentRuntime: { id: "claude-cli" },
+        thinkingLevels: [
+          { id: "off", label: "off" },
+          { id: "minimal", label: "minimal" },
+          { id: "low", label: "low" },
+          { id: "medium", label: "medium" },
+          { id: "high", label: "high" },
+        ],
+      });
+    }
+  });
+
   it("keeps source-authored provider inventory when the canonical catalog is missing", async () => {
     const sourceProvider = {
       baseUrl: "https://vllm.example/v1",

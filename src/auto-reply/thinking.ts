@@ -67,22 +67,61 @@ function buildCatalogModelKey(provider: string, model: string): string {
     : `${providerId}/${modelId}`;
 }
 
+function resolveThinkingCatalogEntry(params: {
+  provider?: string | null;
+  model?: string | null;
+  catalog?: ThinkingCatalogEntry[];
+  agentRuntime?: string | null;
+}): ThinkingCatalogEntry | undefined {
+  const providerRaw = normalizeOptionalString(params.provider);
+  const normalizedProvider = providerRaw ? normalizeProviderId(providerRaw) : "";
+  const modelId = normalizeOptionalString(params.model) ?? "";
+  const selectedCatalogKey =
+    normalizedProvider && modelId ? buildCatalogModelKey(normalizedProvider, modelId) : undefined;
+  const selected = params.catalog?.find(
+    (entry) =>
+      selectedCatalogKey !== undefined &&
+      buildCatalogModelKey(normalizeProviderId(entry.provider), entry.id) === selectedCatalogKey,
+  );
+  const runtimeProvider = normalizeOptionalLowercaseString(params.agentRuntime);
+  if (!runtimeProvider || runtimeProvider === normalizedProvider || !modelId) {
+    return selected;
+  }
+  // A concrete runtime catalog row owns the capabilities of the route that will execute.
+  // Keep the logical row only when that runtime has no exact model contract of its own.
+  return (
+    params.catalog?.find(
+      (entry) =>
+        buildCatalogModelKey(normalizeProviderId(entry.provider), entry.id) ===
+        buildCatalogModelKey(runtimeProvider, modelId),
+    ) ?? selected
+  );
+}
+
+export function resolveThinkingCatalogReasoning(
+  entry: Pick<ThinkingCatalogEntry, "provider" | "id">,
+  catalog: ThinkingCatalogEntry[],
+  agentRuntime?: string | null,
+): boolean | undefined {
+  return resolveThinkingCatalogEntry({
+    provider: entry.provider,
+    model: entry.id,
+    catalog,
+    agentRuntime,
+  })?.reasoning;
+}
+
 function resolveThinkingPolicyContext(params: {
   provider?: string | null;
   model?: string | null;
   catalog?: ThinkingCatalogEntry[];
+  agentRuntime?: string | null;
 }) {
   const providerRaw = normalizeOptionalString(params.provider);
   const normalizedProvider = providerRaw ? normalizeProviderId(providerRaw) : "";
   const modelId = normalizeOptionalString(params.model) ?? "";
   const modelKey = normalizeOptionalLowercaseString(params.model) ?? "";
-  const selectedCatalogKey =
-    normalizedProvider && modelId ? buildCatalogModelKey(normalizedProvider, modelId) : undefined;
-  const candidate = params.catalog?.find(
-    (entry) =>
-      selectedCatalogKey !== undefined &&
-      buildCatalogModelKey(normalizeProviderId(entry.provider), entry.id) === selectedCatalogKey,
-  );
+  const candidate = resolveThinkingCatalogEntry(params);
   return {
     normalizedProvider,
     modelId,
