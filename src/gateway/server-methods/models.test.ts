@@ -539,6 +539,53 @@ describe("models.list", () => {
     }
   });
 
+  it("preserves a configured reasoning opt-out on a Claude CLI route", async () => {
+    const modelId = "claude-opus-5";
+    const runtimeConfig = {
+      agents: {
+        defaults: {
+          models: {
+            [`anthropic/${modelId}`]: { agentRuntime: { id: "claude-cli" } },
+          },
+        },
+      },
+      models: {
+        providers: {
+          anthropic: {
+            models: [{ id: modelId, name: modelId, reasoning: false }],
+          },
+        },
+      },
+    } as unknown as OpenClawConfig;
+    const loadGatewayModelCatalog = vi.fn(async () => [
+      { id: modelId, name: modelId, provider: "anthropic", reasoning: false },
+      {
+        id: modelId,
+        name: `${modelId} (Claude CLI)`,
+        provider: "claude-cli",
+        reasoning: true,
+      },
+    ]);
+    const { request, respond } = requestModelsList({
+      view: "all",
+      runtimeConfig,
+      loadGatewayModelCatalog,
+    });
+
+    await request;
+
+    const payload = respond.mock.calls[0]?.[1] as
+      | { models: Array<Record<string, unknown>> }
+      | undefined;
+    expect(
+      payload?.models.find((entry) => entry.provider === "anthropic" && entry.id === modelId),
+    ).toMatchObject({
+      reasoning: false,
+      agentRuntime: { id: "claude-cli" },
+      thinkingLevels: [{ id: "off", label: "off" }],
+    });
+  });
+
   it("keeps source-authored provider inventory when the canonical catalog is missing", async () => {
     const sourceProvider = {
       baseUrl: "https://vllm.example/v1",

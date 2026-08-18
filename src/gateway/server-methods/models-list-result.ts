@@ -176,7 +176,8 @@ function createModelsListEntryEvaluator(params: {
             }
           : evaluation;
       const provider = normalizeProviderId(entry.provider);
-      // Apply live rejection only to the tested profile; another profile may back the route.
+      // Stored credentials prove presence, not acceptance. Apply the live rejection only to the
+      // profile discovery tested; widening it would hide routes backed by another valid profile.
       return params.providerOutcomes?.some(
         (outcome) =>
           outcome.status === "auth-rejected" &&
@@ -239,7 +240,8 @@ function resolveProviderConfigInventoryEntries(params: {
       continue;
     }
     seen.add(key);
-    // Authored config owns inventory; canonical rows own route metadata.
+    // Authored config owns inventory membership. Canonical catalog rows own
+    // route metadata; configured logical overrides are applied by the projector.
     inventory.push(canonicalByKey.get(key) ?? authoredEntry);
   }
   if (params.discoveryOnlyProviderIds) {
@@ -273,7 +275,8 @@ export function createGatewayAgentModelCatalogProjector(params: {
   lockedProfileId?: string;
   routeResolverFactory?: typeof createOpenAIModelRoutesResolver;
 }) {
-  // Keep normalization on the Gateway's process-lifecycle metadata snapshot.
+  // The Gateway owns one process-lifecycle plugin metadata snapshot. Carry it
+  // through the whole projection so per-model normalization cannot rediscover it.
   const metadataSnapshot = params.metadataSnapshot;
   const workspaceDir =
     resolveAgentWorkspaceDir(params.cfg, params.agentId) ?? resolveDefaultAgentWorkspaceDir();
@@ -386,7 +389,8 @@ async function buildPublicModelsListEntries(params: {
         normalizeProviderId(entry.provider) !== "openai" &&
         hasSyntheticLocalProviderAuthConfig({ cfg: params.cfg, provider: entry.provider });
       const available = evaluation.availability ?? (syntheticLocalAvailable ? true : undefined);
-      // Legacy views emit a boolean because existing clients treat omission as selectable.
+      // Legacy views keep emitting a boolean because existing clients treat
+      // omission as selectable. Inventory consumers preserve unknown state.
       const capabilityProvider = params.apiKeyCapabilities?.resolveProvider(entry.provider);
       const agentRuntime = resolveModelChoiceAgentRuntime({
         cfg: params.cfg,
@@ -405,6 +409,7 @@ async function buildPublicModelsListEntries(params: {
               provider: entry.provider,
               model: entry.id,
               modelCatalog: params.thinkingCatalog,
+              configuredReasoning: publicEntry.configuredReasoning,
             })
           : undefined;
       return {

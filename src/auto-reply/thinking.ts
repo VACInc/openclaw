@@ -87,6 +87,9 @@ function resolveThinkingCatalogEntry(params: {
   if (!runtimeProvider || runtimeProvider === normalizedProvider || !modelId) {
     return selected;
   }
+  if (selected?.configuredReasoning !== undefined) {
+    return selected;
+  }
   // A concrete runtime catalog row owns the capabilities of the route that will execute.
   // Keep the logical row only when that runtime has no exact model contract of its own.
   return (
@@ -99,10 +102,13 @@ function resolveThinkingCatalogEntry(params: {
 }
 
 export function resolveThinkingCatalogReasoning(
-  entry: Pick<ThinkingCatalogEntry, "provider" | "id">,
+  entry: Pick<ThinkingCatalogEntry, "provider" | "id" | "configuredReasoning">,
   catalog: ThinkingCatalogEntry[],
   agentRuntime?: string | null,
 ): boolean | undefined {
+  if (entry.configuredReasoning !== undefined) {
+    return entry.configuredReasoning;
+  }
   return resolveThinkingCatalogEntry({
     provider: entry.provider,
     model: entry.id,
@@ -116,6 +122,7 @@ function resolveThinkingPolicyContext(params: {
   model?: string | null;
   catalog?: ThinkingCatalogEntry[];
   agentRuntime?: string | null;
+  configuredReasoning?: boolean;
 }) {
   const providerRaw = normalizeOptionalString(params.provider);
   const normalizedProvider = providerRaw ? normalizeProviderId(providerRaw) : "";
@@ -127,7 +134,7 @@ function resolveThinkingPolicyContext(params: {
     modelId,
     modelKey,
     api: candidate?.api,
-    reasoning: candidate?.reasoning,
+    reasoning: params.configuredReasoning ?? candidate?.reasoning,
     ...(candidate?.params ? { params: candidate.params } : {}),
     compat: candidate?.compat,
   };
@@ -221,6 +228,7 @@ export function resolveThinkingProfile(params: {
   model?: string | null;
   catalog?: ThinkingCatalogEntry[];
   agentRuntime?: string | null;
+  configuredReasoning?: boolean;
   providerPolicySource?: "active" | "active-or-bundled";
 }): ResolvedThinkingProfile {
   const context = resolveThinkingPolicyContext(params);
@@ -282,10 +290,15 @@ function supportsThinkingLevel(
   level: ThinkLevel,
   catalog?: ThinkingCatalogEntry[],
   agentRuntime?: string | null,
+  configuredReasoning?: boolean,
 ): boolean {
-  return resolveThinkingProfile({ provider, model, catalog, agentRuntime }).levels.some(
-    (entry) => entry.id === level,
-  );
+  return resolveThinkingProfile({
+    provider,
+    model,
+    catalog,
+    agentRuntime,
+    configuredReasoning,
+  }).levels.some((entry) => entry.id === level);
 }
 
 /** List thinking level ids supported by provider/model. */
@@ -364,6 +377,7 @@ export function isThinkingLevelSupported(params: {
   level: ThinkLevel;
   catalog?: ThinkingCatalogEntry[];
   agentRuntime?: string | null;
+  configuredReasoning?: boolean;
 }): boolean {
   return supportsThinkingLevel(
     params.provider,
@@ -371,6 +385,7 @@ export function isThinkingLevelSupported(params: {
     params.level,
     params.catalog,
     params.agentRuntime,
+    params.configuredReasoning,
   );
 }
 
@@ -397,6 +412,7 @@ export function resolveSupportedThinkingLevel(params: {
   level: ThinkLevel;
   catalog?: ThinkingCatalogEntry[];
   agentRuntime?: string | null;
+  configuredReasoning?: boolean;
   providerPolicySource?: "active" | "active-or-bundled";
 }): ThinkLevel {
   const profile = resolveThinkingProfile({
@@ -404,6 +420,7 @@ export function resolveSupportedThinkingLevel(params: {
     model: params.model,
     catalog: params.catalog,
     agentRuntime: params.agentRuntime,
+    configuredReasoning: params.configuredReasoning,
     providerPolicySource: params.providerPolicySource,
   });
   return resolveSupportedThinkingLevelFromProfile(profile, params.level);

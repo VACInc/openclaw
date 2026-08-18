@@ -804,6 +804,7 @@ describe("model-selection", () => {
       );
       expect(model?.compat).toEqual({ thinkingFormat: "qwen-chat-template" });
       expect(model?.reasoning).toBe(true);
+      expect(model?.configuredReasoning).toBe(true);
     });
 
     it("carries configured model params into catalog entries for provider policy", () => {
@@ -1038,6 +1039,7 @@ describe("model-selection", () => {
           name: "Configured Llama Fast",
           contextWindow: 128_000,
           reasoning: true,
+          configuredReasoning: true,
         },
       ]);
     });
@@ -1375,6 +1377,7 @@ describe("model-selection", () => {
           contextTokens: undefined,
           input: undefined,
           reasoning: true,
+          configuredReasoning: true,
           compat: { supportedReasoningEfforts: ["low", "medium", "high", "xhigh"] },
         },
       ]);

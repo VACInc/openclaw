@@ -31,6 +31,7 @@ export type ThinkingCatalogEntry = {
   id: string;
   api?: string;
   reasoning?: boolean;
+  configuredReasoning?: boolean;
   input?: readonly ("text" | "image" | "audio" | "video" | "document")[];
   params?: Record<string, unknown>;
   compat?: {
