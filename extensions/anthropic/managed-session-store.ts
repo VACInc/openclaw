@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { embeddedAgentLog } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { PluginStateSyncKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
-import { z } from "zod";
+import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 
 export const CLAUDE_MANAGED_SESSION_NAMESPACE = "claude-cli-managed-sessions";
 export const CLAUDE_MANAGED_SESSION_MAX_ENTRIES = 20_000;
@@ -12,21 +12,19 @@ type ManagedSessionCandidateSource =
   | readonly ManagedSessionCandidate[]
   | (() => Promise<readonly ManagedSessionCandidate[]>);
 
-const managedSessionSchema = z.object({
-  version: z.literal(1),
-  kind: z.literal("managed-session"),
-  hostId: z.string().min(1),
-  sessionId: z.string().min(1),
-});
+type ClaudeManagedSession = {
+  version: 1;
+  kind: "managed-session";
+  hostId: string;
+  sessionId: string;
+};
 
-const migrationSchema = z.object({
-  version: z.literal(3),
-  kind: z.literal("managed-provenance-backfill-complete"),
-});
+type ClaudeManagedSessionBackfill = {
+  version: 3;
+  kind: "managed-provenance-backfill-complete";
+};
 
-export type StoredClaudeManagedSession =
-  | z.infer<typeof managedSessionSchema>
-  | z.infer<typeof migrationSchema>;
+export type StoredClaudeManagedSession = ClaudeManagedSession | ClaudeManagedSessionBackfill;
 
 export type ClaudeManagedSessionStore = {
   mark(params: { hostId: string; sessionId: string }): Promise<boolean>;
@@ -44,6 +42,35 @@ function managedSessionKey(hostId: string, sessionId: string): string {
     .digest("hex")}`;
 }
 
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function parseManagedSession(value: unknown): ClaudeManagedSession | undefined {
+  if (
+    value === null ||
+    !isRecord(value) ||
+    value.version !== 1 ||
+    value.kind !== "managed-session"
+  ) {
+    return undefined;
+  }
+  const hostId = nonEmptyString(value.hostId);
+  const sessionId = nonEmptyString(value.sessionId);
+  return hostId && sessionId
+    ? { version: 1, kind: "managed-session", hostId, sessionId }
+    : undefined;
+}
+
+function isManagedSessionBackfill(value: unknown): value is ClaudeManagedSessionBackfill {
+  return (
+    value !== null &&
+    isRecord(value) &&
+    value.version === 3 &&
+    value.kind === "managed-provenance-backfill-complete"
+  );
+}
+
 /** Durable ownership index for Claude CLI sessions created by OpenClaw. */
 export function createClaudeManagedSessionStore(
   state: Pick<
@@ -53,12 +80,15 @@ export function createClaudeManagedSessionStore(
 ): ClaudeManagedSessionStore {
   const mark = async (params: { hostId: string; sessionId: string }) => {
     try {
-      const value = managedSessionSchema.parse({
+      const value = parseManagedSession({
         version: 1,
         kind: "managed-session",
         hostId: params.hostId.trim(),
         sessionId: params.sessionId.trim(),
       });
+      if (!value) {
+        throw new Error("invalid Claude managed session ownership");
+      }
       state.registerIfAbsent(managedSessionKey(value.hostId, value.sessionId), value);
       return true;
     } catch (error) {
@@ -74,15 +104,16 @@ export function createClaudeManagedSessionStore(
       const byHost = new Map<string, Set<string>>();
       const entries = state.entries();
       for (const entry of entries) {
-        const parsed = managedSessionSchema.safeParse(entry.value);
-        if (!parsed.success) {
+        const value = parseManagedSession(entry.value);
+        if (!value) {
           continue;
         }
-        const ids = byHost.get(parsed.data.hostId) ?? new Set<string>();
-        ids.add(parsed.data.sessionId);
-        byHost.set(parsed.data.hostId, ids);
+        const ids = byHost.get(value.hostId) ?? new Set<string>();
+        ids.add(value.sessionId);
+        byHost.set(value.hostId, ids);
       }
-      if (!entries.some((entry) => entry.key === CLAUDE_MANAGED_SESSION_BACKFILL_KEY)) {
+      const backfill = entries.find((entry) => entry.key === CLAUDE_MANAGED_SESSION_BACKFILL_KEY);
+      if (!isManagedSessionBackfill(backfill?.value)) {
         const legacyCandidates =
           typeof legacyCandidateSource === "function"
             ? await legacyCandidateSource()

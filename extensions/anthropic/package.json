@@ -4,9 +4,6 @@
   "private": true,
   "description": "OpenClaw Anthropic provider, Claude CLI, and native session catalog plugin",
   "type": "module",
-  "dependencies": {
-    "zod": "4.4.3"
-  },
   "devDependencies": {
     "@openclaw/plugin-sdk": "workspace:*"
   },
