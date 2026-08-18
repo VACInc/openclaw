@@ -33,6 +33,7 @@ import {
   readControlCursor,
   toCatalogSession,
 } from "./session-catalog-parsing.js";
+import { isOpenClawManagedCodexThread } from "./session-catalog-provenance.js";
 import type {
   CodexSessionCatalogControl,
   CodexSessionCatalogControlFactory,
@@ -164,13 +165,18 @@ function createCodexSessionCatalogControlFromRequests(params: {
         if (pageIndex === 0) {
           backwardsCursor = readControlCursor(response.backwardsCursor, "backwards response");
         }
+        const listedSessions = await Promise.all(
+          response.data.map(async (thread) => {
+            if (await isOpenClawManagedCodexThread(thread)) {
+              return undefined;
+            }
+            return toCatalogSession(thread, false);
+          }),
+        );
         sessions.push(
-          ...response.data
-            .flatMap((thread) => {
-              const session = toCatalogSession(thread, false);
-              return session ? [session] : [];
-            })
-            .filter((session) => !search || session.name?.toLocaleLowerCase().includes(search)),
+          ...listedSessions.filter((session): session is CodexSessionCatalogSession =>
+            Boolean(session && (!search || session.name?.toLocaleLowerCase().includes(search))),
+          ),
         );
         nextCursor = readControlCursor(response.nextCursor, "next response");
         if (!nextCursor || sessions.length >= limit) {

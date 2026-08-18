@@ -5,6 +5,7 @@ import type {
   SessionCatalogProvider,
   SessionCatalogTranscriptItem,
 } from "openclaw/plugin-sdk/session-catalog";
+import type { ClaudeManagedSessionStore } from "./managed-session-store.js";
 import { adoptedSourceKey, CLAUDE_LOCAL_SESSION_HOST_ID } from "./session-catalog-adoption.js";
 import { continueClaudeSession } from "./session-catalog-continue.js";
 import { listClaudeSessions } from "./session-catalog-discovery.js";
@@ -15,7 +16,11 @@ import {
   resolveNodeClaudeRecord,
 } from "./session-catalog-listing.js";
 import { DEFAULT_TRANSCRIPT_LIMIT, MAX_TRANSCRIPT_LIMIT } from "./session-catalog-parsing.js";
-import { listBoundClaudeSessions } from "./session-catalog-runtime.js";
+import {
+  listAdoptedClaudeSessions,
+  listBoundClaudeSessions,
+  listManagedClaudeSessionCandidates,
+} from "./session-catalog-runtime.js";
 import {
   configuredClaudeConfigDir,
   currentHomeDir,
@@ -117,10 +122,16 @@ type ClaudeSessionCatalogRuntime = Required<
 
 export function createClaudeSessionCatalogRuntime(
   api: OpenClawPluginApi,
+  managedSessions?: ClaudeManagedSessionStore,
 ): ClaudeSessionCatalogRuntime {
   return {
     list: async (query) => {
-      const adopted = listBoundClaudeSessions(api, query.agentId, query.sessionEntries);
+      const adopted = managedSessions
+        ? listAdoptedClaudeSessions(api, query.agentId, query.sessionEntries)
+        : listBoundClaudeSessions(api, query.agentId, query.sessionEntries);
+      const managedSessionIds = await managedSessions?.snapshot(
+        listManagedClaudeSessionCandidates(api, query.sessionEntries),
+      );
       const localCliAvailable = catalogTerminal.isClaudeCliAvailable();
       const {
         allowProcessHomeFallback,
@@ -137,6 +148,7 @@ export function createClaudeSessionCatalogRuntime(
         query: gatewayQuery,
         allowProcessHomeFallback,
         listNodes,
+        managedSessionIds,
         ...(onHost ? { onHost: (host) => onHost(mapHost(host)) } : {}),
       });
       return result.hosts.map(mapHost);

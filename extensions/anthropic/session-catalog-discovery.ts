@@ -38,6 +38,7 @@ const CLAUDE_METADATA_PREFIX_BYTES = 1024 * 1024;
 const CLAUDE_METADATA_READ_CHUNK_BYTES = 16 * 1024;
 const MAX_CATALOG_METADATA_SCAN_BYTES = 64 * 1024 * 1024;
 const CLI_ENTRYPOINTS = new Set(["cli", "sdk-cli"]);
+const OPENCLAW_INBOUND_CONTEXT_MARKER = "⟦openclaw:ctx⟧";
 
 type CatalogDiscoveryCacheEntry = {
   // The module-global cache is keyed by canonical transcript path, so an entry must also record the
@@ -116,7 +117,13 @@ type DesktopPullRequestMetadata = {
 
 export type CatalogRecord = ClaudeSessionCatalogSession & {
   filePath: string;
+  /** Internal-only legacy provenance; never serialized into the catalog response. */
+  openClawManaged?: true;
 };
+
+function hasOpenClawInboundContext(fragments: readonly string[]): boolean {
+  return fragments.some((fragment) => fragment.includes(OPENCLAW_INBOUND_CONTEXT_MARKER));
+}
 
 function pullRequestState(value: unknown): SessionCatalogPullRequestSummary["state"] | undefined {
   if (typeof value !== "string") {
@@ -349,6 +356,7 @@ async function readIndexRecords(context: ClaudeSessionScanContext): Promise<{
         : {}),
       archived: false,
       filePath: safeFile.filePath,
+      ...(firstPrompt?.includes(OPENCLAW_INBOUND_CONTEXT_MARKER) ? { openClawManaged: true } : {}),
     });
   }
   return { records, sidechainIds };
@@ -531,6 +539,7 @@ async function discoverCliRecords(
             : {}),
           archived: false,
           filePath,
+          ...(hasOpenClawInboundContext(fragments) ? { openClawManaged: true } : {}),
         });
         return true;
       };

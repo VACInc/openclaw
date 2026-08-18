@@ -665,6 +665,33 @@ describe("Claude session catalog", () => {
     });
   });
 
+  it("hides historical OpenClaw-authored Claude transcripts by durable prompt provenance", async () => {
+    const home = await createHome();
+    const managedId = "openclaw-managed";
+    const nativeId = "native-session";
+    const managedPrompt =
+      'Conversation info: ⟦openclaw:ctx⟧\n```json\n{"message_id":"private"}\n```\n\nTask';
+    await writeProject({
+      home,
+      entries: [
+        { sessionId: managedId, firstPrompt: managedPrompt, isSidechain: false },
+        {
+          sessionId: nativeId,
+          firstPrompt: "Conversation info: ordinary native text",
+          isSidechain: false,
+        },
+      ],
+      transcripts: {
+        [managedId]: [message(managedId, "user", managedPrompt, 1)],
+        [nativeId]: [message(nativeId, "user", "Conversation info: ordinary native text", 1)],
+      },
+    });
+
+    await expect(listLocalClaudeSessionPage({}, home)).resolves.toMatchObject({
+      sessions: [expect.objectContaining({ threadId: nativeId })],
+    });
+  });
+
   it("adopts a local CLI row with a locked one-shot fork binding", async () => {
     const home = await createHome();
     process.env.HOME = home;
