@@ -447,7 +447,24 @@ function resolveLegacyExternalCliAliasProfileIds(
       continue;
     }
     const provider = normalizeProviderId(profile.provider);
-    if (provider && provider !== canonical.provider && !directModelAuthProviders.has(provider)) {
+    const hasIndependentAuthProfile = Object.entries(profiles ?? {}).some(
+      ([otherProfileId, otherProfile]) =>
+        otherProfileId !== profileId &&
+        normalizeProviderId(otherProfile?.provider) === provider &&
+        (otherProfile?.mode === "oauth" || otherProfile?.mode === "token"),
+    );
+    const hasIndependentAuthOrder = Object.entries(cfg.auth?.order ?? {}).some(
+      ([orderProvider, orderedProfileIds]) =>
+        normalizeProviderId(orderProvider) === provider &&
+        orderedProfileIds.some((orderedProfileId) => orderedProfileId !== profileId),
+    );
+    if (
+      provider &&
+      provider !== canonical.provider &&
+      !directModelAuthProviders.has(provider) &&
+      !hasIndependentAuthProfile &&
+      !hasIndependentAuthOrder
+    ) {
       aliases.set(provider, profileId);
     }
   }

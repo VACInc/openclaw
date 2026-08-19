@@ -220,12 +220,6 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
           ],
           providers: [
             {
-              provider: "anthropic",
-              displayName: "Claude",
-              status: "missing",
-              profiles: [],
-            },
-            {
               provider: "claude-cli",
               displayName: "Claude",
               status: "ok",
