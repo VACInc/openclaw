@@ -7,7 +7,6 @@ import { SYSTEM_PROMPT_CACHE_BOUNDARY } from "@openclaw/ai/internal/shared";
 import { expectDefined } from "@openclaw/normalization-core";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildAnthropicCliBackend } from "../../../extensions/anthropic/api.js";
 import { buildGroupChatContext, buildGroupIntro } from "../../auto-reply/reply/groups.js";
 import type { ChannelPlugin } from "../../channels/plugins/types.plugin.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -249,23 +248,17 @@ type CliContextBudgetTestCase = {
 describe("prepareCliRunContext", () => {
   let fixture: ReturnType<typeof createCliRunnerPrepareFixture>;
 
-  it.each([
-    ["high", "16384"],
-    ["off", "0"],
-  ] as const)(
-    "passes %s thinking through the Anthropic execution preparation path",
-    async (thinkLevel, expectedBudget) => {
-      const backend = {
-        ...buildAnthropicCliBackend(),
-        pluginId: "anthropic",
-        autoSelectAuthProfile: false,
-        bundleMcp: false,
-      };
-      setRawCliBackendForPrepareTest(backend);
+  it.each(["high", "off"] as const)(
+    "passes %s thinking through the CLI backend execution seam",
+    async (thinkLevel) => {
+      const prepareExecution = vi.fn(async () => undefined);
+      setCliBackendForPrepareTest({ prepareExecution });
 
-      const context = await fixture.prepare({ provider: "claude-cli", thinkLevel });
+      await fixture.prepare({ provider: "claude-cli", thinkLevel });
 
-      expect(context.preparedBackend.env?.MAX_THINKING_TOKENS).toBe(expectedBudget);
+      expect(prepareExecution).toHaveBeenCalledWith(
+        expect.objectContaining({ thinkingLevel: thinkLevel }),
+      );
     },
   );
 
