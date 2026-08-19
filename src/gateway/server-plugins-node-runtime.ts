@@ -1,12 +1,12 @@
 import { getPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
 import { isNodeCommandAllowed, resolveNodeCommandAllowlist } from "./node-command-policy.js";
-import type { GatewayRequestContext } from "./server-methods/types.js";
-import type { GatewayContextResolver } from "./server-plugin-in-process-dispatch.js";
+import type { GatewayContextResolver, GatewayRequestContext } from "./server-methods/types.js";
 
 export function hasInProcessGatewayContext(
   resolveGatewayContext?: GatewayContextResolver,
 ): boolean {
-  return Boolean(getPluginRuntimeGatewayRequestScope()?.context ?? resolveGatewayContext?.());
+  const scope = getPluginRuntimeGatewayRequestScope();
+  return Boolean(resolveGatewayContext?.() ?? scope?.resolveGatewayContext?.() ?? scope?.context);
 }
 
 export function projectGatewayRuntimeNodes(

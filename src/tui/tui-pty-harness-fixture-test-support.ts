@@ -12,6 +12,7 @@ import {
 import { TUI_PTY_RECONNECT_FIXTURE } from "./tui-pty-reconnect-fixture-test-support.js";
 import { TUI_PTY_RENDERING_FIXTURE_SCRIPT } from "./tui-pty-rendering-test-support.js";
 import { TUI_PTY_RESET_FIXTURE } from "./tui-pty-reset-fixture-test-support.js";
+import { TUI_PTY_STARTUP_SESSION_FIXTURE } from "./tui-pty-startup-session-fixture-test-support.js";
 import { TUI_PTY_SESSION_SUBSCRIPTION_FIXTURE_SCRIPT } from "./tui-pty-subscription-fixture-test-support.js";
 import { startPty, type PtyRun } from "./tui-pty-test-support.js";
 
@@ -83,6 +84,7 @@ export async function writeTuiPtyFixtureScript(dir: string) {
       const actionLogPath = process.env.OPENCLAW_TUI_PTY_LOG_PATH;
       const gatewayStatus = process.env.OPENCLAW_TUI_PTY_GATEWAY_STATUS ?? "fixture gateway ok";
       const startupDelayMs = Number(process.env.OPENCLAW_TUI_PTY_STARTUP_DELAY_MS ?? 0);
+      ${TUI_PTY_STARTUP_SESSION_FIXTURE.variables}
       const footerModel = process.env.OPENCLAW_TUI_PTY_MODEL;
       const footerThinkingLevel = process.env.OPENCLAW_TUI_PTY_THINKING_LEVEL;
       let verboseLevel = process.env.OPENCLAW_TUI_PTY_VERBOSE_LEVEL;
@@ -210,12 +212,7 @@ export async function writeTuiPtyFixtureScript(dir: string) {
         ${TUI_PTY_SESSION_SUBSCRIPTION_FIXTURE_SCRIPT}
 
         async sendChat(opts: Parameters<TuiBackend["sendChat"]>[0]) {
-          record("sendChat", {
-            sessionKey: opts.sessionKey,
-            message: opts.message,
-            deliver: opts.deliver,
-            thinking: opts.thinking,
-          });
+          record("sendChat", opts);
           const runId = opts.runId ?? "run-pty-fixture";
           ${TUI_PTY_RECONNECT_FIXTURE.sendChat}
           if (opts.message.startsWith("live reply dedupe proof: ")) {
@@ -458,6 +455,7 @@ export async function writeTuiPtyFixtureScript(dir: string) {
           const gapHistory = loadGapHistory(sessionKey);
           if (gapHistory) { return gapHistory; }
           ${TUI_PTY_RECONNECT_FIXTURE.loadHistory}
+          ${TUI_PTY_STARTUP_SESSION_FIXTURE.loadHistory}
           if (liveReplyHistory.length > 0) {
             return { messages: [...liveReplyHistory] };
           }
@@ -505,9 +503,12 @@ export async function writeTuiPtyFixtureScript(dir: string) {
         }
 
         async listSessions(opts?: Parameters<TuiBackend["listSessions"]>[0]) {
+          ${TUI_PTY_STARTUP_SESSION_FIXTURE.listSessionsSetup}
           record("listSessions", {
+            ...opts,
             purpose: opts?.includeDerivedTitles ? "picker" : "refresh",
           });
+          ${TUI_PTY_STARTUP_SESSION_FIXTURE.listSessionsDelay}
           const sessions = enablePickerFixture
             ? [
                 sessionEntry("main"),
@@ -518,11 +519,14 @@ export async function writeTuiPtyFixtureScript(dir: string) {
                 },
               ]
             : [];
+          const visibleSessions = sessions.filter(
+            (session) => session.key !== "global" || opts?.includeGlobal === true,
+          );
           return {
             ts: Date.now(),
             path: "",
-            count: sessions.length,
-            sessions,
+            count: visibleSessions.length,
+            sessions: visibleSessions,
             defaults: {
               model: currentModel,
               modelProvider: "fixture-provider",
@@ -674,6 +678,7 @@ export async function writeTuiPtyFixtureScript(dir: string) {
             session: { scope: "per-sender", mainKey: "main" },
           },
           deliver: process.env.OPENCLAW_TUI_PTY_DELIVER === "1",
+          session: process.env.OPENCLAW_TUI_PTY_SESSION,
           thinking: launchThinkingLevel,
           message: initialMessage,
           historyLimit: 5,

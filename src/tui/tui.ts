@@ -1073,11 +1073,7 @@ async function runTuiUnlocked(opts: RunTuiOptions): Promise<TuiResult> {
     const remembered = await readTuiLastSessionKey({
       scopeKey: buildLastSessionScopeKeyFor(),
     });
-    if (
-      expectedConnectionGeneration !== connectionGeneration ||
-      !state.isConnected ||
-      exitRequested
-    ) {
+    if (expectedConnectionGeneration !== connectionGeneration || exitRequested) {
       return;
     }
     const rememberedSelection = remembered ? resolveSessionSelection(remembered) : null;
@@ -1095,17 +1091,12 @@ async function runTuiUnlocked(opts: RunTuiOptions): Promise<TuiResult> {
       .listSessions({
         limit: TUI_SESSION_LOOKUP_LIMIT,
         search: rememberedKey,
-        includeGlobal: false,
+        includeGlobal: rememberedKey === "global",
         includeUnknown: false,
         agentId: state.currentAgentId,
       })
       .catch(() => null);
-    if (
-      !sessions ||
-      expectedConnectionGeneration !== connectionGeneration ||
-      !state.isConnected ||
-      exitRequested
-    ) {
+    if (!sessions || expectedConnectionGeneration !== connectionGeneration || exitRequested) {
       return;
     }
     // An abandoned connection must leave restoration eligible for the next handshake.
@@ -1784,7 +1775,6 @@ async function runTuiUnlocked(opts: RunTuiOptions): Promise<TuiResult> {
       if (!ownsConnection()) {
         return;
       }
-      state.isConnected = true;
       const reconnected = connectionLineage.connect();
       if (reconnected) {
         reconnectStreamingWatchdog();
@@ -1825,6 +1815,7 @@ async function runTuiUnlocked(opts: RunTuiOptions): Promise<TuiResult> {
       if (!ownsConnection()) {
         return;
       }
+      state.isConnected = true;
       if (state.activityStatus === "starting up") {
         setActivityStatus("idle");
       }

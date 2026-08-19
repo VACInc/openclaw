@@ -1,3 +1,7 @@
+import {
+  parseControlUiFocusLocation,
+  type ControlUiFocusLocation,
+} from "@openclaw/session-url-contract";
 import type { RouteLocation } from "@openclaw/uirouter";
 import type { GatewayBrowserClient } from "../api/gateway.ts";
 import { sessionRouteNamespaceFromPath } from "../app-route-paths.ts";
@@ -27,9 +31,8 @@ import {
 import { createAgentSelectionCapability } from "./agent-selection.ts";
 import { isBrowserPanelAvailable } from "./app-shell-chrome.ts";
 import { resolveApprovalDocumentMode, type ApprovalDocumentMode } from "./approval-deep-link.ts";
-import { createBrowserHistory, resolveControlUiBasePath } from "./browser.ts";
+import { createBrowserHistory, resolveControlUiPaths } from "./browser.ts";
 import { createChatAttachmentHandoff } from "./chat-attachment-handoff.ts";
-import { createApplicationCloudStartup } from "./cloud-session-startup.ts";
 import { createApplicationConfigCapability } from "./config.ts";
 import type {
   ApplicationNavigationOptions,
@@ -40,14 +43,13 @@ import type {
   ApplicationThemeServerSelection,
 } from "./context.ts";
 import { syncCustomThemeStyleTag } from "./custom-theme.ts";
-import { isDashboardOnlyView } from "./dashboard-document-mode.ts";
-import { isDesktopDocumentPath, isDesktopOnlyView } from "./desktop-document-mode.ts";
 import { createApplicationGateway } from "./gateway-store.ts";
 import { createInitialUserMessageHandoff } from "./initial-user-message-handoff.ts";
 import { createNativeChatDrafts } from "./native-bridge.ts";
 import { startNativeLinkRouting } from "./native-link-routing.ts";
 import { createNativeNotificationsCapability } from "./native-notifications.ts";
 import { createApplicationOverlays } from "./overlays.ts";
+import { createApplicationPlacementStartup } from "./session-placement-startup.ts";
 import {
   loadSettings,
   patchSettings,
@@ -56,10 +58,12 @@ import {
   saveSettings,
   type UiSettings,
 } from "./settings.ts";
-import { createSkillWorkshopRevisionHandoff } from "./skill-workshop-revision-handoff.ts";
+import { createSkillWorkshopRevisionAdmissions } from "./skill-workshop-revision-admissions.ts";
 import { createStartupLifecycle, type StartupStep } from "./startup-lifecycle.ts";
-import { resolveApplicationStartupSettings } from "./startup-settings.ts";
-import { isTerminalDocumentPath, isTerminalOnlyView } from "./terminal-document-mode.ts";
+import {
+  normalizeLegacyTerminalViewLocation,
+  resolveApplicationStartupSettings,
+} from "./startup-settings.ts";
 import { startThemeTransition } from "./theme-transition.ts";
 import { resolveTheme, type ThemeMode } from "./theme.ts";
 import { createWebPushCapability } from "./web-push.ts";
@@ -222,6 +226,7 @@ export type ApplicationRuntime = {
   readonly context: ApplicationContext<RouteId>;
   readonly router: ApplicationRouter;
   readonly documentMode: ApprovalDocumentMode | null;
+  readonly focusLocation: ControlUiFocusLocation | null;
   readonly pendingGatewayConnection: {
     readonly gatewayUrl: string;
     readonly token: string;
@@ -247,10 +252,10 @@ export function bootstrapApplication(
 ): ApplicationRuntime {
   const history = createBrowserHistory();
   const startupLocation = history.location();
-  const initialBasePath = resolveControlUiBasePath(
+  const [basePath, resourceBasePath] = resolveControlUiPaths(
     startupLocation.pathname || globalThis.location?.pathname || "/",
   );
-  const documentMode = resolveApprovalDocumentMode(startupLocation.pathname, initialBasePath);
+  const documentMode = resolveApprovalDocumentMode(startupLocation.pathname, basePath);
   const persistedSettings = loadSettings();
   const initialSettings = documentMode
     ? resolvePageGatewaySettings(persistedSettings)
@@ -271,27 +276,20 @@ export function bootstrapApplication(
       saveSettings(startup.settings);
     }
   }
-  const basePath = resolveControlUiBasePath(
-    startup.location.pathname || globalThis.location?.pathname || "/",
-  );
-  const dashboardDocument = isDashboardOnlyView(startup.location);
-  const standaloneDocument =
-    isTerminalDocumentPath(startup.location.pathname, basePath) ||
-    isDesktopDocumentPath(startup.location.pathname, basePath) ||
-    dashboardDocument;
+  const applicationLocation = normalizeLegacyTerminalViewLocation(startup.location, basePath);
+  if (applicationLocation !== startup.location) {
+    history.replace(applicationLocation);
+  }
+  const focusLocation = parseControlUiFocusLocation(applicationLocation, basePath);
   const firstRunDefaultLanding =
-    documentMode === null && isDefaultChatLanding(startup.location, basePath, routeIdFromPath);
-  // A `?view=` document mode still lands on the chat path, so it counts as the default landing
-  // for routing, but it is an explicit destination that renders its own surface. Redirecting it
-  // into model setup strands native app webviews on a blank page, so only gate the redirect.
-  const firstRunRedirectEnabled =
-    firstRunDefaultLanding &&
-    !isTerminalOnlyView(startup.location, basePath) &&
-    !isDesktopOnlyView(startup.location, basePath) &&
-    !dashboardDocument;
+    documentMode === null &&
+    focusLocation === null &&
+    isDefaultChatLanding(applicationLocation, basePath, routeIdFromPath);
+  const firstRunRedirectEnabled = firstRunDefaultLanding;
   const sessionPathBuilderReady =
     dependencies.sessionPathBuilderReady ??
-    (documentMode || dashboardDocument
+    (documentMode ||
+    (focusLocation?.status === "valid" && focusLocation.target.kind !== "dashboard")
       ? Promise.resolve()
       : import("@openclaw/session-url-contract").then((contract) => {
           setSessionPathBuilder(contract.buildControlUiSessionPath);
@@ -305,7 +303,7 @@ export function bootstrapApplication(
     undefined,
     {
       persistDefaultConnectionSettings: documentMode === null,
-      basePath,
+      resourceBasePath,
       ...(startup.pendingBootstrapProfile
         ? { bootstrapProfile: startup.pendingBootstrapProfile }
         : {}),
@@ -313,23 +311,23 @@ export function bootstrapApplication(
   );
   const agents = createAgentCapability(gateway);
   const startupLifecycle = createStartupLifecycle();
-  const startupRouteId = routeIdFromPath(startup.location.pathname, basePath);
+  const startupRouteId = routeIdFromPath(applicationLocation.pathname, basePath);
   const releasedSessionQuery =
     (startupRouteId === "chat" || startupRouteId === "dashboard") &&
-    sessionRouteNamespaceFromPath(startup.location.pathname, basePath) === null &&
-    new URLSearchParams(startup.location.search).has("session");
+    sessionRouteNamespaceFromPath(applicationLocation.pathname, basePath) === null &&
+    new URLSearchParams(applicationLocation.search).has("session");
   const deferInitialLocationUntilGateway =
     documentMode === null &&
     !releasedSessionQuery &&
     firstRunDefaultLanding &&
     !parseAgentSessionKey(settings.sessionKey);
   const initialLocationReady = (
-    documentMode || dashboardDocument
-      ? Promise.resolve(startup.location)
+    documentMode || focusLocation
+      ? Promise.resolve(applicationLocation)
       : Promise.all([sessionPathBuilderReady, import("./bootstrap-location.ts")]).then(
           ([, location]) =>
             location.resolveInitialApplicationLocation({
-              location: startup.location,
+              location: applicationLocation,
               basePath,
               sessionKey: settings.sessionKey,
               gateway,
@@ -341,7 +339,7 @@ export function bootstrapApplication(
     // stop() aborts an eager unscoped-session lookup even when start() returns
     // at the lazy-chunk guard, so consume that teardown-only rejection here.
     if (startupLifecycle.signal.aborted) {
-      return startup.location;
+      return applicationLocation;
     }
     throw error;
   });
@@ -349,7 +347,7 @@ export function bootstrapApplication(
   const agentSelection = createAgentSelectionCapability(gateway, agents);
   const channels = createChannelCapability(gateway);
   const config = createApplicationConfigCapability({
-    basePath,
+    resourceBasePath,
     auth: {
       settings: { token: settings.token },
       password: startup.password ?? "",
@@ -381,15 +379,19 @@ export function bootstrapApplication(
   });
   const nativeNotifications = createNativeNotificationsCapability();
   const webPush = createWebPushCapability(gateway);
-  const skillWorkshopRevision = createSkillWorkshopRevisionHandoff();
+  const skillWorkshopRevisionAdmissions = createSkillWorkshopRevisionAdmissions();
   const initialUserMessage = createInitialUserMessageHandoff();
-  const cloudStartup = createApplicationCloudStartup({ gateway, sessions, initialUserMessage });
+  const placementStartup = createApplicationPlacementStartup({
+    gateway,
+    sessions,
+    initialUserMessage,
+  });
   const chatAttachmentHandoff = createChatAttachmentHandoff();
   applyThemePresentation(settings);
   const router = createApplicationRouter();
-  // Standalone terminal, desktop, and dashboard documents render before the
-  // shell; starting the page router would rewrite them to an application route.
-  const startsApplicationRouter = documentMode === null && !standaloneDocument;
+  // Focus documents render before the shell; starting the application router
+  // would rewrite their reserved presentation route into an ordinary page.
+  const startsApplicationRouter = documentMode === null && focusLocation === null;
   let routerStarted = false;
   // Pre-start navigations are invisible to history; retain the latest request so
   // router.start() cannot resolve the stale browser URL over the user's route.
@@ -432,7 +434,7 @@ export function bootstrapApplication(
       return;
     }
     lastRecoveryClient = snapshot.client;
-    cloudStartup.resumeRecovery();
+    placementStartup.resumeRecovery();
   });
   const routeLocation = (routeId: RouteId, options?: ApplicationNavigationOptions) => {
     const location = locationForRoute(routeId, basePath);
@@ -495,6 +497,7 @@ export function bootstrapApplication(
     navigateWithMode(routeId, options, "push");
   const context: ApplicationContext<RouteId> = {
     basePath,
+    resourceBasePath,
     gateway,
     agents,
     agentIdentity,
@@ -503,7 +506,7 @@ export function bootstrapApplication(
     config,
     runtimeConfig,
     sessions,
-    cloudStartup,
+    placementStartup,
     workboard,
     overlays,
     navigation,
@@ -511,7 +514,7 @@ export function bootstrapApplication(
     nativeChatDrafts,
     nativeNotifications,
     webPush,
-    skillWorkshopRevision,
+    skillWorkshopRevisionAdmissions,
     initialUserMessage,
     chatAttachmentHandoff,
     navigate: (routeId, options) => {
@@ -528,6 +531,7 @@ export function bootstrapApplication(
     context,
     router,
     documentMode,
+    focusLocation,
     get pendingGatewayConnection() {
       return pendingGatewayConnection;
     },
@@ -604,7 +608,7 @@ export function bootstrapApplication(
       stopPostConnect();
       agents.dispose();
       channels.dispose();
-      cloudStartup.dispose();
+      placementStartup.dispose();
       sessions.dispose();
       workboard.dispose();
       stopConfigWriteSuspension();
@@ -615,7 +619,7 @@ export function bootstrapApplication(
       nativeLinkRouting.dispose();
       nativeNotifications?.dispose();
       webPush.dispose();
-      skillWorkshopRevision.clear();
+      skillWorkshopRevisionAdmissions.dispose();
       initialUserMessage.clear();
       chatAttachmentHandoff.dispose();
     },

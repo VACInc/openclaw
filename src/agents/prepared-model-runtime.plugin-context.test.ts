@@ -30,7 +30,6 @@ describe("prepared model runtime plugin metadata ownership", () => {
       agentDir: `/tmp/${name}-agent`,
       config,
       workspaceDir: `/tmp/${name}-workspace`,
-      workspacePluginRootPresent: false,
     }));
     const pluginGeneration = {
       configuredCatalogEntries: [],
@@ -80,7 +79,6 @@ describe("prepared model runtime plugin metadata ownership", () => {
             agentDir: "/tmp/direct-agent",
             config,
             workspaceDir,
-            workspacePluginRootPresent: false,
           },
           process.env,
           undefined,
@@ -90,6 +88,42 @@ describe("prepared model runtime plugin metadata ownership", () => {
         config,
         env: process.env,
         workspaceDir,
+      });
+    } finally {
+      resolveMetadata.mockRestore();
+    }
+  });
+
+  it("requests selected-runtime metadata for executable prepared probes", () => {
+    const config = { plugins: { slots: { memory: "none" as const } } };
+    const workspaceDir = "/tmp/selected-runtime-workspace";
+    const directSnapshot = createPluginMetadataSnapshot({
+      config,
+      manifestRegistry: makeRegistry([{ id: "selected", channels: [] }]),
+      workspaceDir,
+    });
+    const resolveMetadata = vi
+      .spyOn(pluginMetadata, "loadPluginMetadataSnapshot")
+      .mockReturnValue(directSnapshot);
+
+    try {
+      prepareOwnedPluginLoadContext(
+        {
+          agentDir: "/tmp/selected-runtime-agent",
+          config,
+          loadRuntimePlugins: true,
+          runtimePluginSelections: [{ provider: "selected", modelId: "model" }],
+          workspaceDir,
+        },
+        process.env,
+        undefined,
+      );
+
+      expect(resolveMetadata).toHaveBeenCalledWith({
+        config,
+        env: process.env,
+        workspaceDir,
+        pluginIdScope: expect.objectContaining({ key: expect.any(String) }),
       });
     } finally {
       resolveMetadata.mockRestore();

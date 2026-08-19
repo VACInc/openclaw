@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
+import type { AgentWaitResult } from "../agents/run-wait.types.js";
 import type { AmbientEnvTriggerPolicy } from "../channels/config-presence.js";
 import { allowsProcessHomeSessionScan } from "../config/paths.js";
 import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
@@ -17,7 +18,11 @@ import { getPluginModuleLoaderStats } from "../plugins/plugin-module-loader-cach
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import type { PluginRegistryParams } from "../plugins/registry-types.js";
 import { getActivePluginRegistry } from "../plugins/runtime.js";
-import { getPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
+import {
+  bindGatewayContextResolver,
+  getPluginRuntimeGatewayRequestScope,
+  withPluginRuntimeGatewayContextResolver,
+} from "../plugins/runtime/gateway-request-scope.js";
 import { createPluginRuntimeLoaderLogger } from "../plugins/runtime/load-context.js";
 import { resolvePluginSubagentCompletionRequester } from "../plugins/runtime/subagent-requester-context.js";
 import type {
@@ -28,12 +33,15 @@ import type {
 import type { PluginLogger, PluginOrigin } from "../plugins/types.js";
 import { ADMIN_SCOPE } from "./method-scopes.js";
 import { normalizeOperatorScopeList, type OperatorScope } from "./operator-scopes.js";
-import type { GatewayRequestHandler, GatewayRequestOptions } from "./server-methods/types.js";
+import type {
+  GatewayContextResolver,
+  GatewayRequestHandler,
+  GatewayRequestOptions,
+} from "./server-methods/types.js";
 import {
   dispatchGatewayMethodInProcess,
   dispatchGatewayMethodInProcessRaw,
   getInProcessGatewayRequestContext,
-  type GatewayContextResolver,
 } from "./server-plugin-in-process-dispatch.js";
 import { resolvePluginSubagentToolsAlsoAllow } from "./server-plugin-runtime-client.js";
 import {
@@ -241,7 +249,7 @@ export function createGatewaySubagentRuntime(
     return { messages: Array.isArray(payload?.messages) ? payload.messages : [] };
   };
 
-  return {
+  const subagentRuntime: PluginRuntime["subagent"] = {
     async run(params) {
       const pluginSubagentRequester = resolvePluginSubagentCompletionRequester(
         params.completionDelivery,
@@ -275,7 +283,11 @@ export function createGatewaySubagentRuntime(
       if (overrideRequested && !allowOverride) {
         throw new Error("provider/model override is not authorized for this plugin subagent run.");
       }
-      const payload = await dispatchGatewayMethodInProcess<{ runId?: string; runtime?: unknown }>(
+      const payload = await dispatchGatewayMethodInProcess<{
+        runId?: string;
+        sessionKey?: string;
+        runtime?: unknown;
+      }>(
         "agent",
         {
           sessionKey: params.sessionKey,
@@ -306,11 +318,14 @@ export function createGatewaySubagentRuntime(
       if (typeof runId !== "string" || !runId) {
         throw new Error("Gateway agent method returned an invalid runId.");
       }
+      const sessionKey = payload?.sessionKey?.trim() || params.sessionKey;
       const runtime = normalizePluginSubagentRunRuntime(payload?.runtime);
-      return { runId, ...(runtime ? { runtime } : {}) };
+      return { runId, sessionKey, ...(runtime ? { runtime } : {}) };
     },
     async waitForRun(params) {
-      const payload = await dispatchGatewayMethodInProcess<{ status?: string; error?: string }>(
+      const payload = await dispatchGatewayMethodInProcess<
+        Omit<AgentWaitResult, "status"> & { status?: string }
+      >(
         "agent.wait",
         {
           runId: params.runId,
@@ -318,20 +333,20 @@ export function createGatewaySubagentRuntime(
         },
         { resolveGatewayContext },
       );
-      let status = payload?.status;
+      const { status: rawStatus, error, ...metadata } = payload;
+      let status = rawStatus;
       if (status === "completed" || status === "succeeded") {
         status = "ok";
-      } else if (status === "error" && payload?.error?.trim().toLowerCase() === "completed") {
+      } else if (status === "error" && error?.trim().toLowerCase() === "completed") {
         status = "ok";
       }
-      if (status !== "ok" && status !== "error" && status !== "timeout") {
-        throw new Error(`Gateway agent.wait returned unexpected status: ${payload?.status}`);
+      if (status !== "ok" && status !== "error" && status !== "timeout" && status !== "pending") {
+        throw new Error(`Gateway agent.wait returned unexpected status: ${rawStatus}`);
       }
       return {
+        ...metadata,
         status,
-        ...(status !== "ok" &&
-          typeof payload?.error === "string" &&
-          payload.error && { error: payload.error }),
+        ...(status !== "ok" && error ? { error } : {}),
       };
     },
     getSessionMessages,
@@ -362,6 +377,10 @@ export function createGatewaySubagentRuntime(
       );
     },
   };
+  if (resolveGatewayContext) {
+    bindGatewayContextResolver(subagentRuntime, resolveGatewayContext);
+  }
+  return subagentRuntime;
 }
 
 type GatewayRuntimeNodes = Awaited<ReturnType<PluginRuntime["nodes"]["list"]>>["nodes"];
@@ -428,26 +447,41 @@ export function createGatewayNodesRuntime(
 function createGatewayPluginRuntimeBindings(
   resolveGatewayContext: GatewayContextResolver,
   overridePolicies: PluginSubagentOverridePolicies,
-): Pick<PluginRuntime, "gateway" | "nodes" | "subagent"> &
-  Pick<CreatePluginRuntimeOptions, "dispatchReplyFromConfig"> {
+): {
+  runtime: Pick<PluginRuntime, "gateway" | "nodes" | "subagent"> &
+    Pick<CreatePluginRuntimeOptions, "dispatchReplyFromConfig">;
+  retire: () => void;
+} {
+  let active = true;
+  const resolveBoundGatewayContext = () => (active ? resolveGatewayContext() : undefined);
   return {
-    dispatchReplyFromConfig: async (params) => {
-      const { dispatchReplyFromConfig } =
-        await import("../auto-reply/reply/dispatch-from-config.js");
-      const sessionWorkerPlacementContext =
-        getInProcessGatewayRequestContext(resolveGatewayContext);
-      return await dispatchReplyFromConfig({
-        ...params,
-        ...(sessionWorkerPlacementContext ? { sessionWorkerPlacementContext } : {}),
-      });
+    retire: () => {
+      active = false;
     },
-    gateway: {
-      isAvailable: async () => hasInProcessGatewayContext(resolveGatewayContext),
-      request: (method, params, options) =>
-        dispatchTrustedPluginGatewayMethod(method, params, options, resolveGatewayContext),
+    runtime: {
+      dispatchReplyFromConfig: async (params) => {
+        const { dispatchReplyFromConfig } =
+          await import("../auto-reply/reply/dispatch-from-config.js");
+        const sessionWorkerPlacementContext = getInProcessGatewayRequestContext(
+          resolveBoundGatewayContext,
+        );
+        return await withPluginRuntimeGatewayContextResolver(
+          resolveBoundGatewayContext,
+          async () =>
+            await dispatchReplyFromConfig({
+              ...params,
+              ...(sessionWorkerPlacementContext ? { sessionWorkerPlacementContext } : {}),
+            }),
+        );
+      },
+      gateway: {
+        isAvailable: async () => hasInProcessGatewayContext(resolveBoundGatewayContext),
+        request: (method, params, options) =>
+          dispatchTrustedPluginGatewayMethod(method, params, options, resolveBoundGatewayContext),
+      },
+      nodes: createGatewayNodesRuntime(resolveBoundGatewayContext),
+      subagent: createGatewaySubagentRuntime(resolveBoundGatewayContext, overridePolicies),
     },
-    nodes: createGatewayNodesRuntime(resolveGatewayContext),
-    subagent: createGatewaySubagentRuntime(resolveGatewayContext, overridePolicies),
   };
 }
 
@@ -559,6 +593,7 @@ export function loadGatewayPlugins(params: {
     return {
       pluginRegistry,
       gatewayMethods: [...params.baseMethods],
+      retireGatewayRuntimeBindings: () => {},
     };
   }
   const beforeLoad = performance.now();
@@ -588,7 +623,7 @@ export function loadGatewayPlugins(params: {
     }),
     runtimeOptions: {
       allowGatewaySubagentBinding: true,
-      ...gatewayRuntimeBindings,
+      ...gatewayRuntimeBindings.runtime,
     },
     channelPluginLoadIntent: params.channelPluginLoadIntent,
     preferBuiltPluginArtifacts: true,
@@ -636,5 +671,9 @@ export function loadGatewayPlugins(params: {
         .join(","),
     ],
   ]);
-  return { pluginRegistry, gatewayMethods };
+  return {
+    pluginRegistry,
+    gatewayMethods,
+    retireGatewayRuntimeBindings: gatewayRuntimeBindings.retire,
+  };
 }

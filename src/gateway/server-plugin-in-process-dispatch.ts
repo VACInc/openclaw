@@ -14,6 +14,7 @@ import type { AgentRunRequest } from "./server-methods/agent-request-types.js";
 import type { TrustedSessionCreation } from "./server-methods/session-creation-provenance.js";
 import type {
   GatewayAgentRunTaskOwner,
+  GatewayContextResolver,
   GatewayRequestContext,
   GatewayRequestOptions,
   TrustedAgentToolCaller,
@@ -55,8 +56,6 @@ type DispatchGatewayMethodInProcessOptions = {
   resolveGatewayContext?: GatewayContextResolver;
 };
 
-export type GatewayContextResolver = () => GatewayRequestContext | undefined;
-
 type ResolvedInProcessGatewayDispatch = {
   client: NonNullable<GatewayRequestOptions["client"]>;
   context: GatewayRequestContext;
@@ -69,7 +68,8 @@ function resolveInProcessGatewayDispatch(
   options?: DispatchGatewayMethodInProcessOptions,
 ): ResolvedInProcessGatewayDispatch {
   const scope = getPluginRuntimeGatewayRequestScope();
-  const context = scope?.context ?? options?.resolveGatewayContext?.();
+  const context =
+    options?.resolveGatewayContext?.() ?? scope?.resolveGatewayContext?.() ?? scope?.context;
   const isWebchatConnect = scope?.isWebchatConnect ?? (() => false);
   if (!context) {
     throw new Error(
@@ -189,7 +189,8 @@ export async function dispatchGatewayMethodInProcessRaw(
 export function getInProcessGatewayRequestContext(
   resolveGatewayContext?: GatewayContextResolver,
 ): GatewayRequestContext | undefined {
-  return getPluginRuntimeGatewayRequestScope()?.context ?? resolveGatewayContext?.();
+  const scope = getPluginRuntimeGatewayRequestScope();
+  return resolveGatewayContext?.() ?? scope?.resolveGatewayContext?.() ?? scope?.context;
 }
 
 export async function dispatchGatewayMethodInProcess<T>(

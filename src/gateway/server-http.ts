@@ -24,12 +24,14 @@ import type { ResolvedGatewayAuth } from "./auth.js";
 import {
   CONTROL_UI_CATALOG_ICON_PATH_PREFIX,
   CONTROL_UI_CHANNEL_AVATAR_PATH_PREFIX,
+  CONTROL_UI_LINK_FAVICON_PATH_PREFIX,
   CONTROL_UI_PLUGIN_ICON_PATH_PREFIX,
   CONTROL_UI_WORKSPACE_ICON_PATH_PREFIX,
 } from "./control-ui-contract.js";
 import { respondNotFound, respondPlainText } from "./control-ui-http-utils.js";
 import {
   isControlUiApprovalDocumentPath,
+  isControlUiFocusDocumentPath,
   isControlUiPluginManagerRequest,
 } from "./control-ui-routing.js";
 import type { ControlUiRootState } from "./control-ui.js";
@@ -324,6 +326,17 @@ export function createGatewayHttpServer(opts: {
           agentId: resolveAssistantIdentity({ cfg: configSnapshot }).agentId,
           root: controlUiRoot,
         });
+      const handleStandaloneControlUiRequest = async () => {
+        if (!controlUiEnabled) {
+          respondNotFound(res);
+          return true;
+        }
+        if (await handleControlUiRequest()) {
+          return true;
+        }
+        respondNotFound(res);
+        return true;
+      };
       const requestStages: GatewayHttpRequestStage[] = [
         {
           run: () =>
@@ -459,24 +472,15 @@ export function createGatewayHttpServer(opts: {
             config: openAiChatCompletionsConfig,
           }),
       );
-      addRequestStage(
-        isControlUiApprovalDocumentPath({
-          basePath: controlUiBasePath,
-          pathname: scopedRequestPath,
-        }),
-        async () => {
-          if (!controlUiEnabled) {
-            respondNotFound(res);
-            return true;
-          }
-          const handled = await handleControlUiRequest();
-          if (handled) {
-            return true;
-          }
-          respondNotFound(res);
-          return true;
-        },
-      );
+      const approvalDocument = isControlUiApprovalDocumentPath({
+        basePath: controlUiBasePath,
+        pathname: scopedRequestPath,
+      });
+      const focusDocument = isControlUiFocusDocumentPath({
+        basePath: controlUiBasePath,
+        pathname: scopedRequestPath,
+      });
+      addRequestStage(approvalDocument, handleStandaloneControlUiRequest);
       addRequestStage(Boolean(nodeCapability), async () => {
         const { authorizePluginNodeCapabilityRequest } = await getPluginNodeCapabilityAuthModule();
         const ok = await authorizePluginNodeCapabilityRequest({
@@ -580,6 +584,8 @@ export function createGatewayHttpServer(opts: {
         );
       }
 
+      addRequestStage(focusDocument, handleStandaloneControlUiRequest);
+
       addRequestStage(
         scopedRequestPath.startsWith("/api/chat/media/outgoing/") ||
           (controlUiRouteBasePath.length > 0 &&
@@ -593,9 +599,11 @@ export function createGatewayHttpServer(opts: {
       );
       addRequestStage(
         controlUiEnabled &&
-          [CONTROL_UI_PLUGIN_ICON_PATH_PREFIX, CONTROL_UI_CATALOG_ICON_PATH_PREFIX].some((prefix) =>
-            scopedRequestPath.startsWith(`${controlUiRouteBasePath}${prefix}/`),
-          ),
+          [
+            CONTROL_UI_PLUGIN_ICON_PATH_PREFIX,
+            CONTROL_UI_CATALOG_ICON_PATH_PREFIX,
+            CONTROL_UI_LINK_FAVICON_PATH_PREFIX,
+          ].some((prefix) => scopedRequestPath.startsWith(`${controlUiRouteBasePath}${prefix}/`)),
         async () =>
           (await getPluginIconHttpModule()).handlePluginIconHttpRequest(
             req,
