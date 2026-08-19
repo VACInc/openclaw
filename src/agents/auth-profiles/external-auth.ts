@@ -8,8 +8,8 @@ import type { ProviderExternalAuthProfile } from "../../plugins/provider-externa
 import { resolveExternalAuthProfilesWithPlugins } from "../../plugins/provider-runtime.js";
 import { isAmbientCredentialAllowedByProviderAuthPin } from "./ambient-auth.js";
 import { cloneAuthProfileStore } from "./clone.js";
-import { hasUsableOAuthCredential } from "./credential-state.js";
 import {
+  isUsablePersistedExternalCliProfileCredential,
   listConfiguredExternalCliProfileMetadataIds,
   listExternalCliProfileMetadataIds,
 } from "./external-cli-profile-metadata.js";
@@ -136,10 +136,10 @@ function resolveExternalAuthProfiles(params: {
   // after a process restart, when runtime-only provenance is no longer available.
   for (const profileId of listExternalCliProfileMetadataIds()) {
     const credential = params.store.profiles[profileId];
-    const hasUsablePersistedCliCredential =
-      credential?.type === "oauth" &&
-      hasUsableOAuthCredential(credential) &&
-      Boolean(credential.accountId?.trim() || credential.email?.trim());
+    const hasUsablePersistedCliCredential = isUsablePersistedExternalCliProfileCredential(
+      profileId,
+      credential,
+    );
     if (
       (resolved.has(profileId) || hasUsablePersistedCliCredential) &&
       externalCliSync.isExternalCliAuthProfileInScope({

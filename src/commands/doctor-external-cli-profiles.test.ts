@@ -41,7 +41,7 @@ describe("external CLI auth profile doctor migration", () => {
           provider: "claude-cli",
           access: "rotated-access",
           refresh: "rotated-refresh",
-          expires: Date.now() + 60_000,
+          expires: Date.now() + 30 * 60_000,
         },
       },
     ]);
@@ -83,6 +83,32 @@ describe("external CLI auth profile doctor migration", () => {
     expect(result.warnings).toContain(
       "Kept legacy external CLI metadata for anthropic:claude-cli: OAuth credentials were not imported and saved for every auth profile store.",
     );
+  });
+
+  it("canonicalizes legacy metadata for an already-valid persisted CLI credential", () => {
+    const profileId = "anthropic:claude-cli";
+    mocks.loadStore.mockReturnValueOnce({
+      version: 1,
+      profiles: {
+        [profileId]: {
+          type: "oauth",
+          provider: "claude-cli",
+          access: "stored-access",
+          refresh: "stored-refresh",
+          expires: Date.now() + 30 * 60_000,
+          email: "stored@example.com",
+        },
+      },
+    });
+    const cfg = {
+      auth: { profiles: { [profileId]: { provider: "anthropic", mode: "token" } } },
+    } as OpenClawConfig;
+
+    const result = maybeMigrateExternalCliProfileMetadata({ cfg, env: {} });
+
+    expect(cfg.auth?.profiles?.[profileId]).toEqual({ provider: "claude-cli", mode: "oauth" });
+    expect(mocks.saveStore).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ configChanged: true, warnings: [] });
   });
 
   it("keeps legacy metadata when the credential store write fails", () => {

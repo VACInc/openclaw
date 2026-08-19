@@ -2,6 +2,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { AUTH_STORE_VERSION } from "../agents/auth-profiles/constants.js";
 import {
+  isUsablePersistedExternalCliProfileCredential,
   listConfiguredExternalCliProfileMetadataIds,
   normalizeExternalCliProfileMetadata,
 } from "../agents/auth-profiles/external-cli-profile-metadata.js";
@@ -57,7 +58,10 @@ export function maybeMigrateExternalCliProfileMetadata(params: {
     }).filter((profile) => profile.persistence === "persisted");
     const importedProfileIds = new Set(imported.map((profile) => profile.profileId));
     for (const profileId of pendingMetadata.keys()) {
-      if (!importedProfileIds.has(profileId)) {
+      if (
+        !importedProfileIds.has(profileId) &&
+        !isUsablePersistedExternalCliProfileCredential(profileId, existing.profiles[profileId])
+      ) {
         migrationSucceeded.set(profileId, false);
       }
     }

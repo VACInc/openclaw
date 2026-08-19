@@ -1,6 +1,8 @@
 /** Canonical metadata for the legacy built-in external CLI auth profile slots. */
 import type { AuthProfileConfig } from "../../config/types.auth.js";
 import { CLAUDE_CLI_PROFILE_ID, MINIMAX_CLI_PROFILE_ID } from "./constants.js";
+import { hasUsableOAuthCredential } from "./credential-state.js";
+import type { AuthProfileCredential } from "./types.js";
 
 type ExternalCliProfileMetadata = Pick<AuthProfileConfig, "provider" | "mode">;
 
@@ -58,5 +60,25 @@ export function listConfiguredExternalCliProfileMetadataIds(
   }
   return listExternalCliProfileMetadataIds().filter((profileId) =>
     Boolean(normalizeExternalCliProfileMetadata(profileId, profiles[profileId])),
+  );
+}
+
+/**
+ * A persisted CLI credential can re-establish refresh ownership only when it
+ * is current, bound to the expected CLI provider family, and identity-complete.
+ */
+export function isUsablePersistedExternalCliProfileCredential(
+  profileId: string,
+  credential: AuthProfileCredential | undefined,
+): boolean {
+  const definition = EXTERNAL_CLI_PROFILE_METADATA.get(profileId);
+  if (!definition || credential?.type !== "oauth") {
+    return false;
+  }
+  const provider = credential.provider.trim().toLowerCase();
+  return (
+    definition.legacyProviders.includes(provider) &&
+    hasUsableOAuthCredential(credential) &&
+    Boolean(credential.accountId?.trim() || credential.email?.trim())
   );
 }

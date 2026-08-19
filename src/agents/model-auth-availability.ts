@@ -309,7 +309,7 @@ export function createModelAuthAvailabilityResolver(
     | NonNullable<NonNullable<OpenClawConfig["auth"]>["profiles"]>
     | undefined;
   for (const profileId of externalCliRefreshProfileIds) {
-    const credential = store.profiles[profileId];
+    const credential = (runtimeStore ?? store).profiles[profileId];
     const configured = params.cfg.auth?.profiles?.[profileId];
     const canonicalMetadata = normalizeExternalCliProfileMetadata(profileId, configured);
     if (
