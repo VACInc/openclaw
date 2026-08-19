@@ -49,6 +49,7 @@ describe("prepared model catalog worker input", () => {
         providerIds: ["configured"],
         configuredModelRefs: [],
         configuredRuntimeModels: [],
+        runtimeCapabilityModels: [],
         configuredGeneratedCatalogPluginIds: [],
         templateAuthStorage: {} as never,
       } satisfies PreparedModelRuntimeAgentFacts,

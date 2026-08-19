@@ -5,6 +5,7 @@ import {
   resetPreparedModelRuntimeHarness,
 } from "./prepared-model-runtime.test-harness.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { requireActivePluginRegistry } from "../plugins/runtime.js";
 import { getPreparedModelRuntimeAuthStore } from "./prepared-model-runtime-auth.js";
@@ -56,6 +57,8 @@ describe("prepared model runtime snapshots", () => {
             provider,
             id: modelId,
             name: `${modelId} (Claude CLI)`,
+            api: "anthropic-messages",
+            baseUrl: "https://api.anthropic.com",
             reasoning: true,
             input: ["text" as const],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -73,6 +76,8 @@ describe("prepared model runtime snapshots", () => {
         reasoning: false,
       })),
     });
+    // Raw user config permits sparse provider model overrides. This omission is
+    // the contract under test: it must not become an explicit reasoning opt-out.
     const config = {
       agents: {
         defaults: {
@@ -90,10 +95,13 @@ describe("prepared model runtime snapshots", () => {
       },
       models: {
         providers: {
-          anthropic: { models: modelIds.map((id) => ({ id, name: id })) },
+          anthropic: {
+            baseUrl: "https://api.anthropic.com",
+            models: modelIds.map((id) => ({ id, name: id })),
+          },
         },
       },
-    };
+    } as unknown as OpenClawConfig;
     const snapshot = await publishPreparedModelRuntimeSnapshot({
       agentId: "main",
       config,

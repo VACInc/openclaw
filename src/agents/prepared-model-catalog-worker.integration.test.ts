@@ -795,6 +795,7 @@ describe("prepared model catalog worker boundary", () => {
         providerIds: [PROVIDER_ID],
         configuredModelRefs: [],
         configuredRuntimeModels: [],
+        runtimeCapabilityModels: [],
         configuredGeneratedCatalogPluginIds: [],
         templateAuthStorage: AuthStorage.inMemory({}),
       } satisfies PreparedModelRuntimeAgentFacts,
