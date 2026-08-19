@@ -23,7 +23,9 @@ import {
   type QuestionPrompt,
 } from "../../app/question-prompt.ts";
 import type { PresencePayload } from "../../app/user-profile.ts";
+import { FullscreenController } from "../../components/fullscreen-controller.ts";
 import { SessionProgressCardController } from "../../components/session-progress-card-controller.ts";
+import { t } from "../../i18n/index.ts";
 import type {
   BoardCommandEvent,
   BoardProvider,
@@ -31,6 +33,7 @@ import type {
 } from "../../lib/board/provider.ts";
 import type { BoardFace, BoardVisibleChatDock } from "../../lib/board/settings.ts";
 import type { BoardTab } from "../../lib/board/types.ts";
+import { formatUiError } from "../../lib/format-error.ts";
 import { parseCatalogSessionKey } from "../../lib/sessions/catalog-key.ts";
 import type { SwarmRosterHydrator } from "../../lib/sessions/swarm-roster.ts";
 import { SessionUnreadPatchGuard } from "../../lib/sessions/unread.ts";
@@ -60,12 +63,12 @@ import type { ChatPaneHeaderAction } from "./components/chat-pane-header.ts";
 import type { ChatSessionSharingState } from "./components/chat-session-sharing.ts";
 import { ChatTranscriptController } from "./components/chat-transcript-controller.ts";
 import type { SessionDiscussionPanelConfig } from "./components/session-discussion-panel.ts";
-import { resolveChatSnapshotKey, type ChatMessageCache } from "./session-message-cache.ts";
+import type { ChatMessageCache } from "./session-message-cache.ts";
 import type { SessionSnapshotStore } from "./session-snapshot-store.ts";
 import { closeSlot, isSidebarSlotVisible, openSlot, setSidebarOpen } from "./sidebar-layout.ts";
 
 export abstract class ChatPaneBase extends OpenClawLightDomElement {
-  // Transfer a queued stream frame to Lit before parking; visibility resumes it.
+  // The first Lit update must render even while hidden; later hidden work parks.
   // Disconnect releases the waiter so reconnect can schedule in its new lifecycle.
   private hiddenUpdateResume: (() => void) | undefined;
   private readonly handleVisibilityChange = () =>
@@ -77,7 +80,7 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
     super.connectedCallback();
   }
   protected override async scheduleUpdate() {
-    while (this.isConnected && document.visibilityState === "hidden") {
+    while (this.hasUpdated && this.isConnected && document.visibilityState === "hidden") {
       await new Promise<void>((resolve) => {
         this.hiddenUpdateResume = resolve;
       });
@@ -185,20 +188,28 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
   protected readonly composerCapabilities = new ChatComposerCapabilityHost(() =>
     this.requestUpdate(),
   );
-  protected readonly transcript = new ChatTranscriptController(this, {
-    read: (sessionKey, rowKey) => this.readTranscriptRowHeight(sessionKey, rowKey),
-    write: (sessionKey, rowKey, height) =>
-      this.writeTranscriptRowHeight(sessionKey, rowKey, height),
-  });
-  protected readonly taskSidebarTranscript = new ChatTranscriptController(this, {
-    read: (sessionKey, rowKey) => this.readTranscriptRowHeight(sessionKey, rowKey),
-    write: (sessionKey, rowKey, height) =>
-      this.writeTranscriptRowHeight(sessionKey, rowKey, height),
-  });
+  protected readonly transcript = new ChatTranscriptController(this);
+  protected readonly taskSidebarTranscript = new ChatTranscriptController(this);
   protected readonly progressCard = new SessionProgressCardController(this, {
     gateway: () => this.context?.gateway,
     sessionKey: () => this.state?.sessionKey,
   });
+  private boardFullscreenController: FullscreenController | null = null;
+  protected get boardFullscreen(): FullscreenController {
+    this.boardFullscreenController ??= new FullscreenController(this, {
+      section: () => this.querySelector<HTMLElement>(".chat-pane-primary-column"),
+      onChange: () => this.requestUpdate(),
+      onError: (message) => this.publishHeaderError(message),
+      buttonClass: "btn btn--ghost btn--icon chat-icon-btn board-fullscreen-button",
+      buttonSelector: ".board-fullscreen-button",
+      iconClass: "board-fullscreen-button__icon",
+      enterLabel: () => t("chat.board.enterFullscreen"),
+      exitLabel: () => t("chat.board.exitFullscreen"),
+      unavailableLabel: () => t("chat.board.fullscreenUnavailable"),
+      errorMessage: (error) => t("chat.board.fullscreenFailed", { error: formatUiError(error) }),
+    });
+    return this.boardFullscreenController;
+  }
   protected readonly questionPromptState = createQuestionPromptState(() => {
     this.questionPrompts = listQuestionPrompts(this.questionPromptState);
     this.requestUpdate();
@@ -219,21 +230,6 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
   // SessionDataController's own epoch-scoped controller for the sidebar.
   protected headerSessionMutationAbortController = new AbortController();
 
-  private transcriptSnapshotKey(sessionKey: string): string | null {
-    return this.state ? resolveChatSnapshotKey(this.state, { sessionKey }) : null;
-  }
-
-  private readTranscriptRowHeight(sessionKey: string, rowKey: string): number | undefined {
-    const snapshotKey = this.transcriptSnapshotKey(sessionKey);
-    return snapshotKey ? this.sessionSnapshotStore?.readRowHeight(snapshotKey, rowKey) : undefined;
-  }
-
-  private writeTranscriptRowHeight(sessionKey: string, rowKey: string, height: number): void {
-    const snapshotKey = this.transcriptSnapshotKey(sessionKey);
-    if (snapshotKey) {
-      this.sessionSnapshotStore?.recordRowHeight(snapshotKey, rowKey, height);
-    }
-  }
   @litState() protected headerEditing = false;
   @litState() protected headerRenameValue = "";
   @litState() protected headerPlatform: string | null = null;
@@ -377,7 +373,6 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
     }
   >();
   protected headerRenameInitialLabel: string | null = null;
-  protected headerRenameInitialValue = "";
   protected headerRenameSessionKey = "";
   protected headerCopiedTimer: number | null = null;
   protected composerPrefillAttentionTimer: number | null = null;

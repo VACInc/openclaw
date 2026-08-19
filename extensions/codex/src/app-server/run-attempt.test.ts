@@ -62,6 +62,7 @@ import {
   buildCodexAppServerConnectionFingerprint,
   buildCodexPluginAppCacheKey,
 } from "./plugin-app-cache-key.js";
+import { codexApprovalTimeoutText } from "./plugin-approval-roundtrip.js";
 import { buildCodexPluginThreadConfig } from "./plugin-thread-config.js";
 import {
   flattenCodexDynamicToolFunctions,
@@ -1715,13 +1716,14 @@ describe("runCodexAppServerAttempt", () => {
       data?: { prompt?: string; systemPrompt?: string };
       type: string;
     }> = [];
-    Object.assign(params, {
-      trajectoryRecorder: {
+    params.hostCapabilities = Object.freeze({
+      ...params.hostCapabilities,
+      trajectory: Object.freeze({
         recordEvent: (type: string, data?: { prompt?: string; systemPrompt?: string }) => {
           trajectoryEvents.push({ type, data });
         },
         flush: async () => undefined,
-      },
+      }),
     });
     params.skillsSnapshot = {
       prompt: "<available_skills><skill><name>demo</name></skill></available_skills>",
@@ -2022,6 +2024,72 @@ describe("runCodexAppServerAttempt", () => {
     expect(snapshotJson).toContain('"isError":true');
     expect(snapshotJson).toContain("without a matching tool.result");
   });
+
+  it("wires approval timeouts into native tool evidence without aborting the turn", async () => {
+    const harness = createStartedThreadHarness();
+    const params = createParams(
+      path.join(tempDir, "session-approval-timeout.jsonl"),
+      path.join(tempDir, "workspace-approval-timeout"),
+    );
+    params.hostCapabilities = Object.freeze({
+      ...params.hostCapabilities,
+      requestApproval: async () => ({ id: "plugin:approval-timeout" }),
+      waitForApproval: async () => ({
+        decision: "deny" as const,
+        terminalReason: "timeout" as const,
+      }),
+    });
+    const run = runCodexAppServerAttempt(params, {
+      pluginConfig: { appServer: { mode: "guardian" } },
+    });
+    await harness.waitForMethod("turn/start");
+    const item = {
+      type: "fileChange" as const,
+      id: "patch-approval-timeout",
+      changes: [{ path: "src/example.ts", kind: { type: "add" as const } }],
+    };
+    await harness.notify(
+      itemNotification("item/started", {
+        ...item,
+        status: "inProgress",
+        durationMs: null,
+      }),
+    );
+
+    await expect(
+      harness.handleServerRequest({
+        id: "request-approval-timeout",
+        method: "item/fileChange/requestApproval",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: item.id,
+          reason: "write src/example.ts",
+        },
+      }),
+    ).resolves.toEqual({ decision: "decline" });
+    await harness.notify(
+      itemNotification("item/completed", { ...item, status: "declined", durationMs: 1 }),
+    );
+    await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
+
+    const result = await run;
+    expect(result.lastToolError).toMatchObject({
+      toolName: "apply_patch",
+      error: codexApprovalTimeoutText("file-change"),
+      errorCode: "approval_timeout",
+      timedOut: true,
+    });
+    const toolResult = result.messagesSnapshot.find(
+      (message) => message.role === "toolResult" && message.toolCallId === item.id,
+    );
+    expect(toolResult).toMatchObject({
+      role: "toolResult",
+      content: [expect.objectContaining({ text: result.lastToolError?.error })],
+    });
+    expect(readAttemptTerminal(result)).toMatchObject({ aborted: false, timedOut: false });
+  });
+
   it("keeps OpenClaw control-path tools direct when code-mode-only is enabled", () => {
     const tools = [
       createRuntimeDynamicTool("message"),
@@ -3811,8 +3879,9 @@ describe("runCodexAppServerAttempt", () => {
     });
     expect(fileStats.get("AGENTS.md")).toMatchObject({
       rawChars: agentsGuidance.length,
-      injectedChars: agentsGuidance.length,
-      truncated: false,
+      injectionStatus: "native_unverified",
+      injectedChars: null,
+      truncated: null,
     });
   });
   it("adds memory recall guidance when dated memory notes exist without root MEMORY.md", async () => {
@@ -3924,6 +3993,80 @@ describe("runCodexAppServerAttempt", () => {
       [threadStartParams.developerInstructions ?? "", collaborationInstructions].join("\n\n")
         .length,
     );
+  });
+
+  it("inherits external-cwd agent instructions through Codex thread creation", async () => {
+    const { sessionFile, workspaceDir: executionDir } = createRunPaths();
+    const agentWorkspaceDir = path.join(tempDir, "agent-workspace");
+    const agentsGuidance = "Follow agent workspace AGENTS guidance.";
+    const soulGuidance = "Keep the agent workspace voice.";
+    await fs.mkdir(executionDir, { recursive: true });
+    await fs.mkdir(agentWorkspaceDir, { recursive: true });
+    await fs.writeFile(path.join(agentWorkspaceDir, "AGENTS.md"), agentsGuidance);
+    await fs.writeFile(path.join(agentWorkspaceDir, "SOUL.md"), soulGuidance);
+    await fs.writeFile(path.join(executionDir, "AGENTS.md"), "Execution project instructions");
+    const harness = createStartedThreadHarness();
+    const params = createParams(sessionFile, executionDir);
+    params.bootstrapWorkspaceDir = agentWorkspaceDir;
+    setAgentWorkspaceForTest(params, agentWorkspaceDir);
+
+    const run = runCodexAppServerAttempt(params);
+    await harness.waitForMethod("turn/start");
+    await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
+    const result = await run;
+
+    const threadStart = harness.requests.find((request) => request.method === "thread/start");
+    if (!threadStart) {
+      throw new Error("expected thread/start request");
+    }
+    const threadInstructions =
+      (threadStart.params as { developerInstructions?: string }).developerInstructions ?? "";
+    expect(threadInstructions).toContain("OpenClaw Agent Workspace Instructions");
+    expect(threadInstructions).toContain(path.join(agentWorkspaceDir, "AGENTS.md"));
+    expect(threadInstructions).toContain(agentsGuidance);
+    expect(threadInstructions).not.toContain(soulGuidance);
+
+    const turnStart = harness.requests.find((request) => request.method === "turn/start");
+    if (!turnStart) {
+      throw new Error("expected turn/start request");
+    }
+    const collaborationInstructions =
+      (
+        turnStart.params as {
+          collaborationMode?: { settings?: { developer_instructions?: string | null } };
+        }
+      ).collaborationMode?.settings?.developer_instructions ?? "";
+    expect(collaborationInstructions).toContain(soulGuidance);
+    expect(collaborationInstructions).not.toContain(agentsGuidance);
+    const agentWorkspaceStats = result.systemPromptReport?.injectedWorkspaceFiles.find(
+      (file) => file.path === path.join(agentWorkspaceDir, "AGENTS.md"),
+    );
+    expect(agentWorkspaceStats).toMatchObject({
+      rawChars: agentsGuidance.length,
+      injectedChars: agentsGuidance.length,
+      truncated: false,
+    });
+
+    const updatedGuidance = "Updated AGENTS guidance must wait for a new session.";
+    await fs.writeFile(path.join(agentWorkspaceDir, "AGENTS.md"), updatedGuidance);
+    const resumeHarness = createResumeHarness();
+    const resumeParams = createParams(sessionFile, executionDir);
+    resumeParams.bootstrapWorkspaceDir = agentWorkspaceDir;
+    setAgentWorkspaceForTest(resumeParams, agentWorkspaceDir);
+    const resumedRun = runCodexAppServerAttempt(resumeParams);
+    await resumeHarness.waitForMethod("turn/start");
+    await resumeHarness.completeTurn({ threadId: "thread-1", turnId: "turn-2" });
+    await resumedRun;
+    const threadResume = resumeHarness.requests.find(
+      (request) => request.method === "thread/resume",
+    );
+    if (!threadResume) {
+      throw new Error("expected thread/resume request");
+    }
+    const resumedInstructions =
+      (threadResume.params as { developerInstructions?: string }).developerInstructions ?? "";
+    expect(resumedInstructions).toContain(agentsGuidance);
+    expect(resumedInstructions).not.toContain(updatedGuidance);
   });
 
   it("injects bounded MEMORY.md when memory tools are unavailable", async () => {
@@ -4453,6 +4596,83 @@ describe("runCodexAppServerAttempt", () => {
       }
     },
   );
+  it("captures settled tool evidence when an active native compaction fails terminally", async () => {
+    const storePath = path.join(tempDir, "settled-compaction-failure.sqlite");
+    const sessionId = "session-settled-compaction-failure";
+    const sessionFile = `agent:main:${sessionId}`;
+    const workspaceDir = path.join(tempDir, "workspace-settled-compaction-failure");
+    const harness = createStartedThreadHarness();
+    const params = createParams(sessionFile, workspaceDir);
+    await attachSqliteSessionTarget(params, storePath, sessionId);
+    params.prompt = "Finish the task and report the result.";
+    const run = runCodexAppServerAttempt(params);
+    await harness.waitForMethod("turn/start");
+    await harness.notify(
+      itemNotification("item/started", {
+        type: "commandExecution",
+        id: "tool-settled",
+        command: "echo completed-work",
+        cwd: workspaceDir,
+        status: "inProgress",
+      }),
+    );
+    await harness.notify(
+      itemNotification("item/completed", {
+        type: "commandExecution",
+        id: "tool-settled",
+        command: "echo completed-work",
+        cwd: workspaceDir,
+        status: "completed",
+        aggregatedOutput: "completed-work\n",
+        exitCode: 0,
+        durationMs: 12,
+      }),
+    );
+    await harness.notify(
+      itemNotification("item/started", { type: "contextCompaction", id: "compact-failed" }),
+    );
+    await harness.notify({
+      method: "error",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        error: {
+          message: "remote compaction failed",
+          codexErrorInfo: "other",
+          additionalDetails: null,
+        },
+        willRetry: false,
+      },
+    });
+    await harness.notify(
+      turnCompleted({
+        id: "turn-1",
+        status: "failed",
+        error: {
+          message: "remote compaction failed",
+          codexErrorInfo: "other",
+          additionalDetails: null,
+        },
+      }),
+    );
+
+    const result = await run;
+
+    expect(readAttemptTerminal(result)).toMatchObject({
+      promptError: "remote compaction failed",
+      promptErrorSource: "compaction",
+    });
+    expect(result.itemLifecycle).toEqual({ startedCount: 1, completedCount: 1, activeCount: 0 });
+    expect(result.settledTurnFinalizationContext).toMatchObject({
+      source: "openclaw-transcript",
+      messages: [
+        expect.objectContaining({ role: "user" }),
+        expect.objectContaining({ role: "assistant" }),
+        expect.objectContaining({ role: "toolResult", toolCallId: "tool-settled" }),
+      ],
+    });
+    expect(Object.isFrozen(result.settledTurnFinalizationContext?.messages)).toBe(true);
+  });
   it("preserves every command failure from official app-server events", async () => {
     const sessionFile = path.join(tempDir, "session-multi-command-failure.jsonl");
     const workspaceDir = path.join(tempDir, "workspace-multi-command-failure");

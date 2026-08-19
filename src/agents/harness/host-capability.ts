@@ -33,6 +33,9 @@ import type { AgentHarnessHostCapabilities } from "./host-capability-types.js";
 
 type AgentHarnessHostAttempt = Partial<EmbeddedRunAttemptParams> &
   Pick<EmbeddedRunAttemptParams, "admittedRunContext" | "runId">;
+type AgentHarnessHostApprovalResult = NonNullable<
+  Awaited<ReturnType<AgentHarnessHostCapabilities["waitForApproval"]>>
+>;
 
 const MAX_NATIVE_OPERATION_CWD_BYTES = 4096;
 
@@ -285,10 +288,26 @@ export function createAgentHarnessHostCapabilities(params: {
     });
   });
 
+  const trajectoryRecorder = attempt.trajectoryRecorder;
   const capabilities: AgentHarnessHostCapabilities = Object.freeze({
     kind: "agent-harness-host-capability" as const,
     version: 1 as const,
     assertActive,
+    ...(trajectoryRecorder
+      ? {
+          trajectory: Object.freeze({
+            recordEvent: (type: string, data?: Record<string, unknown>) => {
+              assertActive();
+              trajectoryRecorder.recordEvent(type, data);
+            },
+            flush: async () => {
+              assertActive();
+              await trajectoryRecorder.flush();
+              assertActive();
+            },
+          }),
+        }
+      : {}),
     preparedEnvironment: () => {
       assertActive();
       return Object.freeze({
@@ -378,7 +397,7 @@ export function createAgentHarnessHostCapabilities(params: {
       assertActive();
       const result = await withCaller(
         async () =>
-          await callGatewayTool<{ id?: string; decision?: string | null }>(
+          await callGatewayTool<{ id?: string } & Partial<AgentHarnessHostApprovalResult>>(
             "plugin.approval.waitDecision",
             { timeoutMs: request.transportTimeoutMs ?? request.timeoutMs },
             { id: request.approvalId },
@@ -388,9 +407,13 @@ export function createAgentHarnessHostCapabilities(params: {
       // An allowed decision is useful only while this exact admitted owner is
       // still live; fail closed if closure raced the awaited Gateway result.
       assertActive();
-      return result?.id === request.approvalId
-        ? (result.decision as "allow-once" | "allow-always" | "deny" | null | undefined)
-        : undefined;
+      if (result?.id !== request.approvalId) {
+        return undefined;
+      }
+      return {
+        decision: result.decision,
+        terminalReason: result.terminalReason,
+      };
     },
   });
   return {

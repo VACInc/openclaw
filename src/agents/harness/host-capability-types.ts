@@ -2,6 +2,20 @@ import type { AnyAgentTool } from "../tools/common.js";
 
 type AgentHarnessHostApprovalDecision = "allow-once" | "allow-always" | "deny";
 
+type AgentHarnessHostApprovalTerminalReason =
+  | "user"
+  | "timeout"
+  | "malformed-verdict"
+  | "no-route"
+  | "run-aborted"
+  | "gateway-restart"
+  | "storage-corrupt";
+
+type AgentHarnessHostApprovalResult = Readonly<{
+  decision: AgentHarnessHostApprovalDecision | null | undefined;
+  terminalReason: AgentHarnessHostApprovalTerminalReason | null | undefined;
+}>;
+
 type AgentHarnessPreparedEnvironment = Readonly<{
   credentialScrubEnv: Readonly<Record<string, string>>;
   localIdentityEnv: Readonly<Record<string, string>>;
@@ -14,6 +28,11 @@ export type AgentHarnessHostCapabilities = Readonly<{
   version: 1;
   /** Fails closed unless this exact admitted run capability remains active. */
   assertActive: () => void;
+  /** Closure-bound event sink backed by the host-owned trajectory recorder. */
+  trajectory?: Readonly<{
+    recordEvent: (type: string, data?: Record<string, unknown>) => void;
+    flush: () => Promise<void>;
+  }>;
   /** Closure-bound non-secret maps prepared before harness placement. */
   preparedEnvironment?: () => AgentHarnessPreparedEnvironment;
   /** Applies the exact host caller binding to a plugin-built tool surface. */
@@ -54,5 +73,5 @@ export type AgentHarnessHostCapabilities = Readonly<{
     timeoutMs: number;
     transportTimeoutMs?: number;
     signal?: AbortSignal;
-  }) => Promise<AgentHarnessHostApprovalDecision | null | undefined>;
+  }) => Promise<AgentHarnessHostApprovalResult | undefined>;
 }>;
