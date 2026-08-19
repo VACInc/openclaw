@@ -10,6 +10,7 @@ import { resolveExternalCliAuthProfiles } from "../agents/auth-profiles/external
 import { loadPersistedAuthProfileStore } from "../agents/auth-profiles/persisted.js";
 import { runAuthProfileWriteTransaction } from "../agents/auth-profiles/sqlite.js";
 import { saveAuthProfileStore } from "../agents/auth-profiles/store.js";
+import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { listAuthProfileRepairCandidates } from "./doctor-auth-legacy-paths.js";
 
@@ -49,9 +50,10 @@ export function maybeMigrateExternalCliProfileMetadata(params: {
   const warnings: string[] = [];
   for (const candidate of listAuthProfileRepairCandidates(params.cfg, env)) {
     candidateCount += 1;
-    const existing =
-      loadPersistedAuthProfileStore(candidate.agentDir) ??
-      ({ version: AUTH_STORE_VERSION, profiles: {} } as const);
+    const existing: AuthProfileStore = loadPersistedAuthProfileStore(candidate.agentDir) ?? {
+      version: AUTH_STORE_VERSION,
+      profiles: {},
+    };
     const imported = resolveExternalCliAuthProfiles(existing, {
       profileIds,
       allowKeychainPrompt: false,
