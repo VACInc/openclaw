@@ -696,6 +696,7 @@ describe("models.list", () => {
                 agentRuntime: {
                   id: "openclaw",
                   cloudPlacementSupported: true,
+                  devicePlacementSupported: true,
                   source: "implicit",
                 },
                 available: false,
@@ -754,6 +755,7 @@ describe("models.list", () => {
                 agentRuntime: {
                   id: "openclaw",
                   cloudPlacementSupported: true,
+                  devicePlacementSupported: true,
                   source: "implicit",
                 },
                 available: false,
@@ -803,6 +805,7 @@ describe("models.list", () => {
               agentRuntime: {
                 id: "openclaw",
                 cloudPlacementSupported: true,
+                devicePlacementSupported: true,
                 source: "implicit",
               },
               available: false,
@@ -1007,6 +1010,7 @@ describe("models.list", () => {
                 agentRuntime: {
                   id: "codex",
                   cloudPlacementSupported: false,
+                  devicePlacementSupported: false,
                   source: "implicit",
                 },
                 available: false,
@@ -1100,6 +1104,7 @@ describe("models.list", () => {
               agentRuntime: {
                 id: "codex",
                 cloudPlacementSupported: false,
+                devicePlacementSupported: false,
                 source: "implicit",
               },
               available: true,
@@ -1111,6 +1116,7 @@ describe("models.list", () => {
               agentRuntime: {
                 id: "codex",
                 cloudPlacementSupported: false,
+                devicePlacementSupported: false,
                 source: "implicit",
               },
               available: true,
@@ -1150,6 +1156,7 @@ describe("models.list", () => {
               agentRuntime: {
                 id: "codex",
                 cloudPlacementSupported: false,
+                devicePlacementSupported: false,
                 source: "implicit",
               },
               available: true,
@@ -1161,6 +1168,7 @@ describe("models.list", () => {
               agentRuntime: {
                 id: "codex",
                 cloudPlacementSupported: false,
+                devicePlacementSupported: false,
                 source: "implicit",
               },
               available: true,
@@ -1294,6 +1302,7 @@ describe("models.list", () => {
                   agentRuntime: {
                     id: "codex",
                     cloudPlacementSupported: false,
+                    devicePlacementSupported: false,
                     source: "implicit",
                   },
                   available: true,
@@ -1381,6 +1390,7 @@ describe("models.list", () => {
                   agentRuntime: {
                     id: "claude-cli",
                     cloudPlacementSupported: false,
+                    devicePlacementSupported: false,
                     source: "model",
                   },
                   available: true,
