@@ -25,7 +25,10 @@ suite.define(() => {
         viewport: { height: 900, width: 1280 },
       },
       async ({ page }) => {
-        const now = Date.now();
+        // Keep the three-hour automation window within one calendar day in every
+        // timezone. A wall-clock value made this collapsed-group assertion depend
+        // on when the CI shard happened to run.
+        const now = new Date().setHours(12, 0, 0, 0);
         const releaseKey = "agent:main:release-readiness";
         const designKey = "agent:main:design-review";
         await installMockGateway(page, {
