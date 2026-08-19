@@ -498,7 +498,7 @@ describeLive("gateway live (cli backend)", () => {
         : undefined;
       const useMinimalToolsProfile = providerId === "codex-cli" && !schemaProbePluginPath;
       setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
-      const bundleMcp = backendResolved.bundleMcp && !resumeContinuityProbe;
+      const bundleMcp = backendResolved.bundleMcp;
       const bootstrapWorkspace = await createBootstrapWorkspace(tempDir);
       if (CLI_CACHE_PROBE) {
         await initializeCacheProbeGitWorkspace(bootstrapWorkspace.workspaceRootDir);
@@ -699,14 +699,13 @@ describeLive("gateway live (cli backend)", () => {
             },
           ]);
           initializeGlobalHookRunner(continuityHookRegistry);
-          // Bundled MCP capture intentionally retires a Claude child after each turn. This probe
-          // isolates the exact warm-session path while leaving production defaults untouched.
+          // Keep bundled MCP capture enabled: the generation check below must cover the same
+          // delivery-capture process lifetime used by production Claude sessions.
           cliBackendsTesting.setDepsForTest({
             resolveRuntimeCliBackends: () => [
               {
                 ...liveBackend,
                 pluginId: liveBackend.pluginId ?? CLI_CONTINUITY_PROBE_PLUGIN_ID,
-                bundleMcp: false,
               },
             ],
           });
