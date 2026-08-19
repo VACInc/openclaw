@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
     { agentDir: "/tmp/main", authPath: "/tmp/main/auth-profiles.json" },
   ]),
   loadStore: vi.fn(() => null),
-  resolveExternalCliAuthProfiles: vi.fn(() => []),
+  resolveExternalCliAuthProfiles: vi.fn<() => unknown[]>(() => []),
   runTransaction: vi.fn((_agentDir, callback) => callback({})),
   saveStore: vi.fn(),
 }));

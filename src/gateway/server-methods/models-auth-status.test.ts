@@ -703,19 +703,23 @@ describe("models.authStatus", () => {
       source: "store",
       label: profileId,
     } satisfies AuthHealthSummary["profiles"][number];
-    setPreparedAuthStore({
-      version: 1,
-      profiles: {
-        [profileId]: {
-          type: "oauth",
-          provider: "claude-cli",
-          access: "expired-access",
-          refresh: "cli-owned-refresh",
-          expires: 1,
+    setPreparedAuthStore(
+      Object.assign(
+        {
+          version: 1,
+          profiles: {
+            [profileId]: {
+              type: "oauth",
+              provider: "claude-cli",
+              access: "expired-access",
+              refresh: "cli-owned-refresh",
+              expires: 1,
+            } satisfies AuthProfileStore["profiles"][string],
+          },
         },
-      },
-      runtimeExternalCliProfileIds: [profileId],
-    });
+        { runtimeExternalCliProfileIds: [profileId] },
+      ),
+    );
     mocks.buildAuthHealthSummary.mockReturnValue({
       now: 2,
       warnAfterMs: 0,
