@@ -71,7 +71,6 @@ function resolveThinkingCatalogEntry(params: {
   provider?: string | null;
   model?: string | null;
   catalog?: ThinkingCatalogEntry[];
-  agentRuntime?: string | null;
 }): ThinkingCatalogEntry | undefined {
   const providerRaw = normalizeOptionalString(params.provider);
   const normalizedProvider = providerRaw ? normalizeProviderId(providerRaw) : "";
@@ -83,38 +82,7 @@ function resolveThinkingCatalogEntry(params: {
       selectedCatalogKey !== undefined &&
       buildCatalogModelKey(normalizeProviderId(entry.provider), entry.id) === selectedCatalogKey,
   );
-  const runtimeProvider = normalizeOptionalLowercaseString(params.agentRuntime);
-  if (!runtimeProvider || runtimeProvider === normalizedProvider || !modelId) {
-    return selected;
-  }
-  if (selected?.configuredReasoning !== undefined) {
-    return selected;
-  }
-  // A concrete runtime catalog row owns the capabilities of the route that will execute.
-  // Keep the logical row only when that runtime has no exact model contract of its own.
-  return (
-    params.catalog?.find(
-      (entry) =>
-        buildCatalogModelKey(normalizeProviderId(entry.provider), entry.id) ===
-        buildCatalogModelKey(runtimeProvider, modelId),
-    ) ?? selected
-  );
-}
-
-export function resolveThinkingCatalogReasoning(
-  entry: Pick<ThinkingCatalogEntry, "provider" | "id" | "configuredReasoning">,
-  catalog: ThinkingCatalogEntry[],
-  agentRuntime?: string | null,
-): boolean | undefined {
-  if (entry.configuredReasoning !== undefined) {
-    return entry.configuredReasoning;
-  }
-  return resolveThinkingCatalogEntry({
-    provider: entry.provider,
-    model: entry.id,
-    catalog,
-    agentRuntime,
-  })?.reasoning;
+  return selected;
 }
 
 function resolveThinkingPolicyContext(params: {

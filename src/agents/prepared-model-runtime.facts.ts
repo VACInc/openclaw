@@ -47,6 +47,7 @@ import {
 import { loadPreparedModelRuntimeAuthStore } from "./prepared-model-runtime.auth-store.js";
 import {
   modelCatalogEntryKey,
+  materializeRuntimeCapabilities,
   prepareConfiguredRuntimeFacts,
 } from "./prepared-model-runtime.configured-catalog.js";
 import { completeConfiguredRuntimeModels } from "./prepared-model-runtime.configured-completion.js";
@@ -55,8 +56,10 @@ import {
   collectConfiguredProviderIdsNeedingStaticCatalog,
   collectPreparedModelRuntimeProviderIds,
   prepareConfiguredRuntimeModels,
+  prepareRuntimeCapabilityModels,
   toStaticCatalogEntry,
   type PreparedConfiguredRuntimeModel,
+  type PreparedRuntimeCapabilityModel,
 } from "./prepared-model-runtime.configured.js";
 import {
   prepareWorkspacePluginRegistries,
@@ -97,6 +100,7 @@ type PreparedModelRuntimeAgentBaseFacts = {
 
 export type PreparedModelRuntimeAgentFacts = PreparedModelRuntimeAgentBaseFacts & {
   configuredRuntimeModels: readonly PreparedConfiguredRuntimeModel[];
+  runtimeCapabilityModels: readonly PreparedRuntimeCapabilityModel[];
   configuredGeneratedCatalogPluginIds: readonly string[];
 };
 
@@ -357,6 +361,19 @@ export async function prepareWorkspaceBuildGroup(
         matchesStaticModelId,
         resolveStaticCatalogModel: resolveConfiguredManifestModel,
       });
+      const runtimeCapabilityModels = prepareRuntimeCapabilityModels({
+        config: facts.input.config,
+        agentId: facts.input.agentId,
+        candidates: [
+          ...configuredCatalogEntries,
+          ...configuredRuntimeModels.map(({ model, modelId, provider }) => ({
+            ...toStaticCatalogEntry(model),
+            id: modelId,
+            provider,
+          })),
+        ],
+        resolveRuntimeModel: resolveConfiguredManifestModel,
+      });
       const configuredEntryKeys = new Set(configuredCatalogEntries.map(modelCatalogEntryKey));
       for (const configured of configuredRuntimeModels) {
         configuredEntryKeys.add(
@@ -390,6 +407,7 @@ export async function prepareWorkspaceBuildGroup(
       agentFacts.push({
         ...facts,
         configuredRuntimeModels,
+        runtimeCapabilityModels,
         configuredGeneratedCatalogPluginIds,
       });
     }
@@ -449,12 +467,23 @@ export async function prepareFullCatalogFacts(
         }
       : {}),
   });
-  const modelCatalog = await buildPreparedPluginModelCatalog({
+  const discoveredCatalog = await buildPreparedPluginModelCatalog({
     agentFacts,
     catalogMode,
     modelRegistry: templateModelRegistry,
     pluginGeneration,
   });
+  const modelCatalog = {
+    ...discoveredCatalog,
+    entries: materializeRuntimeCapabilities(
+      discoveredCatalog.entries,
+      agentFacts.runtimeCapabilityModels,
+    ),
+    routeVariants: materializeRuntimeCapabilities(
+      discoveredCatalog.routeVariants,
+      agentFacts.runtimeCapabilityModels,
+    ),
+  };
   const providerStaticModels =
     pluginGeneration.providerStaticModels ??
     (await loadBundledProviderStaticCatalogContextModels({
@@ -474,7 +503,10 @@ export async function prepareFullCatalogFacts(
       staticModels.set(modelKey, model);
     }
   }
-  const staticEntries = [...staticModels.values()].map(toStaticCatalogEntry);
+  const staticEntries = materializeRuntimeCapabilities(
+    [...staticModels.values()].map(toStaticCatalogEntry),
+    agentFacts.runtimeCapabilityModels,
+  );
   const providerOutcomes = catalogSource?.providerOutcomes ?? [];
   const completeModelCatalog = {
     ...modelCatalog,

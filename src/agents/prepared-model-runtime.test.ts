@@ -48,6 +48,69 @@ describe("prepared model runtime snapshots", () => {
     await expect(build.completion).resolves.toBeUndefined();
   });
 
+  it("materializes Claude CLI thinking capabilities on the prepared logical row", async () => {
+    const modelIds = ["claude-opus-5", "claude-sonnet-5"];
+    mocks.resolveStaticCatalogModel.mockImplementation(({ modelId, provider }) =>
+      provider === "claude-cli"
+        ? {
+            provider,
+            id: modelId,
+            name: `${modelId} (Claude CLI)`,
+            reasoning: true,
+            input: ["text" as const],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 1_000_000,
+            maxTokens: 128_000,
+          }
+        : undefined,
+    );
+    mocks.buildPreparedModelCatalogSnapshot.mockResolvedValue({
+      entries: modelIds.map((id) => ({ provider: "anthropic", id, name: id, reasoning: false })),
+      routeVariants: modelIds.map((id) => ({
+        provider: "anthropic",
+        id,
+        name: id,
+        reasoning: false,
+      })),
+    });
+    const config = {
+      agents: {
+        defaults: {
+          model: { primary: `anthropic/${modelIds[0]}` },
+          models: Object.fromEntries(
+            modelIds.map((modelId) => [
+              `anthropic/${modelId}`,
+              {
+                agentRuntime: { id: "claude-cli" },
+                params: { thinking: "medium" },
+              },
+            ]),
+          ),
+        },
+      },
+      models: {
+        providers: {
+          anthropic: { models: modelIds.map((id) => ({ id, name: id })) },
+        },
+      },
+    };
+    const snapshot = await publishPreparedModelRuntimeSnapshot({
+      agentId: "main",
+      config,
+      agentDir: "/tmp/prepared-model-runtime-claude-cli-capabilities",
+    });
+    for (const modelId of modelIds) {
+      expect(
+        snapshot.modelCatalog.entries.find(
+          (entry) => entry.provider === "anthropic" && entry.id === modelId,
+        ),
+      ).toMatchObject({ reasoning: true });
+      expect(snapshot.modelCatalog.entries).not.toContainEqual(
+        expect.objectContaining({ provider: "claude-cli", id: modelId }),
+      );
+    }
+  });
+
   it("keeps an isolated setup probe exact after a gateway replacement", async () => {
     mocks.configuredAgentIds = ["default"];
     const stagedConfig = { agents: { defaults: { model: "openai/gpt-5.6" } } };
@@ -338,7 +401,7 @@ describe("prepared model runtime snapshots", () => {
         workspaceDir: "/tmp/prepared-model-runtime-manifest-workspace",
       }),
     );
-    expect(mocks.resolveStaticCatalogModel).toHaveBeenCalledOnce();
+    expect(mocks.resolveStaticCatalogModel).toHaveBeenCalledTimes(2);
     expect(snapshot.agentId).toBe("qa");
     expect(snapshot.configuredRuntimeModels).toEqual([
       { provider: "openai", modelId: "gpt-5.4", model: runtimeModel },

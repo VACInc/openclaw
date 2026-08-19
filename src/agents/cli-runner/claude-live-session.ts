@@ -241,6 +241,8 @@ function buildClaudeLiveFingerprint(params: {
     credentialFingerprint: params.context.preparedBackend.secretInput?.fingerprint,
     skillsFingerprint,
     argv: stableArgv,
+    // Claude reads MAX_THINKING_TOKENS only when the child starts. Any launch-env
+    // change must therefore invalidate a warm process rather than reuse it.
     env: Object.keys(params.env)
       .toSorted()
       .map((key) => [key, params.env[key] ? sha256Hex(params.env[key]) : ""]),

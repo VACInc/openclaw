@@ -232,7 +232,7 @@ describe("listThinkingLevels", () => {
     "claude-sonnet-5",
     "claude-fable-5",
     "claude-sonnet-4-6",
-  ])("uses the exact CLI runtime catalog row for %s thinking", (model) => {
+  ])("uses materialized CLI runtime capabilities for %s thinking", (model) => {
     providerRuntimeMocks.resolveProviderThinkingProfile.mockImplementation(({ context }) => ({
       levels:
         context.reasoning === true
@@ -240,10 +240,7 @@ describe("listThinkingLevels", () => {
           : [{ id: "off" }],
       defaultLevel: context.reasoning === true ? "medium" : "off",
     }));
-    const catalog = [
-      { provider: "anthropic", id: model, name: model, reasoning: false },
-      { provider: "claude-cli", id: model, name: model, reasoning: true },
-    ];
+    const catalog = [{ provider: "anthropic", id: model, name: model, reasoning: true }];
 
     expect(listThinkingLevels("anthropic", model, catalog, "claude-cli")).toEqual([
       "off",
@@ -253,14 +250,11 @@ describe("listThinkingLevels", () => {
     ]);
   });
 
-  it("keeps an exact runtime catalog reasoning opt-out authoritative", () => {
+  it("keeps a materialized runtime reasoning opt-out authoritative", () => {
     providerRuntimeMocks.resolveProviderThinkingProfile.mockReturnValue({
       levels: [{ id: "off" }, { id: "low" }],
     });
-    const catalog = [
-      { provider: "demo", id: "demo-model", name: "Demo", reasoning: true },
-      { provider: "demo-cli", id: "demo-model", name: "Demo CLI", reasoning: false },
-    ];
+    const catalog = [{ provider: "demo", id: "demo-model", name: "Demo", reasoning: false }];
 
     expect(listThinkingLevels("demo", "demo-model", catalog, "demo-cli")).toEqual(["off"]);
   });

@@ -496,20 +496,12 @@ describe("models.list", () => {
       },
     };
     const loadGatewayModelCatalog = vi.fn(async () =>
-      modelIds.flatMap((modelId) => [
-        {
-          id: modelId,
-          name: modelId,
-          provider: "anthropic",
-          reasoning: false,
-        },
-        {
-          id: modelId,
-          name: `${modelId} (Claude CLI)`,
-          provider: "claude-cli",
-          reasoning: true,
-        },
-      ]),
+      modelIds.map((modelId) => ({
+        id: modelId,
+        name: modelId,
+        provider: "anthropic",
+        reasoning: true,
+      })),
     );
     const { request, respond } = requestModelsList({
       view: "all",
@@ -584,6 +576,56 @@ describe("models.list", () => {
       agentRuntime: { id: "claude-cli" },
       thinkingLevels: [{ id: "off", label: "off" }],
     });
+  });
+
+  it("publishes a materialized Claude CLI logical row with its configured thinking default", async () => {
+    const modelIds = ["claude-opus-5", "claude-sonnet-5"];
+    const runtimeConfig = {
+      agents: {
+        defaults: {
+          model: { primary: `anthropic/${modelIds[0]}` },
+          models: Object.fromEntries(
+            modelIds.map((modelId) => [
+              `anthropic/${modelId}`,
+              { agentRuntime: { id: "claude-cli" }, params: { thinking: "medium" } },
+            ]),
+          ),
+        },
+      },
+      models: {
+        providers: {
+          anthropic: { models: modelIds.map((id) => ({ id, name: id })) },
+        },
+      },
+    } as unknown as OpenClawConfig;
+    const { request, respond } = requestModelsList({
+      view: "configured",
+      runtimeConfig,
+      // Prepared catalog shape: runtime-only rows are deliberately absent.
+      loadGatewayModelCatalog: vi.fn(async () =>
+        modelIds.map((id) => ({ id, name: id, provider: "anthropic", reasoning: true })),
+      ),
+    });
+
+    await request;
+
+    const payload = respond.mock.calls[0]?.[1] as
+      | { models: Array<Record<string, unknown>> }
+      | undefined;
+    for (const modelId of modelIds) {
+      expect(
+        payload?.models.find((entry) => entry.provider === "anthropic" && entry.id === modelId),
+      ).toMatchObject({
+        reasoning: true,
+        agentRuntime: { id: "claude-cli" },
+        thinkingDefault: "medium",
+        thinkingLevels: expect.arrayContaining([
+          { id: "off", label: "off" },
+          { id: "medium", label: "medium" },
+          { id: "high", label: "high" },
+        ]),
+      });
+    }
   });
 
   it("keeps source-authored provider inventory when the canonical catalog is missing", async () => {

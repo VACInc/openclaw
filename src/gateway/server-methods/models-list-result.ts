@@ -42,7 +42,6 @@ import {
 import { publishedModelCatalogOwnerMatchesAgent } from "../../agents/prepared-model-catalog-owner.js";
 import { preparedModelRuntimeConfigsMatch } from "../../agents/prepared-model-runtime.js";
 import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
-import { resolveThinkingCatalogReasoning } from "../../auto-reply/thinking.js";
 import { getRuntimeConfigSourceSnapshot } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
@@ -397,21 +396,20 @@ async function buildPublicModelsListEntries(params: {
         agentId: params.agentId,
         entry,
       });
-      const reasoning =
-        resolveThinkingCatalogReasoning(entry, params.thinkingCatalog, agentRuntime?.id) ??
-        entry.reasoning;
-      const publicEntry = { ...entry, reasoning };
+      const publicEntry = entry;
       const thinkingProfile =
-        typeof publicEntry.reasoning === "boolean"
-          ? resolveGatewayModelThinkingProfile({
-              cfg: params.cfg,
-              agentId: params.agentId,
-              provider: entry.provider,
-              model: entry.id,
-              modelCatalog: params.thinkingCatalog,
-              configuredReasoning: publicEntry.configuredReasoning,
-            })
-          : undefined;
+        publicEntry.reasoning === false
+          ? { thinkingLevels: [{ id: "off", label: "off" }], thinkingDefault: "off" as const }
+          : publicEntry.reasoning === true
+            ? resolveGatewayModelThinkingProfile({
+                cfg: params.cfg,
+                agentId: params.agentId,
+                provider: entry.provider,
+                model: entry.id,
+                modelCatalog: params.thinkingCatalog,
+                configuredReasoning: publicEntry.configuredReasoning,
+              })
+            : undefined;
       return {
         ...buildPublicModelProjection(publicEntry),
         ...(agentRuntime ? { agentRuntime } : {}),
