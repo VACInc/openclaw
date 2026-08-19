@@ -70,7 +70,7 @@ function createHarness(
   let pluginRegistryVersion = 1;
   let authStore: AuthProfileStore | undefined = { version: 1, profiles: {} };
   let authStoreRevision = 1;
-  const getPreparedOwner = vi.fn(() => owner);
+  const getPreparedOwner = vi.fn((): PreparedModelRuntimeSnapshot | undefined => owner);
   const getPreparedAuthStore = vi.fn(() => authStore);
   const getAuthStoreRevision = vi.fn(() => authStoreRevision);
   const getSkillsVersion = vi.fn(() => skillsVersion);
@@ -433,7 +433,7 @@ describe("gateway chat metadata runtime", () => {
       const harness = createHarness(undefined, { useDefaultProjection: true });
       harness.setAuthStore({ version: 1, profiles: {} });
       const preparedOwner = createOwner(
-        harness.getPreparedOwner().config,
+        harness.getPreparedOwner()!.config,
         "gpt-5.4",
         {
           openai: {
