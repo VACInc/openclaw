@@ -3,13 +3,13 @@ import type { ProviderRuntimeModel } from "../plugins/provider-runtime-model.typ
 import { discoverModels } from "./agent-model-discovery.js";
 import { loadBundledProviderStaticCatalogContextModels } from "./embedded-agent-runner/model.static-catalog.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
-import { materializeRuntimeCapabilities } from "./prepared-model-runtime.configured-catalog.js";
-import { toStaticCatalogEntry } from "./prepared-model-runtime.configured.js";
 import type {
   PreparedModelRuntimeAgentFacts,
   PreparedModelRuntimeCatalogFacts,
   PreparedModelRuntimeCatalogSource,
-} from "./prepared-model-runtime.facts.js";
+} from "./prepared-model-runtime.catalog-contract.js";
+import { materializeRuntimeCapabilities } from "./prepared-model-runtime.configured-catalog.js";
+import { toStaticCatalogEntry } from "./prepared-model-runtime.configured.js";
 import { buildPreparedPluginModelCatalog } from "./prepared-model-runtime.plugin-generation.js";
 import type {
   PreparedModelRuntimeCatalogMode,

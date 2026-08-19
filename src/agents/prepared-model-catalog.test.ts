@@ -52,7 +52,7 @@ vi.mock("./prepared-model-runtime.js", () => {
   };
 });
 
-vi.mock("./prepared-model-runtime.facts.js", () => ({
+vi.mock("./prepared-model-runtime.full-catalog.js", () => ({
   isPreparedModelCatalogFull: (...args: unknown[]) => mocks.isFullCatalog(...args),
 }));
 

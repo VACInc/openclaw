@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
-import type { ConfiguredModelRef } from "@openclaw/model-catalog-core/configured-model-refs";
 import {
   findNormalizedProviderValue,
   normalizeProviderId,
@@ -25,16 +24,12 @@ import {
   discoverModelsFromCapturedSources,
 } from "./agent-model-discovery.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
-import {
-  buildInlineProviderModels,
-  type InlineModelEntry,
-} from "./embedded-agent-runner/model.inline-provider.js";
+import { buildInlineProviderModels } from "./embedded-agent-runner/model.inline-provider.js";
 import {
   createBundledStaticCatalogModelResolver,
   loadBundledProviderStaticCatalogContextModels,
 } from "./embedded-agent-runner/model.static-catalog.js";
 import { createStaticModelIdMatcher } from "./embedded-agent-runner/model.static-id.js";
-import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
 import { buildConfiguredModelCatalog } from "./model-selection-shared.js";
 import { ensureOpenClawModelsJson, planOpenClawModelsJsonSource } from "./models-config.js";
 import { prepareImplicitProviderStaticCatalog } from "./models-config.providers.implicit.js";
@@ -44,6 +39,12 @@ import {
   type PersistedPluginModelCatalog,
 } from "./plugin-model-catalog.js";
 import { loadPreparedModelRuntimeAuthStore } from "./prepared-model-runtime.auth-store.js";
+import type {
+  PreparedModelRuntimeAgentBaseFacts,
+  PreparedModelRuntimeAgentFacts,
+  PreparedModelRuntimeCatalogFacts,
+  PreparedModelRuntimeCatalogSource,
+} from "./prepared-model-runtime.catalog-contract.js";
 import {
   modelCatalogEntryKey,
   prepareConfiguredRuntimeFacts,
@@ -56,8 +57,6 @@ import {
   prepareConfiguredRuntimeModels,
   prepareRuntimeCapabilityModels,
   toStaticCatalogEntry,
-  type PreparedConfiguredRuntimeModel,
-  type PreparedRuntimeCapabilityModel,
 } from "./prepared-model-runtime.configured.js";
 import {
   prepareWorkspacePluginRegistries,
@@ -79,39 +78,9 @@ import type {
   PreparedModelRuntimeInput,
   PreparedModelRuntimePluginGeneration,
 } from "./prepared-model-runtime.types.js";
-import { AuthStorage, type AuthStorageData } from "./sessions/auth-storage.js";
-import type { ModelRegistry } from "./sessions/model-registry.js";
+import { AuthStorage } from "./sessions/auth-storage.js";
 
 const MODEL_RUNTIME_PROVIDER_DISCOVERY_TIMEOUT_MS = 5_000;
-type PreparedModelRuntimeAgentBaseFacts = {
-  input: PreparedModelRuntimeInput;
-  env: NodeJS.ProcessEnv;
-  authStore: AuthProfileStore;
-  templateAuthStorage: AuthStorage;
-  credentials: Readonly<AuthStorageData>;
-  providerIds: string[];
-  configuredModelRefs: readonly ConfiguredModelRef[];
-};
-
-export type PreparedModelRuntimeAgentFacts = PreparedModelRuntimeAgentBaseFacts & {
-  configuredRuntimeModels: readonly PreparedConfiguredRuntimeModel[];
-  runtimeCapabilityModels: readonly PreparedRuntimeCapabilityModel[];
-  configuredGeneratedCatalogPluginIds: readonly string[];
-};
-
-export type PreparedModelRuntimeCatalogFacts = {
-  templateModelRegistry: ModelRegistry;
-  modelCatalog: ModelCatalogSnapshot;
-  configuredRuntimeModels: readonly PreparedConfiguredRuntimeModel[];
-  inlineProviderModels: readonly InlineModelEntry[];
-};
-
-export type PreparedModelRuntimeCatalogSource = Readonly<{
-  modelsJsonContents: string | null;
-  pluginCatalogs: readonly PersistedPluginModelCatalog[];
-  providerOutcomes?: readonly ProviderCatalogOutcome[];
-}>;
-
 type PreparedConfiguredRegistryGroup = {
   agentFacts: PreparedModelRuntimeAgentFacts[];
   modelsJsonContents: string | null;
@@ -441,11 +410,6 @@ export async function prepareWorkspaceBuildGroup(
     : await withPluginRuntimeRegistryScope(runtimePluginRegistry, prepare);
 }
 
-export {
-  isPreparedModelCatalogFull,
-  markPreparedModelCatalogFull,
-  prepareFullCatalogFacts,
-} from "./prepared-model-runtime.full-catalog.js";
 function captureModelsJsonContents(agentDir: string): string | null {
   try {
     return fs.readFileSync(path.join(agentDir, "models.json"), "utf8");
