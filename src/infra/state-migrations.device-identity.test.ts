@@ -708,7 +708,7 @@ describe("legacy device identity Doctor migration", () => {
     expect(receipt(env)).toMatchObject({ removed_source: 1 });
   });
 
-  it("does not discard recreated bytes that differ from the receipt", async () => {
+  it("quarantines recreated bytes that differ from the receipt", async () => {
     const { env, stateDir } = useStateDir();
     const sourcePath = await writeLegacy({ stateDir });
     await migrate(stateDir, env, {
@@ -722,8 +722,18 @@ describe("legacy device identity Doctor migration", () => {
     closeOpenClawStateDatabaseForTest();
     const retry = await migrate(stateDir, env);
 
-    expect(retry.warnings.join("\n")).toContain("bytes differ from the migration receipt");
-    await expect(fsp.readFile(sourcePath, "utf8")).resolves.toBe(replacement);
+    expect(retry.warnings).toEqual([]);
+    expect(retry.changes).toContain(
+      "Quarantined retired device identity JSON that differs from its SQLite receipt.",
+    );
+    expect(fs.existsSync(sourcePath)).toBe(false);
+    const quarantined = (await fsp.readdir(path.dirname(sourcePath))).find((entry) =>
+      entry.startsWith("device.json.doctor-quarantine-"),
+    );
+    expect(quarantined).toBeDefined();
+    await expect(
+      fsp.readFile(path.join(path.dirname(sourcePath), quarantined!), "utf8"),
+    ).resolves.toBe(replacement);
     expect(identityRow(env)?.created_at_ms).toBe(CREATED_AT_MS);
   });
 

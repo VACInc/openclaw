@@ -317,6 +317,7 @@ async function cleanupReceiptSources(params: {
   const changes: string[] = [];
   const warnings: string[] = [];
   let removed = 0;
+  let quarantined = 0;
   for (const candidate of [params.detected.sourcePath, params.detected.claimPath]) {
     if (!(await params.stateRoot.exists(relativeLegacyPath(params.stateDir, candidate)))) {
       continue;
@@ -333,9 +334,17 @@ async function cleanupReceiptSources(params: {
       continue;
     }
     if (snapshot.sha256 !== params.receipt.sourceSha256) {
-      warnings.push(
-        `Retired device identity cleanup preserved ${candidate}: bytes differ from the migration receipt.`,
-      );
+      try {
+        await params.stateRoot.move(
+          relativeLegacyPath(params.stateDir, candidate),
+          relativeLegacyPath(params.stateDir, `${candidate}.doctor-quarantine-${Date.now()}.bak`),
+        );
+        quarantined += 1;
+      } catch (error) {
+        warnings.push(
+          `Retired device identity cleanup failed to quarantine ${candidate}: ${String(error)}`,
+        );
+      }
       continue;
     }
     try {
@@ -346,11 +355,14 @@ async function cleanupReceiptSources(params: {
       warnings.push(`Retired device identity cleanup failed for ${candidate}: ${String(error)}`);
     }
   }
-  if (warnings.length === 0 && (!params.receipt.removedSource || removed > 0)) {
+  if (warnings.length === 0 && (!params.receipt.removedSource || removed + quarantined > 0)) {
     markLegacyMigrationSourceRemoved(params.receipt.sourceKey, params.env);
   }
   if (removed > 0) {
     changes.push("Removed retired device identity JSON covered by its SQLite receipt.");
+  }
+  if (quarantined > 0) {
+    changes.push("Quarantined retired device identity JSON that differs from its SQLite receipt.");
   }
   return { changes, warnings };
 }
