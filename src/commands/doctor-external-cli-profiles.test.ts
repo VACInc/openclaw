@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 
 const mocks = vi.hoisted(() => ({
   listCandidates: vi.fn(() => [
     { agentDir: "/tmp/main", authPath: "/tmp/main/auth-profiles.json" },
   ]),
-  loadStore: vi.fn(() => null),
+  loadStore: vi.fn<() => AuthProfileStore | null>(() => null),
   resolveExternalCliAuthProfiles: vi.fn<() => unknown[]>(() => []),
   runTransaction: vi.fn((_agentDir, callback) => callback({})),
   saveStore: vi.fn(),
