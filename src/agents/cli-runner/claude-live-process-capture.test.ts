@@ -217,6 +217,56 @@ describe("Claude live MCP capture lifetime", () => {
     );
   });
 
+  it("reuses a captured process only while its thinking launch environment matches", async () => {
+    const firstLive = mockClaudeLiveRun(supervisorSpawnMock, {
+      cancelable: true,
+      onWrite: ({ data, emit, writeIndex }) => {
+        if ((JSON.parse(data) as { type?: string }).type !== "user") {
+          return;
+        }
+        emit([
+          { type: "system", subtype: "init", session_id: "captured-thinking" },
+          {
+            type: "result",
+            session_id: "captured-thinking",
+            result: writeIndex === 0 ? "one" : "two",
+          },
+        ]);
+      },
+    });
+    mockClaudeLiveRun(supervisorSpawnMock, {
+      events: [
+        { type: "system", subtype: "init", session_id: "captured-thinking" },
+        { type: "result", session_id: "captured-thinking", result: "three" },
+      ],
+    });
+    const backend = {
+      resumeArgs: ["-p", "--output-format", "stream-json", "--resume={sessionId}"],
+      liveSession: "claude-stdio" as const,
+    };
+    const buildContext = (prompt: string, maxThinkingTokens: string) =>
+      buildPreparedCliRunContext({
+        backend,
+        prompt,
+        mcpDeliveryCapture: true,
+        preparedEnv: { MAX_THINKING_TOKENS: maxThinkingTokens },
+      });
+
+    const first = await executePreparedCliRun(buildContext("first", "2048"));
+    const sameLevel = await executePreparedCliRun(
+      buildContext("second", "2048"),
+      "captured-thinking",
+    );
+    const changedLevel = await executePreparedCliRun(
+      buildContext("third", "16384"),
+      "captured-thinking",
+    );
+
+    expect([first.text, sameLevel.text, changedLevel.text]).toEqual(["one", "two", "three"]);
+    expect(supervisorSpawnMock).toHaveBeenCalledTimes(2);
+    expect(firstLive.lifecycle.cancel).toHaveBeenCalledWith("manual-cancel");
+  });
+
   it("closes a captured Claude live process when MCP delivery capture cannot drain", async () => {
     const logInfoSpy = vi.spyOn(cliBackendLog, "info").mockImplementation(() => undefined);
     const live = mockClaudeLiveRun(supervisorSpawnMock, {
