@@ -174,7 +174,7 @@ describe("buildModelProviderCards", () => {
     ]);
   });
 
-  it("ignores a credential-less missing alias when CLI OAuth exists", () => {
+  it("keeps a credential-less missing route visible beside CLI OAuth", () => {
     const cards = buildModelProviderCards({
       ...EMPTY_INPUT,
       authStatus: authStatus([
@@ -193,7 +193,7 @@ describe("buildModelProviderCards", () => {
       ]),
     });
 
-    expect(firstCard(cards).auth).toMatchObject({ kind: "expiring", profileCount: 1 });
+    expect(firstCard(cards).auth).toMatchObject({ kind: "missing", profileCount: 1 });
   });
 
   it("preserves missing MiniMax OAuth beside a separate API key", () => {

@@ -752,6 +752,9 @@ describe("models.authStatus", () => {
 
   it("does not publish a synthetic Anthropic missing row beside owned Claude CLI OAuth", async () => {
     const profileId = "anthropic:claude-cli";
+    mocks.getRuntimeConfig.mockReturnValue({
+      auth: { profiles: { [profileId]: { provider: "anthropic", mode: "token" } } },
+    });
     const profile = {
       profileId,
       provider: "claude-cli",
@@ -804,6 +807,64 @@ describe("models.authStatus", () => {
         profiles: [expect.anything()],
       }),
     ]);
+  });
+
+  it("keeps a missing Anthropic row when its model route has independent auth config", async () => {
+    const profileId = "anthropic:claude-cli";
+    mocks.getRuntimeConfig.mockReturnValue({
+      auth: { profiles: { [profileId]: { provider: "anthropic", mode: "token" } } },
+      models: { providers: { anthropic: { auth: "oauth" } } },
+    });
+    const profile = {
+      profileId,
+      provider: "claude-cli",
+      type: "oauth",
+      status: "expired",
+      expiresAt: 1,
+      remainingMs: -1,
+      source: "store",
+      label: profileId,
+    } satisfies AuthHealthSummary["profiles"][number];
+    setPreparedAuthStore(
+      Object.assign(
+        {
+          version: 1,
+          profiles: {
+            [profileId]: {
+              type: "oauth",
+              provider: "claude-cli",
+              access: "expired-access",
+              refresh: "cli-owned-refresh",
+              expires: 1,
+            } satisfies AuthProfileStore["profiles"][string],
+          },
+        },
+        { runtimeExternalCliProfileIds: [profileId] },
+      ),
+    );
+    mocks.buildAuthHealthSummary.mockReturnValue({
+      now: 2,
+      warnAfterMs: 0,
+      profiles: [profile],
+      providers: [
+        { provider: "anthropic", status: "missing", profiles: [] },
+        {
+          provider: "claude-cli",
+          status: "expired",
+          expiresAt: 1,
+          remainingMs: -1,
+          profiles: [profile],
+        },
+      ],
+    });
+
+    const result = await readAuthStatus();
+
+    expect(result.providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ provider: "anthropic", status: "missing" }),
+      ]),
+    );
   });
 
   it("preserves expiry when an effective OAuth sibling is not CLI-owned", async () => {

@@ -205,7 +205,7 @@ describe("model auth attention", () => {
     expect(authItems("writer")[0]?.signature).toBe("agent:writer\nopenai");
   });
 
-  it("ignores a missing canonical alias when CLI OAuth exists", () => {
+  it("keeps a missing canonical route visible beside CLI OAuth", () => {
     const items = buildSidebarAttentionItems({
       cronJobs: [],
       modelAuthStatus: {
@@ -230,7 +230,7 @@ describe("model auth attention", () => {
       now: 0,
     });
 
-    expect(items.some((item) => item.kind === "modelAuthExpired")).toBe(false);
+    expect(items.some((item) => item.kind === "modelAuthExpired")).toBe(true);
   });
 });
 

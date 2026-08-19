@@ -39,7 +39,7 @@ export function isMonitoredAuthProvider(p: ModelAuthStatusProvider): boolean {
 
 const AUTH_STATUS_PRIORITY = ["expired", "missing", "expiring", "ok", "static"] as const;
 
-/** Collapse auth aliases before display. Credential-bearing rows are authoritative. */
+/** Collapse auth aliases before display; Gateway rows retain their auth facts. */
 export function listEffectiveModelAuthProviders(
   providers: readonly ModelAuthStatusProvider[],
 ): ModelAuthStatusProvider[] {
@@ -51,14 +51,7 @@ export function listEffectiveModelAuthProviders(
     groups.set(id, group);
   }
   return [...groups].map(([id, group]) => {
-    const credentialRows = group.filter(
-      (provider) => provider.profiles.length > 0 || Boolean(provider.apiKey),
-    );
-    const hasClaudeCliCredential = credentialRows.some(
-      (provider) => normalizeProviderId(provider.provider) === "claude-cli",
-    );
-    const candidates = hasClaudeCliCredential ? credentialRows : group;
-    const selected = candidates.reduce((worst, candidate) =>
+    const selected = group.reduce((worst, candidate) =>
       AUTH_STATUS_PRIORITY.indexOf(candidate.status) < AUTH_STATUS_PRIORITY.indexOf(worst.status)
         ? candidate
         : worst,

@@ -21,6 +21,10 @@ import {
   removeProviderAuthProfilesWithLock,
   resolvePersistedAuthProfileOwnerAgentDir,
 } from "../../agents/auth-profiles.js";
+import {
+  listConfiguredExternalCliProfileMetadataIds,
+  normalizeExternalCliProfileMetadata,
+} from "../../agents/auth-profiles/external-cli-profile-metadata.js";
 import { getRuntimeExternalCliProfileIds } from "../../agents/auth-profiles/runtime-external-profile-references.js";
 import {
   isNonSecretApiKeyMarker,
@@ -376,9 +380,11 @@ function resolveConfiguredProviders(
 ): {
   providers: string[];
   expectsOAuth: Set<string>;
+  directModelAuthProviders: Set<string>;
 } {
   const out = new Set<string>();
   const expectsOAuth = new Set<string>();
+  const directModelAuthProviders = new Set<string>();
   for (const [id, provider] of Object.entries(cfg.models?.providers ?? {})) {
     const normalized = normalizeProviderId(id);
     if (!normalized) {
@@ -393,6 +399,7 @@ function resolveConfiguredProviders(
     if (mode !== "oauth" && mode !== "token" && !hasApiKey) {
       continue;
     }
+    directModelAuthProviders.add(normalized);
     if (apiKeys.has(normalized)) {
       continue;
     }
@@ -424,7 +431,27 @@ function resolveConfiguredProviders(
       expectsOAuth.add(normalized);
     }
   }
-  return { providers: Array.from(out), expectsOAuth };
+  return { providers: Array.from(out), expectsOAuth, directModelAuthProviders };
+}
+
+function resolveLegacyExternalCliAliasProfileIds(
+  cfg: OpenClawConfig,
+  directModelAuthProviders: ReadonlySet<string>,
+): Map<string, string> {
+  const profiles = cfg.auth?.profiles;
+  const aliases = new Map<string, string>();
+  for (const profileId of listConfiguredExternalCliProfileMetadataIds(profiles)) {
+    const profile = profiles?.[profileId];
+    const canonical = normalizeExternalCliProfileMetadata(profileId, profile);
+    if (!profile || !canonical) {
+      continue;
+    }
+    const provider = normalizeProviderId(profile.provider);
+    if (provider && provider !== canonical.provider && !directModelAuthProviders.has(provider)) {
+      aliases.set(provider, profileId);
+    }
+  }
+  return aliases;
 }
 
 export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
@@ -639,6 +666,10 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
           .map(([profileId]) => profileId),
       );
       const configBoundProfileIds = resolveConfigBoundProfileIds(cfg, store, authAliasLookupParams);
+      const legacyExternalCliAliasProfileIds = resolveLegacyExternalCliAliasProfileIds(
+        cfg,
+        configured.directModelAuthProviders,
+      );
       const providers = suppressSyntheticAliasRowsCoveredByExternalCli(
         authHealth.providers.map((prov) =>
           mapProvider(
@@ -652,6 +683,7 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
           ),
         ),
         externalCliProfileIds,
+        legacyExternalCliAliasProfileIds,
       );
       const providerCapabilities = buildProviderCapabilities({
         config: cfg,
