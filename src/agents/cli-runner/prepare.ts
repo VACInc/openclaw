@@ -1218,6 +1218,7 @@ export async function prepareCliRunContext(
       provider: params.provider,
       modelId,
       contextTokenBudget: contextWindowInfo.tokens,
+      thinkingLevel: params.thinkLevel === "ultra" ? "max" : params.thinkLevel,
       authProfileId: effectiveAuthProfileId,
       executionMode,
       toolAvailability: params.cliToolAvailability

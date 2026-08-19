@@ -35,6 +35,9 @@ export const CLAUDE_CLI_CLEAR_ENV = [
   "CLAUDE_CONFIG_DIR",
   // Re-injected per run from OpenClaw's canonical context budget.
   "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+  "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING",
+  // Re-injected per run from OpenClaw's effective thinking level.
+  "MAX_THINKING_TOKENS",
   "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
   "CLAUDE_CODE_ENTRYPOINT",
   "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
@@ -135,6 +138,41 @@ export function resolveClaudeCliAutoCompactEnv(
   return {
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(normalizedBudget),
   };
+}
+
+/**
+ * Map OpenClaw's fixed thinking levels to Claude Code's per-process budget.
+ *
+ * Claude Code 2.x reads MAX_THINKING_TOKENS for print-mode runs; zero selects
+ * disabled thinking and a positive integer requests that fixed token budget.
+ * Claude Code's adaptive 4.6 models require the paired opt-out to use a fixed
+ * budget; later adaptive models retain the existing --effort projection.
+ * These fixed budgets match OpenClaw's canonical provider defaults in
+ * packages/ai/src/providers/simple-options.ts.
+ */
+export function resolveClaudeCliThinkingEnv(
+  thinkingLevel: CliBackendResolveExecutionArgsContext["thinkingLevel"],
+): Record<string, string> | undefined {
+  switch (thinkingLevel) {
+    case "off":
+      return { MAX_THINKING_TOKENS: "0" };
+    case "minimal":
+      return { CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1", MAX_THINKING_TOKENS: "1024" };
+    case "low":
+      return { CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1", MAX_THINKING_TOKENS: "2048" };
+    case "medium":
+      return { CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1", MAX_THINKING_TOKENS: "8192" };
+    case "high":
+    case "xhigh":
+      return { CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1", MAX_THINKING_TOKENS: "16384" };
+    case "max":
+      return { CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1", MAX_THINKING_TOKENS: "32768" };
+    case "adaptive":
+    case undefined:
+      return undefined;
+    default:
+      return thinkingLevel satisfies never;
+  }
 }
 
 /** Return whether the startup-probed Claude Code build supports the cache-control flag. */

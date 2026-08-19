@@ -6,6 +6,7 @@ import {
   normalizeClaudeBackendConfig,
   resolveClaudeCliAutoCompactEnv,
   resolveClaudeCliExecutionArgs,
+  resolveClaudeCliThinkingEnv,
   supportsClaudeDynamicSystemPromptSections,
 } from "./cli-shared.js";
 import { registerAnthropicPlugin } from "./register.runtime.js";
@@ -67,6 +68,14 @@ describe("Claude CLI adapter equivalence", () => {
         contextTokenBudget: 100_000,
       }),
     ).toEqual({ env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000" } });
+  });
+
+  it.each([
+    ["high", { CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1", MAX_THINKING_TOKENS: "16384" }],
+    ["off", { MAX_THINKING_TOKENS: "0" }],
+    ["adaptive", undefined],
+  ] as const)("maps %s thinking to Claude Code's process environment", (level, expected) => {
+    expect(resolveClaudeCliThinkingEnv(level)).toEqual(expected);
   });
 
   it("privately acknowledges isolated completion preparation", () => {
