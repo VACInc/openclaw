@@ -298,16 +298,14 @@ function mapProvider(
     expectsOAuthSet.has(prov.provider),
   );
   const effectiveProfiles = prov.effectiveProfiles ?? prov.profiles;
-  const effectiveOAuthProfiles = effectiveProfiles.filter((profile) => profile.type === "oauth");
-  const statusProfiles =
-    effectiveOAuthProfiles.length > 0
-      ? effectiveOAuthProfiles
-      : effectiveProfiles.filter((profile) => profile.type === "token");
+  const refreshableProfiles = effectiveProfiles.filter(
+    (profile) => profile.type === "oauth" || profile.type === "token",
+  );
   // External CLI access tokens rotate without operator action. Keep their raw
   // profile expiry diagnostic, but do not turn it into a provider login warning.
   const externalCliOwnsOAuthRefresh =
-    statusProfiles.length > 0 &&
-    statusProfiles.every(
+    refreshableProfiles.length > 0 &&
+    refreshableProfiles.every(
       (profile) => profile.type === "oauth" && externalCliProfileIds.has(profile.profileId),
     );
   const rollup: ModelAuthStatusRollup =
