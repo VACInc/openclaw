@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const INSTALL_DOCS_DIR = path.join(process.cwd(), "docs", "install");
-const CLOUD_DOCKER_VM_INSTALL_DOCS = new Set(["gcp.md", "hetzner.md"]);
+const DOCKER_VM_RUNTIME_DOC = path.join(INSTALL_DOCS_DIR, "docker-vm-runtime.md");
 const KNOWN_WEAK_GATEWAY_TOKEN_PLACEHOLDERS = [
   "change-me-to-a-long-random-token",
   "change-me-now",
@@ -34,11 +34,13 @@ describe("cloud install docs", () => {
         expect(markdown, docName).not.toContain(`OPENCLAW_GATEWAY_PASSWORD=${password}`);
       }
       expect(markdown, docName).not.toMatch(/^ {4}GOG_KEYRING_PASSWORD=change-me-now$/m);
-      if (CLOUD_DOCKER_VM_INSTALL_DOCS.has(docName)) {
-        expect(markdown, docName).toMatch(/^ {4}OPENCLAW_GATEWAY_TOKEN=[ \t]*\r?$/m);
-        expect(markdown, docName).toMatch(/^ {4}GOG_KEYRING_PASSWORD=[ \t]*\r?$/m);
-        expect(markdown, docName).toContain("openssl rand -hex 32");
-      }
     }
+
+    // The shared Docker VM runtime owns token setup for GCP and Hetzner. Its
+    // maintained setup script must generate the token rather than document a
+    // copy-paste value in either provider guide.
+    const dockerVmRuntime = await fs.readFile(DOCKER_VM_RUNTIME_DOC, "utf8");
+    expect(dockerVmRuntime).toContain("generates a Gateway token");
+    expect(dockerVmRuntime).toContain("synchronizes `.env`");
   });
 });
