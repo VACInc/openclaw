@@ -7,7 +7,6 @@ import type { RuntimeAuthMaterialization } from "../../agents/auth-profiles/runt
 import type { AuthProfileStore } from "../../agents/auth-profiles/types.js";
 import { resolveConfiguredModelEntries } from "../../agents/configured-model-entries.js";
 import { DEFAULT_PROVIDER } from "../../agents/defaults.js";
-import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
 import type {
   ModelAuthAvailability,
   ModelAuthAvailabilityEvaluation,
@@ -49,14 +48,15 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import type { ProviderCatalogOutcome } from "../../plugins/provider-catalog.types.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
-import type { GatewayAgentRuntime } from "../../shared/session-types.js";
 import { loadDeferredCatalog, readPreparedCatalog } from "../server-model-catalog-auth.js";
 import { resolveGatewayModelThinkingProfile } from "../session-utils-model.js";
-import { projectWorkerPlacementAgentRuntime } from "../worker-environments/placement-session-runtime.js";
 import { resolveModelProviderCapabilities } from "./model-provider-capabilities.js";
 import { createModelsListAuthResolver } from "./models-list-auth-resolver.js";
 import { prepareModelsListHarnessCatalog } from "./models-list-harness-catalog.js";
-import { buildPublicModelProjection } from "./models-list-public-projection.js";
+import {
+  buildPublicModelProjection,
+  resolveModelChoiceAgentRuntime,
+} from "./models-list-public-projection.js";
 import type { GatewayRequestContext } from "./types.js";
 
 type ModelsListEntryWithCapabilities = ModelChoice;
@@ -74,28 +74,6 @@ let loggedSlowModelsListCatalog = false;
 function resolveModelsListView(params: Record<string, unknown>): ModelCatalogBrowseView {
   const view = params.view;
   return view === "configured" || view === "provider-config" || view === "all" ? view : "default";
-}
-
-function resolveModelChoiceAgentRuntime(params: {
-  cfg: OpenClawConfig;
-  agentId: string;
-  entry: ModelCatalogEntry;
-}): GatewayAgentRuntime | undefined {
-  const harnessPolicy = resolveAgentHarnessPolicy({
-    provider: params.entry.provider,
-    modelId: params.entry.id,
-    modelApi: params.entry.api,
-    modelBaseUrl: params.entry.baseUrl,
-    config: params.cfg,
-    agentId: params.agentId,
-  });
-  if (harnessPolicy.runtime === "auto") {
-    return undefined;
-  }
-  return projectWorkerPlacementAgentRuntime({
-    id: harnessPolicy.runtime,
-    source: harnessPolicy.runtimeSource ?? "implicit",
-  });
 }
 
 function resolveLegacyEntryAvailability(params: {
