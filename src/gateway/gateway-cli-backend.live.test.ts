@@ -140,6 +140,9 @@ const CLI_BACKEND_CODEX_TIMEOUT_RETRY_ATTEMPTS = 2;
 const CLI_BACKEND_CODEX_TIMEOUT_RETRY_SLEEP_MS = 5_000;
 const CLI_BACKEND_RETRY_WRAPPED_AGENT_REQUESTS = 2;
 const CLI_BACKEND_MIN_CACHE_HIT_RATE = 0.9;
+const CLI_CACHE_PROBE_INITIAL_THINKING_LEVEL = "medium";
+const CLI_CACHE_PROBE_SWITCHED_THINKING_LEVEL = "high";
+const CLI_BACKEND_MIN_THINKING_SWITCH_CACHE_HIT_RATE = 0.3;
 const CLI_BACKEND_CODEX_TIMEOUT_RETRY_SEQUENCE_MS =
   CLI_BACKEND_REQUEST_TIMEOUT_MS * CLI_BACKEND_CODEX_TIMEOUT_RETRY_ATTEMPTS +
   CLI_BACKEND_CODEX_TIMEOUT_RETRY_SLEEP_MS * (CLI_BACKEND_CODEX_TIMEOUT_RETRY_ATTEMPTS - 1);
@@ -598,7 +601,12 @@ describeLive("gateway live (cli backend)", () => {
             ...(bootstrapWorkspace ? { workspace: bootstrapWorkspace.workspaceRootDir } : {}),
             model: { primary: configModelKey },
             models: {
-              [configModelKey]: { agentRuntime: modelSelection.agentRuntime },
+              [configModelKey]: {
+                agentRuntime: modelSelection.agentRuntime,
+                ...(CLI_CACHE_PROBE
+                  ? { params: { thinking: CLI_CACHE_PROBE_INITIAL_THINKING_LEVEL } }
+                  : {}),
+              },
               ...(modelSwitchTarget
                 ? { [modelSwitchTarget]: { agentRuntime: modelSelection.agentRuntime } }
                 : {}),
@@ -896,6 +904,34 @@ describeLive("gateway live (cli backend)", () => {
           }
 
           if (CLI_CACHE_PROBE) {
+            const requestCacheProbeTurn = async (turn: string, marker: string) => {
+              logCliBackendLiveStep(`agent-${turn}:start`, { sessionKey, marker });
+              const probePayload = await requestWithCodexTimeoutRetry(
+                providerId,
+                `agent ${turn} request`,
+                (timeouts) =>
+                  activeClient.request(
+                    "agent",
+                    {
+                      sessionKey,
+                      idempotencyKey: `idem-${randomUUID()}`,
+                      message: `Do not inspect files or run tools. Reply with exactly: ${marker}.`,
+                      deliver: false,
+                      timeout: timeouts.agentTimeoutSeconds,
+                    },
+                    { expectFinal: true, timeoutMs: timeouts.requestTimeoutMs },
+                  ),
+              );
+              if (!probePayload) {
+                return undefined;
+              }
+              if (probePayload.status !== "ok") {
+                throw new Error(`${turn} status=${String(probePayload.status)}`);
+              }
+              logCliBackendLiveStep(`agent-${turn}:done`, { status: probePayload.status });
+              expect(extractPayloadText(probePayload.result)).toContain(marker);
+              return logCliCacheUsage(turn, resolveCliCacheUsage(probePayload.result));
+            };
             const cacheNonce = randomBytes(3).toString("hex").toUpperCase();
             // The compatible Claude flag excludes its native Git-status section. Dirtying an
             // otherwise unchanged workspace makes the pre-fix process miss while the fixed one
@@ -904,36 +940,49 @@ describeLive("gateway live (cli backend)", () => {
               path.join(bootstrapWorkspace.workspaceRootDir, ".claude-cache-git-drift"),
               `${cacheNonce}\n`,
             );
-            logCliBackendLiveStep("agent-cache-probe:start", { sessionKey, cacheNonce });
-            const cachePayload = await requestWithCodexTimeoutRetry(
-              providerId,
-              "agent cache probe request",
-              (timeouts) =>
-                activeClient.request(
-                  "agent",
-                  {
-                    sessionKey,
-                    idempotencyKey: `idem-${randomUUID()}`,
-                    message: `Do not inspect files or run tools. Reply with exactly: CLI-CACHE-${cacheNonce}.`,
-                    deliver: false,
-                    timeout: timeouts.agentTimeoutSeconds,
-                  },
-                  { expectFinal: true, timeoutMs: timeouts.requestTimeoutMs },
-                ),
-            );
-            if (!cachePayload) {
+            const cacheHitRate = await requestCacheProbeTurn("resume2", `CLI-CACHE-${cacheNonce}`);
+            if (cacheHitRate === undefined) {
               return;
             }
-            if (cachePayload.status !== "ok") {
-              throw new Error(`cache probe status=${String(cachePayload.status)}`);
-            }
-            logCliBackendLiveStep("agent-cache-probe:done", { status: cachePayload.status });
-            expect(extractPayloadText(cachePayload.result)).toContain(`CLI-CACHE-${cacheNonce}`);
-            const cacheHitRate = logCliCacheUsage(
-              "resume2",
-              resolveCliCacheUsage(cachePayload.result),
-            );
             expect(cacheHitRate).toBeGreaterThanOrEqual(CLI_BACKEND_MIN_CACHE_HIT_RATE);
+
+            const thinkingPatchPayload = await activeClient.request("sessions.patch", {
+              key: sessionKey,
+              thinkingLevel: CLI_CACHE_PROBE_SWITCHED_THINKING_LEVEL,
+            });
+            if (
+              !thinkingPatchPayload ||
+              typeof thinkingPatchPayload !== "object" ||
+              !("ok" in thinkingPatchPayload) ||
+              thinkingPatchPayload.ok !== true
+            ) {
+              throw new Error("sessions.patch failed for cache probe thinking-level switch");
+            }
+
+            const switchNonce = randomBytes(3).toString("hex").toUpperCase();
+            const switchHitRate = await requestCacheProbeTurn(
+              "thinking-switch",
+              `CLI-THINKING-SWITCH-${switchNonce}`,
+            );
+            if (switchHitRate === undefined) {
+              return;
+            }
+            // Anthropic caches tools, system, then messages. A thinking-parameter change only
+            // invalidates messages, so this floor proves the tools+system tiers survive:
+            // https://platform.claude.com/docs/en/build-with-claude/prompt-caching#what-invalidates-the-cache
+            expect(switchHitRate).toBeGreaterThanOrEqual(
+              CLI_BACKEND_MIN_THINKING_SWITCH_CACHE_HIT_RATE,
+            );
+
+            const steadyNonce = randomBytes(3).toString("hex").toUpperCase();
+            const steadyHitRate = await requestCacheProbeTurn(
+              "thinking-steady",
+              `CLI-THINKING-STEADY-${steadyNonce}`,
+            );
+            if (steadyHitRate === undefined) {
+              return;
+            }
+            expect(steadyHitRate).toBeGreaterThanOrEqual(CLI_BACKEND_MIN_CACHE_HIT_RATE);
           }
         }
 
