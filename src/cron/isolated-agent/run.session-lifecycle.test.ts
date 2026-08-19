@@ -12,6 +12,7 @@ import {
   dispatchCronDeliveryMock,
   loadRunCronIsolatedAgentTurn,
   loadSessionEntryMock,
+  logSessionStateChangeMock,
   callGatewayMock,
   makeCronSession,
   makeCronSessionEntry,
@@ -255,6 +256,32 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
       }),
     );
     expect(mutationCommitted).toBe(true);
+  });
+
+  it("releases admission when final lifecycle marking fails", async () => {
+    const sessionKey = "agent:main:cron:final-lifecycle-failure";
+    const sessionId = "final-lifecycle-session";
+    const initialSessionEntry = makeCronSessionEntry({ sessionId });
+    resolveCronSessionMock.mockReturnValue(
+      makeCronSession({
+        storePath: inMemoryStorePath,
+        store: { [sessionKey]: { ...initialSessionEntry } },
+        initialSessionEntry,
+        isNewSession: false,
+        sessionEntry: { ...initialSessionEntry },
+      }),
+    );
+    loadSessionEntryMock.mockReturnValue({ ...initialSessionEntry });
+    logSessionStateChangeMock
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("simulated final lifecycle failure");
+      });
+
+    await expect(runCronIsolatedAgentTurn(makePersistentCronParams(sessionKey))).rejects.toThrow(
+      "simulated final lifecycle failure",
+    );
+    expect(isSessionWorkAdmissionActive(inMemoryStorePath, [sessionKey, sessionId])).toBe(false);
   });
 
   it("releases an isolated run lease before delete-after-run cleanup", async () => {

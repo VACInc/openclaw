@@ -82,6 +82,7 @@ const replaceSessionEntryMock = createMock();
 export const patchSessionEntryMock = createMock();
 export const resolveCronSessionMock = createMock();
 export const logWarnMock = createMock();
+export const logSessionStateChangeMock = createMock();
 export const countActiveDescendantRunsMock = createMock();
 export const listDescendantRunsForRequesterMock = createMock();
 export const pickLastNonEmptyTextFromPayloadsMock = createMock();
@@ -167,6 +168,12 @@ vi.mock("./run.runtime.js", async () => ({
   isExternalHookSession: isExternalHookSessionMock,
   resolveHookExternalContentSource: resolveHookExternalContentSourceMock,
   getRemoteSkillEligibility: getRemoteSkillEligibilityMock,
+}));
+
+vi.mock("../../logging/diagnostic.js", () => ({
+  logMessageProcessed: vi.fn(),
+  logMessageQueued: vi.fn(),
+  logSessionStateChange: (...args: unknown[]) => logSessionStateChangeMock(...args),
 }));
 
 vi.mock("../../agents/model-runtime-aliases.js", async () => ({
