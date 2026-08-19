@@ -454,6 +454,9 @@ async function runSerializedClaudeTurn(
       });
     }
     const generation = crypto.randomUUID();
+    // Capture keys are child env/MCP-header state and cannot rotate without a
+    // new process. Bind one key to this process; grant activate/deactivate is
+    // the per-turn admission fence. Drain timeout still kills the child.
     const mcpCaptureKey = params.context.mcpDeliveryCapture ? crypto.randomUUID() : undefined;
     if (mcpCaptureKey) {
       try {
@@ -564,16 +567,8 @@ async function runSerializedClaudeTurn(
     return { output: await outputPromise };
   } finally {
     params.context.params.abortSignal?.removeEventListener("abort", abort);
-    try {
-      if (replyBackendHandle) {
-        params.context.params.replyOperation?.detachBackend(replyBackendHandle);
-      }
-    } finally {
-      if (session.mcpCaptureKey) {
-        session.close("restart");
-        await session.waitForExit();
-        await session.cleanupResources();
-      }
+    if (replyBackendHandle) {
+      params.context.params.replyOperation?.detachBackend(replyBackendHandle);
     }
   }
 }
