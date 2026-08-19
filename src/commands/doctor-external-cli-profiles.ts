@@ -12,7 +12,7 @@ import { saveAuthProfileStore } from "../agents/auth-profiles/store.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { listAuthProfileRepairCandidates } from "./doctor-auth-legacy-paths.js";
 
-export type DoctorExternalCliProfileMigration = {
+type DoctorExternalCliProfileMigration = {
   changes: string[];
   warnings: string[];
   configChanged: boolean;
