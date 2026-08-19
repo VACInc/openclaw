@@ -288,6 +288,10 @@ type CliPreparedBackend = {
   secretInput?: CliSecretInput;
   /** Gateway-owned capture fence for this prepared bundle-MCP client. */
   mcpClientGrantCapture?: {
+    /** Fresh bearer minted for this prepared turn. */
+    transportToken: string;
+    /** Move this turn's authority onto the bearer held by an existing child. */
+    adoptProcessToken: (processToken: string) => void;
     activate: (captureKey: string) => void;
     deactivate: (captureKey: string) => void;
   };

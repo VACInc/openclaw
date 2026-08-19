@@ -67,6 +67,8 @@ export type ClaudeLiveProcess = ClaudeLiveTurnHost & {
   cleanupPromise: Promise<void> | null;
   pendingControlRequest: ClaudeLivePendingControlRequest | null;
   mcpCaptureKey?: string;
+  /** Process-stable bearer whose server-side authority rotates per turn. */
+  mcpGrantToken?: string;
   nativeToolApprovalGrants: Set<string>;
   isIdle(): boolean;
   waitForExit(): Promise<void>;
@@ -523,6 +525,7 @@ export async function spawnClaudeProcess(params: {
     closing: false,
     pendingControlRequest: null,
     mcpCaptureKey: params.mcpCaptureKey,
+    mcpGrantToken: params.context.preparedBackend.mcpClientGrantCapture?.transportToken,
     nativeToolApprovalGrants: new Set(),
     outstandingBackgroundTaskIds: new Set(),
     isIdle() {

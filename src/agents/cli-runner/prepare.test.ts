@@ -3049,6 +3049,7 @@ describe("prepareCliRunContext", () => {
     const createMcpLoopbackServerConfig = vi.fn(createTestMcpLoopbackServerConfig);
     const activateMcpLoopbackClientGrantCapture = vi.fn(() => true);
     const deactivateMcpLoopbackClientGrantCapture = vi.fn(() => true);
+    const transferMcpLoopbackClientGrant = vi.fn(() => true);
     const mintMcpLoopbackClientGrant = vi.fn(createTestMcpLoopbackClientGrant);
     const revokeMcpLoopbackClientGrant = vi.fn(() => true);
     const resolveMcpLoopbackScopedTools = vi.fn(() => ({
@@ -3069,6 +3070,7 @@ describe("prepareCliRunContext", () => {
       createMcpLoopbackServerConfig,
       activateMcpLoopbackClientGrantCapture,
       deactivateMcpLoopbackClientGrantCapture,
+      transferMcpLoopbackClientGrant,
       mintMcpLoopbackClientGrant,
       revokeMcpLoopbackClientGrant,
       resolveMcpLoopbackScopedTools,
@@ -3206,15 +3208,22 @@ describe("prepareCliRunContext", () => {
         store: expect.objectContaining({ version: 1, profiles: {} }),
       },
     });
+    expect(context.preparedBackend.mcpClientGrantCapture?.transportToken).toBe("loopback-token");
+    context.preparedBackend.mcpClientGrantCapture?.adoptProcessToken("stable-loopback-token");
     context.preparedBackend.mcpClientGrantCapture?.activate("capture-test");
     context.preparedBackend.mcpClientGrantCapture?.deactivate("capture-test");
+    expect(transferMcpLoopbackClientGrant).toHaveBeenCalledExactlyOnceWith({
+      sourceToken: "loopback-token",
+      targetToken: "stable-loopback-token",
+      runtimeOwnerToken: "loopback-owner-token",
+    });
     expect(activateMcpLoopbackClientGrantCapture).toHaveBeenCalledExactlyOnceWith({
-      token: "loopback-token",
+      token: "stable-loopback-token",
       runtimeOwnerToken: "loopback-owner-token",
       captureKey: "capture-test",
     });
     expect(deactivateMcpLoopbackClientGrantCapture).toHaveBeenCalledExactlyOnceWith({
-      token: "loopback-token",
+      token: "stable-loopback-token",
       runtimeOwnerToken: "loopback-owner-token",
       captureKey: "capture-test",
     });

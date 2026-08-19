@@ -95,19 +95,6 @@ function createRuntimeBackendEntry(
     : { ...base, ownsNativeCompaction: false };
 }
 
-function createFreshProcessCacheProbeBackend(backend: RuntimeBackendEntry): RuntimeBackendEntry {
-  return {
-    ...backend,
-    // Keep the owning plugin's real runtime hooks, including its version-gated argv resolver,
-    // while forcing the documented restart/idle-exit resume path between probe turns.
-    normalizeConfig: (config, context) => {
-      const normalized = backend.normalizeConfig?.(config, context) ?? config;
-      const { liveSession: _liveSession, ...freshProcessConfig } = normalized;
-      return freshProcessConfig;
-    },
-  };
-}
-
 async function initializeCacheProbeGitWorkspace(workspaceDir: string): Promise<void> {
   await execFileAsync("git", ["init", "--quiet", workspaceDir]);
   await execFileAsync("git", ["-C", workspaceDir, "config", "user.name", "OpenClaw Tests"]);
@@ -642,7 +629,7 @@ describeLive("gateway live (cli backend)", () => {
             `cache probe could not load runtime CLI backend ${providerId}; plugins=${pluginStates || "none"}`,
           );
         }
-        cacheProbeBackend = createFreshProcessCacheProbeBackend({
+        cacheProbeBackend = {
           ...registration.backend,
           // Keep the live harness's installed command and explicit API-key passthrough while
           // exercising the owning plugin's real prepare/argv hooks.
@@ -651,7 +638,7 @@ describeLive("gateway live (cli backend)", () => {
           ...(registration.builtWithOpenClawVersion
             ? { builtWithOpenClawVersion: registration.builtWithOpenClawVersion }
             : {}),
-        });
+        };
       }
       const deviceIdentity = await ensurePairedTestGatewayClientIdentity();
       let server: Awaited<ReturnType<typeof startGatewayServer>> | undefined;
@@ -669,6 +656,7 @@ describeLive("gateway live (cli backend)", () => {
           auth: { mode: "token", token },
           controlUiEnabled: false,
         });
+        await server.startupSettled;
         logCliBackendLiveStep("server-started");
         if (CLI_CACHE_PROBE) {
           if (!cacheProbeBackend) {
@@ -751,6 +739,25 @@ describeLive("gateway live (cli backend)", () => {
           throw new Error(`agent status=${String(payload?.status)}`);
         }
         logCliBackendLiveStep("agent-request:done", { status: payload?.status });
+
+        let cacheProbeOwner: Parameters<typeof getClaudeGeneration>[0] | undefined;
+        let cacheProbeInitialGeneration: string | undefined;
+        if (CLI_CACHE_PROBE) {
+          const history = await activeClient.request<{ sessionId?: string }>("chat.history", {
+            sessionKey,
+          });
+          if (!history.sessionId) {
+            throw new Error("Claude CLI cache probe could not resolve its OpenClaw session");
+          }
+          cacheProbeOwner = {
+            backendId: providerId,
+            agentId: "dev",
+            sessionId: history.sessionId,
+            sessionKey,
+          };
+          cacheProbeInitialGeneration = getClaudeGeneration(cacheProbeOwner);
+          expect(cacheProbeInitialGeneration).toBeTruthy();
+        }
 
         const text = extractPayloadText(payload?.result);
         if (providerId === "codex-cli") {
@@ -885,6 +892,8 @@ describeLive("gateway live (cli backend)", () => {
           logCliBackendLiveStep("agent-resume:done", { status: resumePayload?.status });
           if (CLI_CACHE_PROBE) {
             logCliCacheUsage("resume1-warmup", resolveCliCacheUsage(resumePayload.result));
+            expect(cacheProbeOwner).toBeDefined();
+            expect(getClaudeGeneration(cacheProbeOwner!)).toBe(cacheProbeInitialGeneration);
           }
           const resumeText = extractPayloadText(resumePayload?.result);
           if (providerId === "codex-cli") {
@@ -932,9 +941,8 @@ describeLive("gateway live (cli backend)", () => {
               return logCliCacheUsage(turn, resolveCliCacheUsage(probePayload.result));
             };
             const cacheNonce = randomBytes(3).toString("hex").toUpperCase();
-            // The compatible Claude flag excludes its native Git-status section. Dirtying an
-            // otherwise unchanged workspace makes the pre-fix process miss while the fixed one
-            // keeps the stable prompt prefix cached across this fresh-process turn.
+            // Dirty the workspace between captured turns while the compatible Claude flag keeps
+            // its native Git-status section out of the stable prompt prefix.
             await fs.writeFile(
               path.join(bootstrapWorkspace.workspaceRootDir, ".claude-cache-git-drift"),
               `${cacheNonce}\n`,
@@ -944,6 +952,7 @@ describeLive("gateway live (cli backend)", () => {
               return;
             }
             expect(cacheHitRate).toBeGreaterThanOrEqual(CLI_BACKEND_MIN_CACHE_HIT_RATE);
+            expect(getClaudeGeneration(cacheProbeOwner!)).toBe(cacheProbeInitialGeneration);
 
             const thinkingPatchPayload = await activeClient.request("sessions.patch", {
               key: sessionKey,
@@ -972,6 +981,9 @@ describeLive("gateway live (cli backend)", () => {
             expect(switchHitRate).toBeGreaterThanOrEqual(
               CLI_BACKEND_MIN_THINKING_SWITCH_CACHE_HIT_RATE,
             );
+            const switchedGeneration = getClaudeGeneration(cacheProbeOwner!);
+            expect(switchedGeneration).toBeTruthy();
+            expect(switchedGeneration).not.toBe(cacheProbeInitialGeneration);
 
             const steadyNonce = randomBytes(3).toString("hex").toUpperCase();
             const steadyHitRate = await requestCacheProbeTurn(
@@ -982,6 +994,7 @@ describeLive("gateway live (cli backend)", () => {
               return;
             }
             expect(steadyHitRate).toBeGreaterThanOrEqual(CLI_BACKEND_MIN_CACHE_HIT_RATE);
+            expect(getClaudeGeneration(cacheProbeOwner!)).toBe(switchedGeneration);
           }
         }
 

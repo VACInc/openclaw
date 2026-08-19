@@ -166,6 +166,10 @@ function buildClaudeLiveFingerprint(params: {
   argv: string[];
   env: Record<string, string>;
 }): string {
+  const managedMcpGrant = params.context.preparedBackend.mcpClientGrantCapture;
+  const normalizeMcpGrantToken =
+    managedMcpGrant !== undefined &&
+    params.env.OPENCLAW_MCP_TOKEN === managedMcpGrant.transportToken;
   const stableSystemPrompt =
     (params.context.preparedBackend.backend.systemPromptWhen === "always"
       ? splitSystemPromptCacheBoundary(params.context.systemPrompt)?.stablePrefix
@@ -246,8 +250,30 @@ function buildClaudeLiveFingerprint(params: {
     // thinking environment invalidates a warm process without a second reuse gate.
     env: Object.keys(params.env)
       .toSorted()
-      .map((key) => [key, params.env[key] ? sha256Hex(params.env[key]) : ""]),
+      .map((key) => [
+        key,
+        key === "OPENCLAW_MCP_TOKEN" && normalizeMcpGrantToken
+          ? "<managed-mcp-grant>"
+          : params.env[key]
+            ? sha256Hex(params.env[key])
+            : "",
+      ]),
   });
+}
+
+function adoptClaudeLiveProcessMcpGrant(params: {
+  session: ClaudeLiveProcess;
+  context: PreparedCliRunContext;
+}): boolean {
+  const turnGrant = params.context.preparedBackend.mcpClientGrantCapture;
+  if (!turnGrant && !params.session.mcpGrantToken) {
+    return true;
+  }
+  if (!turnGrant || !params.session.mcpGrantToken) {
+    return false;
+  }
+  turnGrant.adoptProcessToken(params.session.mcpGrantToken);
+  return true;
 }
 
 function createAbortError(reason?: unknown): Error {
@@ -427,6 +453,32 @@ async function runSerializedClaudeTurn(
     throw createRequiredLiveSessionError({
       context: params.context,
       code: "cli_live_session_missing",
+    });
+  }
+  if (session) {
+    try {
+      if (!adoptClaudeLiveProcessMcpGrant({ session, context: params.context })) {
+        session.close("restart");
+        session = undefined;
+      }
+    } catch (error) {
+      session.close("restart", error);
+      session = undefined;
+      if (params.requiredSessionGeneration) {
+        await cleanup();
+        throw createRequiredLiveSessionError({
+          context: params.context,
+          code: "cli_live_session_changed",
+          cause: error,
+        });
+      }
+    }
+  }
+  if (!session && params.requiredSessionGeneration) {
+    await cleanup();
+    throw createRequiredLiveSessionError({
+      context: params.context,
+      code: "cli_live_session_changed",
     });
   }
   const cleanupTurnArtifacts = Boolean(session);

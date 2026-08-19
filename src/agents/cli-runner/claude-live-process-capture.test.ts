@@ -183,29 +183,37 @@ describe("Claude live MCP capture lifetime", () => {
     });
     const activateCapture = vi.fn<(captureKey: string) => void>();
     const deactivateCapture = vi.fn<(captureKey: string) => void>();
+    const adoptedProcessTokens: string[] = [];
     const backend = {
       resumeArgs: ["-p", "--output-format", "stream-json", "--resume={sessionId}"],
       liveSession: "claude-stdio" as const,
     };
-    const buildContext = (prompt: string) => {
+    const buildContext = (prompt: string, transportToken: string) => {
       const context = buildPreparedCliRunContext({
         backend,
         prompt,
         mcpDeliveryCapture: true,
+        preparedEnv: { OPENCLAW_MCP_TOKEN: transportToken },
       });
       context.preparedBackend.mcpClientGrantCapture = {
+        transportToken,
+        adoptProcessToken: (processToken) => adoptedProcessTokens.push(processToken),
         activate: activateCapture,
         deactivate: deactivateCapture,
       };
       return context;
     };
 
-    const first = await executePreparedCliRun(buildContext("first"));
-    const second = await executePreparedCliRun(buildContext("second"), "captured-live");
+    const first = await executePreparedCliRun(buildContext("first", "turn-token-one"));
+    const second = await executePreparedCliRun(
+      buildContext("second", "turn-token-two"),
+      "captured-live",
+    );
 
     expect(first.text).toBe("one");
     expect(second.text).toBe("two");
     expect(supervisorSpawnMock).toHaveBeenCalledOnce();
+    expect(adoptedProcessTokens).toEqual(["turn-token-one"]);
     expect(live.lifecycle.cancel).not.toHaveBeenCalled();
     const captureKey = activateCapture.mock.calls[0]?.[0];
     expect(typeof captureKey).toBe("string");
