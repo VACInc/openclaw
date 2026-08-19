@@ -58,6 +58,7 @@ import { loadDeferredCatalog, readPreparedCatalog } from "../server-model-catalo
 import { formatForLog } from "../ws-log.js";
 import { modelAuthAgentScopeError, resolveModelAuthAgentScope } from "./model-auth-agent-scope.js";
 import { resolveModelProviderCapabilities } from "./model-provider-capabilities.js";
+import { suppressSyntheticAliasRowsCoveredByExternalCli } from "./models-auth-status-projection.js";
 import {
   clearModelAuthStatusUsageCache,
   fingerprintProviderUsageCredentials,
@@ -360,36 +361,6 @@ function mapProvider(
           }
         : undefined,
   };
-}
-
-/**
- * A runtime-owned CLI credential is the fact for its canonical usage provider.
- * Do not publish an empty synthetic alias row that contradicts that credential
- * and forces each client surface to rediscover alias ownership independently.
- */
-function suppressSyntheticAliasRowsCoveredByExternalCli(
-  providers: ModelAuthStatusProvider[],
-  externalCliProfileIds: ReadonlySet<string>,
-): ModelAuthStatusProvider[] {
-  const coveredProviderIds = new Set(
-    providers.flatMap((provider) =>
-      provider.profiles.some(
-        (profile) => profile.type === "oauth" && externalCliProfileIds.has(profile.profileId),
-      )
-        ? [resolveUsageProviderId(provider.provider)]
-        : [],
-    ),
-  );
-  return providers.filter((provider) => {
-    const usageProvider = resolveUsageProviderId(provider.provider);
-    return !(
-      provider.status === "missing" &&
-      provider.profiles.length === 0 &&
-      !provider.apiKey &&
-      usageProvider !== undefined &&
-      coveredProviderIds.has(usageProvider)
-    );
-  });
 }
 
 // API-key provenance stays presence-only. SecretRef ids may be shown, but
