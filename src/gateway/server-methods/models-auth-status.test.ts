@@ -691,6 +691,58 @@ describe("models.authStatus", () => {
     expect(provider?.expiry).toBeUndefined();
   });
 
+  it("does not publish a synthetic Anthropic missing row beside owned Claude CLI OAuth", async () => {
+    const profileId = "anthropic:claude-cli";
+    const profile = {
+      profileId,
+      provider: "claude-cli",
+      type: "oauth",
+      status: "expired",
+      expiresAt: 1,
+      remainingMs: -1,
+      source: "store",
+      label: profileId,
+    } satisfies AuthHealthSummary["profiles"][number];
+    setPreparedAuthStore({
+      version: 1,
+      profiles: {
+        [profileId]: {
+          type: "oauth",
+          provider: "claude-cli",
+          access: "expired-access",
+          refresh: "cli-owned-refresh",
+          expires: 1,
+        },
+      },
+      runtimeExternalCliProfileIds: [profileId],
+    });
+    mocks.buildAuthHealthSummary.mockReturnValue({
+      now: 2,
+      warnAfterMs: 0,
+      profiles: [profile],
+      providers: [
+        { provider: "anthropic", status: "missing", profiles: [] },
+        {
+          provider: "claude-cli",
+          status: "expired",
+          expiresAt: 1,
+          remainingMs: -1,
+          profiles: [profile],
+        },
+      ],
+    });
+
+    const result = await readAuthStatus();
+
+    expect(result.providers).toEqual([
+      expect.objectContaining({
+        provider: "claude-cli",
+        status: "ok",
+        profiles: [expect.anything()],
+      }),
+    ]);
+  });
+
   it("preserves expiry when an effective OAuth sibling is not CLI-owned", async () => {
     const cliProfileId = "anthropic:claude-cli";
     const manualProfileId = "anthropic:manual";

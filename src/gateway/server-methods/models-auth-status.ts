@@ -362,6 +362,36 @@ function mapProvider(
   };
 }
 
+/**
+ * A runtime-owned CLI credential is the fact for its canonical usage provider.
+ * Do not publish an empty synthetic alias row that contradicts that credential
+ * and forces each client surface to rediscover alias ownership independently.
+ */
+function suppressSyntheticAliasRowsCoveredByExternalCli(
+  providers: ModelAuthStatusProvider[],
+  externalCliProfileIds: ReadonlySet<string>,
+): ModelAuthStatusProvider[] {
+  const coveredProviderIds = new Set(
+    providers.flatMap((provider) =>
+      provider.profiles.some(
+        (profile) => profile.type === "oauth" && externalCliProfileIds.has(profile.profileId),
+      )
+        ? [resolveUsageProviderId(provider.provider)]
+        : [],
+    ),
+  );
+  return providers.filter((provider) => {
+    const usageProvider = resolveUsageProviderId(provider.provider);
+    return !(
+      provider.status === "missing" &&
+      provider.profiles.length === 0 &&
+      !provider.apiKey &&
+      usageProvider !== undefined &&
+      coveredProviderIds.has(usageProvider)
+    );
+  });
+}
+
 // API-key provenance stays presence-only. SecretRef ids may be shown, but
 // credential values never cross this status boundary.
 function resolveEnvVarName(source: string): string | undefined {
@@ -734,16 +764,19 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
           .map(([profileId]) => profileId),
       );
       const configBoundProfileIds = resolveConfigBoundProfileIds(cfg, store, authAliasLookupParams);
-      const providers = authHealth.providers.map((prov) =>
-        mapProvider(
-          prov,
-          usageByProvider,
-          configured.expectsOAuth,
-          apiKeys,
-          logoutProfileIds,
-          configBoundProfileIds,
-          externalCliProfileIds,
+      const providers = suppressSyntheticAliasRowsCoveredByExternalCli(
+        authHealth.providers.map((prov) =>
+          mapProvider(
+            prov,
+            usageByProvider,
+            configured.expectsOAuth,
+            apiKeys,
+            logoutProfileIds,
+            configBoundProfileIds,
+            externalCliProfileIds,
+          ),
         ),
+        externalCliProfileIds,
       );
       const providerCapabilities = buildProviderCapabilities({
         config: cfg,

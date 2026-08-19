@@ -1,0 +1,62 @@
+/** Canonical metadata for the legacy built-in external CLI auth profile slots. */
+import type { AuthProfileConfig } from "../../config/types.auth.js";
+import { CLAUDE_CLI_PROFILE_ID, MINIMAX_CLI_PROFILE_ID } from "./constants.js";
+
+type ExternalCliProfileMetadata = Pick<AuthProfileConfig, "provider" | "mode">;
+
+const EXTERNAL_CLI_PROFILE_METADATA = new Map<
+  string,
+  {
+    provider: string;
+    legacyProviders: readonly string[];
+  }
+>([
+  [CLAUDE_CLI_PROFILE_ID, { provider: "claude-cli", legacyProviders: ["anthropic", "claude-cli"] }],
+  [
+    MINIMAX_CLI_PROFILE_ID,
+    {
+      provider: "minimax-portal",
+      legacyProviders: ["minimax", "minimax-cli", "minimax-portal"],
+    },
+  ],
+]);
+
+export function listExternalCliProfileMetadataIds(): string[] {
+  return [...EXTERNAL_CLI_PROFILE_METADATA.keys()];
+}
+
+/**
+ * Converts only the known pre-OAuth metadata spelling for a built-in CLI slot.
+ * Other configured profiles remain user-owned and must never be reclassified.
+ */
+export function normalizeExternalCliProfileMetadata(
+  profileId: string,
+  profile: AuthProfileConfig | undefined,
+): ExternalCliProfileMetadata | undefined {
+  const definition = EXTERNAL_CLI_PROFILE_METADATA.get(profileId);
+  if (!definition || !profile) {
+    return undefined;
+  }
+  const provider = profile.provider.trim().toLowerCase();
+  if (!definition.legacyProviders.includes(provider)) {
+    return undefined;
+  }
+  if (profile.mode === "oauth") {
+    return { provider: definition.provider, mode: "oauth" };
+  }
+  if (profile.mode === "token") {
+    return { provider: definition.provider, mode: "oauth" };
+  }
+  return undefined;
+}
+
+export function listConfiguredExternalCliProfileMetadataIds(
+  profiles: Record<string, AuthProfileConfig> | undefined,
+): string[] {
+  if (!profiles) {
+    return [];
+  }
+  return listExternalCliProfileMetadataIds().filter((profileId) =>
+    Boolean(normalizeExternalCliProfileMetadata(profileId, profiles[profileId])),
+  );
+}

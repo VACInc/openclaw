@@ -8,7 +8,10 @@ import type { ProviderExternalAuthProfile } from "../../plugins/provider-externa
 import { resolveExternalAuthProfilesWithPlugins } from "../../plugins/provider-runtime.js";
 import { isAmbientCredentialAllowedByProviderAuthPin } from "./ambient-auth.js";
 import { cloneAuthProfileStore } from "./clone.js";
-import { CLAUDE_CLI_PROFILE_ID, MINIMAX_CLI_PROFILE_ID } from "./constants.js";
+import {
+  listConfiguredExternalCliProfileMetadataIds,
+  listExternalCliProfileMetadataIds,
+} from "./external-cli-profile-metadata.js";
 import * as externalCliSync from "./external-cli-sync.js";
 import {
   areOAuthCredentialsEquivalent,
@@ -110,7 +113,19 @@ function resolveExternalAuthProfiles(params: {
       store: params.store,
     },
   });
-  const resolved = resolveExternalCliAuthProfileMap(params);
+  const configuredProfileIds = listConfiguredExternalCliProfileMetadataIds(
+    params.externalCli?.config?.auth?.profiles,
+  );
+  const externalCli = configuredProfileIds.length
+    ? {
+        ...params.externalCli,
+        externalCliProfileIds: [
+          ...(params.externalCli?.externalCliProfileIds ?? []),
+          ...configuredProfileIds,
+        ],
+      }
+    : params.externalCli;
+  const resolved = resolveExternalCliAuthProfileMap({ ...params, externalCli });
   const runtimeExternalCliProfileIds = new Set(
     [...resolved.values()].map((profile) => profile.profileId),
   );
@@ -118,14 +133,15 @@ function resolveExternalAuthProfiles(params: {
   // in which case their resolver intentionally avoids rereading the CLI and emits
   // no overlay. Their canonical profile slots still establish refresh ownership
   // after a process restart, when runtime-only provenance is no longer available.
-  for (const profileId of [CLAUDE_CLI_PROFILE_ID, MINIMAX_CLI_PROFILE_ID]) {
+  for (const profileId of listExternalCliProfileMetadataIds()) {
     if (
-      params.store.profiles[profileId]?.type === "oauth" &&
+      (params.store.profiles[profileId]?.type === "oauth" ||
+        configuredProfileIds.includes(profileId)) &&
       externalCliSync.isExternalCliAuthProfileInScope({
         store: params.store,
         profileId,
-        providerIds: params.externalCli?.externalCliProviderIds,
-        profileIds: params.externalCli?.externalCliProfileIds,
+        providerIds: externalCli?.externalCliProviderIds,
+        profileIds: externalCli?.externalCliProfileIds,
       })
     ) {
       runtimeExternalCliProfileIds.add(profileId);
@@ -222,9 +238,14 @@ function hasPersistableExternalCliSyncCandidate(
   if (params?.externalCliProviderIds || params?.externalCliProfileIds) {
     return true;
   }
-  for (const profileId of [CLAUDE_CLI_PROFILE_ID, MINIMAX_CLI_PROFILE_ID]) {
+  for (const profileId of listExternalCliProfileMetadataIds()) {
     const credential = store.profiles[profileId];
-    if (credential?.type === "oauth") {
+    if (
+      credential?.type === "oauth" ||
+      listConfiguredExternalCliProfileMetadataIds(params?.config?.auth?.profiles).includes(
+        profileId,
+      )
+    ) {
       return true;
     }
   }
@@ -290,10 +311,21 @@ export function syncPersistedExternalCliAuthProfiles(
   if (!hasPersistableExternalCliSyncCandidate(store, params)) {
     return store;
   }
+  const configuredProfileIds = listConfiguredExternalCliProfileMetadataIds(
+    params?.config?.auth?.profiles,
+  );
   const persistedProfiles = resolveAllowedExternalCliAuthProfiles({
     store,
     env: params?.env,
-    externalCli: params,
+    externalCli: configuredProfileIds.length
+      ? {
+          ...params,
+          externalCliProfileIds: [
+            ...(params?.externalCliProfileIds ?? []),
+            ...configuredProfileIds,
+          ],
+        }
+      : params,
   }).filter((profile) => profile.persistence === "persisted");
   if (persistedProfiles.length === 0) {
     return store;
