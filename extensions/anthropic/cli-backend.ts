@@ -263,7 +263,7 @@ export function buildAnthropicCliBackend(
         const isolatedCompletion = credentialContext.isolatedCompletionPrompt !== undefined;
         const env = {
           ...resolveClaudeCliAutoCompactEnv(context.contextTokenBudget),
-          ...resolveClaudeCliThinkingEnv(context.thinkingLevel),
+          ...resolveClaudeCliThinkingEnv(context.thinkingLevel, context.modelId),
           ...authInput?.env,
         };
         return Object.keys(env).length > 0 || isolatedCompletion

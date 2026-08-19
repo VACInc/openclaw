@@ -464,6 +464,7 @@ describe("resolveClaudeThinkingProfile", () => {
         preserveWhenCatalogReasoningFalse: true,
       });
       expectLevelIdsInclude(profile, ["xhigh", "adaptive", "max"]);
+      expect(readLevelIds(profile)).not.toContain("off");
     },
   );
 

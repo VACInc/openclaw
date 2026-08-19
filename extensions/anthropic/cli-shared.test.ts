@@ -75,8 +75,15 @@ describe("Claude CLI adapter equivalence", () => {
     ["off", { MAX_THINKING_TOKENS: "0" }],
     ["adaptive", undefined],
   ] as const)("maps %s thinking to Claude Code's process environment", (level, expected) => {
-    expect(resolveClaudeCliThinkingEnv(level)).toEqual(expected);
+    expect(resolveClaudeCliThinkingEnv(level, "claude-opus-4-8")).toEqual(expected);
   });
+
+  it.each(["off", "high", "max"] as const)(
+    "leaves mandatory-adaptive Fable thinking %s to Claude Code effort args",
+    (level) => {
+      expect(resolveClaudeCliThinkingEnv(level, "claude-fable-5")).toBeUndefined();
+    },
+  );
 
   it("privately acknowledges isolated completion preparation", () => {
     const backend = buildAnthropicCliBackend();
@@ -508,6 +515,19 @@ describe("resolveClaudeCliExecutionArgs", () => {
       ).toEqual(baseArgs);
     },
   );
+
+  it("defensively maps impossible Fable off requests to the lowest Claude effort", () => {
+    expect(
+      resolveClaudeCliExecutionArgs({
+        workspaceDir: "/tmp",
+        provider: "claude-cli",
+        modelId: "claude-fable-5",
+        thinkingLevel: "off",
+        useResume: false,
+        baseArgs: ["-p", "--effort", "high"],
+      }),
+    ).toEqual(["-p", "--effort", "low"]);
+  });
 
   it.each([
     ["minimal", "low"],
