@@ -8,6 +8,7 @@ import type { ProviderExternalAuthProfile } from "../../plugins/provider-externa
 import { resolveExternalAuthProfilesWithPlugins } from "../../plugins/provider-runtime.js";
 import { isAmbientCredentialAllowedByProviderAuthPin } from "./ambient-auth.js";
 import { cloneAuthProfileStore } from "./clone.js";
+import { hasUsableOAuthCredential } from "./credential-state.js";
 import {
   listConfiguredExternalCliProfileMetadataIds,
   listExternalCliProfileMetadataIds,
@@ -134,9 +135,13 @@ function resolveExternalAuthProfiles(params: {
   // no overlay. Their canonical profile slots still establish refresh ownership
   // after a process restart, when runtime-only provenance is no longer available.
   for (const profileId of listExternalCliProfileMetadataIds()) {
+    const credential = params.store.profiles[profileId];
+    const hasUsablePersistedCliCredential =
+      credential?.type === "oauth" &&
+      hasUsableOAuthCredential(credential) &&
+      Boolean(credential.accountId?.trim() || credential.email?.trim());
     if (
-      (params.store.profiles[profileId]?.type === "oauth" ||
-        configuredProfileIds.includes(profileId)) &&
+      (resolved.has(profileId) || hasUsablePersistedCliCredential) &&
       externalCliSync.isExternalCliAuthProfileInScope({
         store: params.store,
         profileId,

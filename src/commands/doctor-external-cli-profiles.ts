@@ -33,22 +33,21 @@ export function maybeMigrateExternalCliProfileMetadata(params: {
     return { changes: [], warnings: [], configChanged: false };
   }
 
-  let configChanged = false;
-  for (const profileId of profileIds) {
-    const current = profiles[profileId];
-    const canonical = normalizeExternalCliProfileMetadata(profileId, current);
-    if (!current || !canonical) {
-      continue;
-    }
-    if (current.provider !== canonical.provider || current.mode !== canonical.mode) {
-      profiles[profileId] = { ...current, ...canonical };
-      configChanged = true;
-    }
-  }
+  const pendingMetadata = new Map(
+    profileIds.flatMap((profileId) => {
+      const canonical = normalizeExternalCliProfileMetadata(profileId, profiles[profileId]);
+      return canonical ? [[profileId, canonical] as const] : [];
+    }),
+  );
+  const migrationSucceeded = new Map(
+    [...pendingMetadata.keys()].map((profileId) => [profileId, true]),
+  );
+  let candidateCount = 0;
 
   const changes: string[] = [];
   const warnings: string[] = [];
   for (const candidate of listAuthProfileRepairCandidates(params.cfg, env)) {
+    candidateCount += 1;
     const existing =
       loadPersistedAuthProfileStore(candidate.agentDir) ??
       ({ version: AUTH_STORE_VERSION, profiles: {} } as const);
@@ -56,8 +55,11 @@ export function maybeMigrateExternalCliProfileMetadata(params: {
       profileIds,
       allowKeychainPrompt: false,
     }).filter((profile) => profile.persistence === "persisted");
-    if (imported.length === 0) {
-      continue;
+    const importedProfileIds = new Set(imported.map((profile) => profile.profileId));
+    for (const profileId of pendingMetadata.keys()) {
+      if (!importedProfileIds.has(profileId)) {
+        migrationSucceeded.set(profileId, false);
+      }
     }
     const next = {
       ...existing,
@@ -66,26 +68,42 @@ export function maybeMigrateExternalCliProfileMetadata(params: {
         ...Object.fromEntries(imported.map((profile) => [profile.profileId, profile.credential])),
       },
     };
-    if (isDeepStrictEqual(next, existing)) {
-      continue;
-    }
     try {
-      runAuthProfileWriteTransaction(candidate.agentDir, (database) => {
-        const authoritative =
-          loadPersistedAuthProfileStore(candidate.agentDir, { database }) ??
-          ({ version: AUTH_STORE_VERSION, profiles: {} } as const);
-        if (!isDeepStrictEqual(authoritative, existing)) {
-          throw new Error("auth profile store changed during external CLI migration");
-        }
-        saveAuthProfileStore(next, candidate.agentDir, { syncExternalCli: false }, database);
-      });
-      changes.push(
-        `Migrated external CLI OAuth profile metadata for ${candidate.agentDir ?? "main"}.`,
-      );
+      if (!isDeepStrictEqual(next, existing)) {
+        runAuthProfileWriteTransaction(candidate.agentDir, (database) => {
+          const authoritative =
+            loadPersistedAuthProfileStore(candidate.agentDir, { database }) ??
+            ({ version: AUTH_STORE_VERSION, profiles: {} } as const);
+          if (!isDeepStrictEqual(authoritative, existing)) {
+            throw new Error("auth profile store changed during external CLI migration");
+          }
+          saveAuthProfileStore(next, candidate.agentDir, { syncExternalCli: false }, database);
+        });
+        changes.push(
+          `Persisted external CLI OAuth credentials for ${candidate.agentDir ?? "main"}.`,
+        );
+      }
     } catch (error) {
+      for (const profileId of importedProfileIds) {
+        migrationSucceeded.set(profileId, false);
+      }
       warnings.push(
         `Could not persist external CLI OAuth credentials for ${candidate.agentDir ?? "main"}: ${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+  }
+  let configChanged = false;
+  for (const [profileId, canonical] of pendingMetadata) {
+    if (candidateCount === 0 || !migrationSucceeded.get(profileId)) {
+      warnings.push(
+        `Kept legacy external CLI metadata for ${profileId}: OAuth credentials were not imported and saved for every auth profile store.`,
+      );
+      continue;
+    }
+    const current = profiles[profileId];
+    if (current && (current.provider !== canonical.provider || current.mode !== canonical.mode)) {
+      profiles[profileId] = { ...current, ...canonical };
+      configChanged = true;
     }
   }
   if (configChanged) {

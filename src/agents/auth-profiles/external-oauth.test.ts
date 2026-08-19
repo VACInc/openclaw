@@ -263,6 +263,24 @@ describe("auth external oauth helpers", () => {
     expect(getRuntimeExternalCliProfileIds(prepared)).toEqual([profileId]);
   });
 
+  it("does not retain CLI refresh ownership for an expired persisted Claude profile", () => {
+    const profileId = "anthropic:claude-cli";
+    const prepared = overlayExternalAuthProfiles(
+      createStore({
+        [profileId]: createCredential({
+          provider: "claude-cli",
+          access: "expired-claude-access",
+          refresh: "expired-claude-refresh",
+          expires: Date.now() - 60_000,
+          email: "stored@example.com",
+        }),
+      }),
+    );
+
+    expect(readClaudeCliCredentialsCachedMock).toHaveBeenCalledTimes(1);
+    expect(getRuntimeExternalCliProfileIds(prepared)).toEqual([]);
+  });
+
   it("preserves a plugin winner that collides with a built-in CLI profile id", () => {
     readCodexCliCredentialsCachedMock.mockReturnValue(
       createCredential({ access: "cli-access", refresh: "cli-refresh" }),

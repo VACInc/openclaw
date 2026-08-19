@@ -32,7 +32,7 @@ afterEach(() => vi.clearAllMocks());
 describe("external CLI auth profile doctor migration", () => {
   it("persists the CLI credential before canonicalizing legacy Claude metadata", () => {
     const profileId = "anthropic:claude-cli";
-    mocks.resolveExternalCliAuthProfiles.mockReturnValue([
+    mocks.resolveExternalCliAuthProfiles.mockReturnValueOnce([
       {
         profileId,
         persistence: "persisted",
@@ -67,5 +67,52 @@ describe("external CLI auth profile doctor migration", () => {
       {},
     );
     expect(result).toMatchObject({ configChanged: true, warnings: [] });
+  });
+
+  it("keeps legacy metadata when no current CLI credential can be persisted", () => {
+    const profileId = "anthropic:claude-cli";
+    const cfg = {
+      auth: { profiles: { [profileId]: { provider: "anthropic", mode: "token" } } },
+    } as OpenClawConfig;
+
+    const result = maybeMigrateExternalCliProfileMetadata({ cfg, env: {} });
+
+    expect(cfg.auth?.profiles?.[profileId]).toEqual({ provider: "anthropic", mode: "token" });
+    expect(mocks.saveStore).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ configChanged: false });
+    expect(result.warnings).toContain(
+      "Kept legacy external CLI metadata for anthropic:claude-cli: OAuth credentials were not imported and saved for every auth profile store.",
+    );
+  });
+
+  it("keeps legacy metadata when the credential store write fails", () => {
+    const profileId = "anthropic:claude-cli";
+    mocks.resolveExternalCliAuthProfiles.mockReturnValueOnce([
+      {
+        profileId,
+        persistence: "persisted",
+        credential: {
+          type: "oauth",
+          provider: "claude-cli",
+          access: "rotated-access",
+          refresh: "rotated-refresh",
+          expires: Date.now() + 60_000,
+        },
+      },
+    ]);
+    mocks.runTransaction.mockImplementationOnce(() => {
+      throw new Error("database unavailable");
+    });
+    const cfg = {
+      auth: { profiles: { [profileId]: { provider: "anthropic", mode: "token" } } },
+    } as OpenClawConfig;
+
+    const result = maybeMigrateExternalCliProfileMetadata({ cfg, env: {} });
+
+    expect(cfg.auth?.profiles?.[profileId]).toEqual({ provider: "anthropic", mode: "token" });
+    expect(result).toMatchObject({ configChanged: false });
+    expect(result.warnings).toContain(
+      "Could not persist external CLI OAuth credentials for /tmp/main: database unavailable",
+    );
   });
 });
