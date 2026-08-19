@@ -19,6 +19,7 @@ import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot
 import { isValidSecretRef } from "../secrets/ref-contract.js";
 import type { PreparedAgentCredentialModes } from "./agent-auth-credential-modes.js";
 import { hasUsableOAuthCredential } from "./auth-profiles/credential-state.js";
+import { normalizeExternalCliProfileMetadata } from "./auth-profiles/external-cli-profile-metadata.js";
 import {
   listExternalCliSyncProviderIds,
   resolveExternalCliAuthProfiles,
@@ -310,18 +311,20 @@ export function createModelAuthAvailabilityResolver(
   for (const profileId of externalCliRefreshProfileIds) {
     const credential = store.profiles[profileId];
     const configured = params.cfg.auth?.profiles?.[profileId];
+    const canonicalMetadata = normalizeExternalCliProfileMetadata(profileId, configured);
     if (
       credential?.type !== "oauth" ||
       !configured ||
-      (configured.provider === credential.provider && configured.mode === credential.type)
+      !canonicalMetadata ||
+      (configured.provider === canonicalMetadata.provider &&
+        configured.mode === canonicalMetadata.mode)
     ) {
       continue;
     }
     readOnlyAuthProfiles ??= { ...params.cfg.auth?.profiles };
     readOnlyAuthProfiles[profileId] = {
       ...configured,
-      provider: credential.provider,
-      mode: credential.type,
+      ...canonicalMetadata,
     };
   }
   const readOnlyAuthConfig = readOnlyAuthProfiles
