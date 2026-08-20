@@ -118,7 +118,6 @@ function resolveClaudeCliAuthInput(
 export function buildAnthropicCliBackend(
   options: {
     ensureDynamicSystemPromptSectionsSupport?: () => Promise<void>;
-    recordManagedSession?: (params: { sessionId: string; nodeId?: string }) => Promise<void>;
     supportsDynamicSystemPromptSections?: () => boolean;
   } = {},
 ): CliBackendPlugin {
@@ -252,7 +251,6 @@ export function buildAnthropicCliBackend(
     },
     normalizeConfig: normalizeClaudeBackendConfig,
     authEpochMode: "profile-only",
-    recordManagedSession: options.recordManagedSession,
     prepareExecution: (context) => {
       const prepare = () => {
         const credentialContext = context as typeof context & {

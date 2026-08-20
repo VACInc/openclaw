@@ -38,15 +38,6 @@ const CLAUDE_METADATA_PREFIX_BYTES = 1024 * 1024;
 const CLAUDE_METADATA_READ_CHUNK_BYTES = 16 * 1024;
 const MAX_CATALOG_METADATA_SCAN_BYTES = 64 * 1024 * 1024;
 const CLI_ENTRYPOINTS = new Set(["cli", "sdk-cli"]);
-const INBOUND_CONTEXT_MARKER = "⟦openclaw:ctx⟧";
-const INTER_SESSION_PROMPT_PREFIX = "[Inter-session message]";
-const CRON_PROMPT_PREFIX = "[cron:";
-const INTERNAL_PROMPT_MARKERS = [
-  "[System]",
-  "[Subagent Context]",
-  "[Subagent Task]",
-  "[Internal task completion event]",
-] as const;
 
 type CatalogDiscoveryCacheEntry = {
   // The module-global cache is keyed by canonical transcript path, so an entry must also record the
@@ -125,22 +116,7 @@ type DesktopPullRequestMetadata = {
 
 export type CatalogRecord = ClaudeSessionCatalogSession & {
   filePath: string;
-  /** Internal-only legacy provenance; never serialized into the catalog response. */
-  openClawManaged?: true;
 };
-
-function hasOpenClawManagedFirstPrompt(prompt: string): boolean {
-  return (
-    prompt.includes(INBOUND_CONTEXT_MARKER) ||
-    prompt.trimStart().startsWith(INTER_SESSION_PROMPT_PREFIX) ||
-    prompt.trimStart().startsWith(CRON_PROMPT_PREFIX) ||
-    INTERNAL_PROMPT_MARKERS.some((marker) => prompt.includes(marker))
-  );
-}
-
-function hasOpenClawInboundContext(fragments: readonly string[]): boolean {
-  return fragments.some(hasOpenClawManagedFirstPrompt);
-}
 
 function pullRequestState(value: unknown): SessionCatalogPullRequestSummary["state"] | undefined {
   if (typeof value !== "string") {
@@ -373,9 +349,6 @@ async function readIndexRecords(context: ClaudeSessionScanContext): Promise<{
         : {}),
       archived: false,
       filePath: safeFile.filePath,
-      ...(firstPrompt && hasOpenClawManagedFirstPrompt(firstPrompt)
-        ? { openClawManaged: true }
-        : {}),
     });
   }
   return { records, sidechainIds };
@@ -558,7 +531,6 @@ async function discoverCliRecords(
             : {}),
           archived: false,
           filePath,
-          ...(hasOpenClawInboundContext(fragments) ? { openClawManaged: true } : {}),
         });
         return true;
       };

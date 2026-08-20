@@ -38,7 +38,6 @@ const BINDING_LEASE_RENEW_INTERVAL_MS = Math.floor(BINDING_LEASE_STALE_MS / 3);
 // Physical session keys cannot have a successor generation. Retain their
 // retirement fence only long enough for bounded stale lease work to drain.
 const PHYSICAL_SESSION_RETIRE_TTL_MS = BINDING_LEASE_WAIT_MS;
-const STABLE_SESSION_RETIRE_TTL_MS = 30 * 24 * 60 * 60_000;
 
 type ProviderAuthAliasLookupParams = Parameters<typeof resolveProviderIdForAuth>[1];
 type ProviderAuthAliasConfig = NonNullable<ProviderAuthAliasLookupParams>["config"];
@@ -551,14 +550,8 @@ export function createStoredCodexAppServerBinding(
 
 type BindingStateStore = Pick<
   PluginStateSyncKeyedStore<StoredCodexAppServerBinding>,
-  "delete" | "entries" | "lookup" | "update"
+  "entries" | "lookup" | "update"
 >;
-
-function sessionRetirementTtlMs(key: string): number {
-  return key.startsWith("session-key:")
-    ? STABLE_SESSION_RETIRE_TTL_MS
-    : PHYSICAL_SESSION_RETIRE_TTL_MS;
-}
 
 type BindingLeaseOwner = {
   token: string;
@@ -572,8 +565,6 @@ function bindingLeaseLostError(key: string, cause?: unknown): Error {
 export type CodexAppServerBindingStore = {
   /** Durable ownership rows kept separate from replaceable session bindings. */
   managedThreads?: CodexManagedThreadStore;
-  /** Active OpenClaw-owned threads, excluding adopted native supervision sources. */
-  listActiveOrdinaryThreadIds?(): Promise<ReadonlySet<string>>;
   read(identity: CodexAppServerBindingIdentity): Promise<CodexAppServerThreadBinding | undefined>;
   hasOtherThreadOwner(
     threadId: string,
@@ -690,39 +681,12 @@ export function createCodexAppServerBindingStore(
   if (!update) {
     throw new Error("Codex app-server bindings require atomic plugin-state updates");
   }
-  try {
-    const now = Date.now();
-    for (const entry of state.entries()) {
-      const stored = readStoredCodexAppServerBinding(entry.value);
-      if (
-        entry.createdAt <= 0 ||
-        !entry.key.startsWith("session-key:") ||
-        stored?.state !== "cleared" ||
-        stored.retired !== true ||
-        (stored.lease?.expiresAt ?? 0) > now
-      ) {
-        continue;
-      }
-      const remaining = STABLE_SESSION_RETIRE_TTL_MS - (now - entry.createdAt);
-      if (remaining <= 0) {
-        state.delete(entry.key);
-        continue;
-      }
-      const { lease: _lease, ...retired } = stored;
-      update(entry.key, () => retired, { ttlMs: remaining });
-    }
-  } catch (error) {
-    // Startup cleanup is capacity maintenance, not binding authority. A cleanup
-    // failure must not make otherwise valid existing sessions unavailable.
-    embeddedAgentLog.warn("failed to apply Codex retired binding retention", { error });
-  }
   const leaseContext = new AsyncLocalStorage<Map<string, BindingLeaseOwner>>();
   const archiveContext = new AsyncLocalStorage<boolean>();
   let activeBindingMutations = 0;
   let pendingArchives = 0;
   let archiveTail = Promise.resolve();
   let bindingMutationsDrained: (() => void)[] = [];
-  let activeOrdinaryThreadIdsCache: ReadonlySet<string> | undefined;
 
   const waitForBindingMutations = async (): Promise<void> => {
     if (activeBindingMutations === 0) {
@@ -844,7 +808,6 @@ export function createCodexAppServerBindingStore(
         throw failure;
       }
       if (!busy) {
-        activeOrdinaryThreadIdsCache = undefined;
         return result;
       }
       if (Date.now() >= deadline) {
@@ -855,32 +818,6 @@ export function createCodexAppServerBindingStore(
   };
 
   return {
-    async listActiveOrdinaryThreadIds() {
-      if (activeOrdinaryThreadIdsCache) {
-        return activeOrdinaryThreadIdsCache;
-      }
-      const threadIds = new Set<string>();
-      for (const { key, value } of state.entries()) {
-        const stored = readStoredCodexAppServerBinding(value);
-        if (!stored) {
-          throw new Error(`Invalid Codex app-server binding row: ${key}`);
-        }
-        if (stored.state !== "active") {
-          continue;
-        }
-        const binding = stored.binding;
-        if (
-          binding.connectionScope === "supervision" &&
-          binding.threadId === binding.supervisionSourceThreadId
-        ) {
-          continue;
-        }
-        threadIds.add(binding.threadId);
-      }
-      activeOrdinaryThreadIdsCache = threadIds;
-      return activeOrdinaryThreadIdsCache;
-    },
-
     async read(identity) {
       const key = bindingStoreKey(identity);
       const raw = state.lookup(key);
@@ -1191,7 +1128,7 @@ export function createCodexAppServerBindingStore(
               },
             };
           },
-          sessionRetirementTtlMs(key),
+          identity.sessionKey?.trim() ? undefined : PHYSICAL_SESSION_RETIRE_TTL_MS,
         );
       });
     },
@@ -1299,7 +1236,7 @@ export function createCodexAppServerBindingStore(
                   raw,
                   (current) => current.state === "cleared" && current.retired === true,
                 ),
-              key.startsWith("session") ? { ttlMs: sessionRetirementTtlMs(key) } : undefined,
+              key.startsWith("session:") ? { ttlMs: PHYSICAL_SESSION_RETIRE_TTL_MS } : undefined,
             );
             if (!releasedRetired) {
               update(

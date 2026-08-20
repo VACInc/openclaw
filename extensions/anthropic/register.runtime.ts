@@ -13,7 +13,6 @@ import type {
   ProviderNormalizeResolvedModelContext,
   ProviderRuntimeModel,
 } from "openclaw/plugin-sdk/plugin-entry";
-import type { PluginStateSyncKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
 import {
   applyAuthProfileConfig,
   type AuthProfileStore,
@@ -65,16 +64,9 @@ import {
   normalizeAnthropicProviderConfigForProvider,
 } from "./config-defaults.js";
 import { acceptsAnthropicLiveModelContract } from "./live-model-contract-gate.js";
-import {
-  CLAUDE_MANAGED_SESSION_MAX_ENTRIES,
-  CLAUDE_MANAGED_SESSION_NAMESPACE,
-  createClaudeManagedSessionStore,
-  type StoredClaudeManagedSession,
-} from "./managed-session-store.js";
 import { anthropicMediaUnderstandingProvider } from "./media-understanding-provider.js";
 import manifest from "./openclaw.plugin.json" with { type: "json" };
 import { resolveClaudeCliSyntheticAuth } from "./provider-discovery.js";
-import { CLAUDE_LOCAL_SESSION_HOST_ID } from "./session-catalog-adoption.js";
 import {
   createClaudeSessionNodeInvokePolicies,
   registerClaudeSessionDiscovery,
@@ -1207,19 +1199,6 @@ export function buildAnthropicProvider(): ProviderPlugin {
 
 /** Register Anthropic provider, Claude CLI backend, and media understanding provider. */
 export function registerAnthropicPlugin(api: OpenClawPluginApi): void {
-  let managedSessionState: PluginStateSyncKeyedStore<StoredClaudeManagedSession> | undefined;
-  const openManagedSessionState = () =>
-    (managedSessionState ??= api.runtime.state.openSyncKeyedStore<StoredClaudeManagedSession>({
-      namespace: CLAUDE_MANAGED_SESSION_NAMESPACE,
-      maxEntries: CLAUDE_MANAGED_SESSION_MAX_ENTRIES,
-      // Catalog-only ownership is bounded independently from other Anthropic state. If the oldest
-      // row is evicted, modern local transcripts are rediscovered from their opening provenance.
-      overflowPolicy: "evict-oldest",
-    }));
-  const managedSessions = createClaudeManagedSessionStore({
-    entries: () => openManagedSessionState().entries(),
-    registerIfAbsent: (key, value) => openManagedSessionState().registerIfAbsent(key, value),
-  });
   let supportsDynamicSystemPromptSections = false;
   // Start once at plugin load. The first Claude execution awaits the same promise,
   // so a post-ready gateway hook cannot race the first session's immutable argv.
@@ -1239,18 +1218,12 @@ export function registerAnthropicPlugin(api: OpenClawPluginApi): void {
   api.registerCliBackend(
     buildAnthropicCliBackend({
       ensureDynamicSystemPromptSectionsSupport: () => dynamicSystemPromptSectionsProbe,
-      recordManagedSession: async ({ sessionId, nodeId }) => {
-        await managedSessions.mark({
-          hostId: nodeId ? `node:${nodeId}` : CLAUDE_LOCAL_SESSION_HOST_ID,
-          sessionId,
-        });
-      },
       supportsDynamicSystemPromptSections: () => supportsDynamicSystemPromptSections,
     }),
   );
   api.registerProvider(buildAnthropicProvider());
   api.registerMediaUnderstandingProvider(anthropicMediaUnderstandingProvider);
-  registerClaudeSessionDiscovery(api, managedSessions);
+  registerClaudeSessionDiscovery(api);
   for (const policy of createClaudeSessionNodeInvokePolicies()) {
     api.registerNodeInvokePolicy(policy);
   }

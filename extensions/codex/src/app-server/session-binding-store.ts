@@ -18,7 +18,7 @@ export type { StoredCodexAppServerBinding } from "./session-binding.js";
 export function createLazyCodexAppServerBindingStore(
   state: Pick<
     PluginStateSyncKeyedStore<StoredCodexAppServerBinding>,
-    "delete" | "entries" | "lookup" | "update"
+    "entries" | "lookup" | "update"
   >,
   managedThreadState?: Pick<
     PluginStateSyncKeyedStore<StoredCodexManagedThread>,
@@ -35,8 +35,6 @@ export function createLazyCodexAppServerBindingStore(
     : undefined;
   return {
     ...(managedThreads ? { managedThreads } : {}),
-    listActiveOrdinaryThreadIds: async () =>
-      (await store()).listActiveOrdinaryThreadIds?.() ?? new Set(),
     read: async (identity) => (await store()).read(identity),
     hasOtherThreadOwner: async (threadId, currentIdentity) =>
       (await store()).hasOtherThreadOwner(threadId, currentIdentity),

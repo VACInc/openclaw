@@ -298,21 +298,6 @@ export async function executePreparedCliRun(
   let forkResumeClaimed = false;
   let forkSuccessorObserved = false;
   let forkSuccessorPersistence: Promise<void> | undefined;
-  const recordManagedSession = async (sessionId: string) => {
-    if (params.controlOperation || params.isolatedCompletion) {
-      return;
-    }
-    try {
-      await context.backendResolved.recordManagedSession?.({
-        sessionId,
-        ...(nodePlacement ? { nodeId: nodePlacement.nodeId } : {}),
-      });
-    } catch (error) {
-      // Provider ownership is catalog bookkeeping, not execution authority. A stale duplicate
-      // catalog row is preferable to rejecting a provider session that can otherwise run.
-      cliBackendLog.warn(`cli managed-session bookkeeping failed: ${formatErrorMessage(error)}`);
-    }
-  };
   const observeForkSuccessor = (sessionId: string) => {
     if (
       forkSuccessorObserved ||
@@ -323,9 +308,7 @@ export async function executePreparedCliRun(
       return;
     }
     forkSuccessorObserved = true;
-    forkSuccessorPersistence = recordManagedSession(sessionId).then(async () => {
-      await params.persistCliSessionForkSuccessor?.(sessionId);
-    });
+    forkSuccessorPersistence = params.persistCliSessionForkSuccessor?.(sessionId);
     void forkSuccessorPersistence?.catch(() => undefined);
   };
   const finishForkSuccessorPersistence = async () => {
@@ -613,9 +596,6 @@ export async function executePreparedCliRun(
     });
   };
   try {
-    if (!useResume && resolvedSessionId) {
-      await recordManagedSession(resolvedSessionId);
-    }
     completedOutput = await enqueueCliRun(queueKey, async () => {
       if (params.abortSignal?.aborted) {
         throw createCliAbortError();
@@ -640,13 +620,6 @@ export async function executePreparedCliRun(
     });
     if (completedOutput.sessionId) {
       observeForkSuccessor(completedOutput.sessionId);
-    }
-    if (
-      !useResume &&
-      completedOutput.sessionId &&
-      completedOutput.sessionId !== resolvedSessionId
-    ) {
-      await recordManagedSession(completedOutput.sessionId);
     }
     await finishForkSuccessorPersistence();
     if (forkResumeClaimed && !forkSuccessorObserved) {

@@ -75,6 +75,7 @@ async function listVisiblePage(params: {
   let backwardsCursor: string | undefined;
   const seenCursors = new Set<string>();
   for (let pageIndex = 0; pageIndex < MAX_TITLE_SEARCH_CATALOG_PAGES; pageIndex += 1) {
+    let excludedFromPage = false;
     const rawPage = await params.control.listPage({
       limit: params.limit - sessions.length,
       ...(cursor ? { cursor } : {}),
@@ -86,6 +87,7 @@ async function listVisiblePage(params: {
       backwardsCursor = page.backwardsCursor;
     }
     for (const managed of rawPage.managedThreads ?? []) {
+      excludedFromPage = true;
       await params.onExcludedThread?.(managed);
     }
     for (const session of page.sessions) {
@@ -93,10 +95,11 @@ async function listVisiblePage(params: {
         sessions.push(session);
         continue;
       }
+      excludedFromPage = true;
       await params.onExcludedThread?.({ threadId: session.threadId });
     }
     nextCursor = page.nextCursor;
-    if (!nextCursor || sessions.length >= params.limit) {
+    if (!nextCursor || sessions.length >= params.limit || !excludedFromPage) {
       break;
     }
     if (seenCursors.has(nextCursor)) {
@@ -110,19 +113,6 @@ async function listVisiblePage(params: {
     ...(nextCursor ? { nextCursor } : {}),
     ...(backwardsCursor ? { backwardsCursor } : {}),
   };
-}
-
-function mergeThreadIds(
-  ...sets: Array<ReadonlySet<string> | undefined>
-): ReadonlySet<string> | undefined {
-  const populated = sets.filter((set): set is ReadonlySet<string> => Boolean(set?.size));
-  if (populated.length === 0) {
-    return undefined;
-  }
-  if (populated.length === 1) {
-    return populated[0]!;
-  }
-  return new Set(populated.flatMap((set) => Array.from(set)));
 }
 
 async function listGatewayHost(params: {
@@ -217,10 +207,7 @@ export async function listCodexSessionCatalog(params: {
     (!requestedHostIds || requestedHostIds.has(CODEX_LOCAL_SESSION_HOST_ID))
       ? [undefined]
       : []);
-  const [managedThreads, activeOrdinaryThreadIds] = await Promise.all([
-    params.bindingStore.managedThreads?.snapshot(),
-    params.bindingStore.listActiveOrdinaryThreadIds?.(),
-  ]);
+  const managedThreads = await params.bindingStore.managedThreads?.snapshot();
   const fallbackSource = params.control.homesForAgent(agentId)[0];
   const localHosts = localSources.map((source) =>
     (() => {
@@ -236,7 +223,7 @@ export async function listCodexSessionCatalog(params: {
         query,
         runtime: params.runtime,
         sessionEntries: params.sessionEntries,
-        excludedThreadIds: mergeThreadIds(managedThreadIds, activeOrdinaryThreadIds),
+        excludedThreadIds: managedThreadIds,
         ...(ownershipSource && params.bindingStore.managedThreads
           ? {
               onExcludedThread: async ({ threadId, rolloutPath }) => {
@@ -346,17 +333,14 @@ export function createCodexSessionCatalogNodeHostCommands(
         const request = bindRequest(paramsJSON);
         const pageParams = readPageParams(request.params);
         try {
-          const [managedThreads, activeOrdinaryThreadIds] = await Promise.all([
-            bindingStore?.managedThreads?.snapshot(),
-            bindingStore?.listActiveOrdinaryThreadIds?.(),
-          ]);
+          const managedThreads = await bindingStore?.managedThreads?.snapshot();
           const sourceHomeId = request.sourceHomeId;
           const managedThreadIds = sourceHomeId ? managedThreads?.get(sourceHomeId) : undefined;
           const page = await listVisiblePage({
             control: request.control,
             cursor: pageParams.cursor,
             cwd: pageParams.cwd,
-            excludedThreadIds: mergeThreadIds(managedThreadIds, activeOrdinaryThreadIds),
+            excludedThreadIds: managedThreadIds,
             limit: pageParams.limit,
             ...(sourceHomeId && bindingStore?.managedThreads
               ? {

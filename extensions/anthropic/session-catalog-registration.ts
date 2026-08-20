@@ -13,7 +13,6 @@ import type {
 } from "openclaw/plugin-sdk/plugin-entry";
 import type { SessionCatalogProvider } from "openclaw/plugin-sdk/session-catalog";
 import { CLAUDE_CLI_BACKEND_ID, CLAUDE_CLI_ROUTE_PROBE_MODEL_IDS } from "./cli-constants.js";
-import type { ClaudeManagedSessionStore } from "./managed-session-store.js";
 import { resolveClaudeTerminalExecutable } from "./session-catalog-executable.js";
 import {
   CLAUDE_CLI_NODE_RUN_COMMAND,
@@ -58,13 +57,10 @@ function currentConfig(api: OpenClawPluginApi): OpenClawConfig {
   return (api.runtime.config?.current?.() ?? api.config ?? {}) as OpenClawConfig;
 }
 
-function registerClaudeSessionCatalog(
-  api: OpenClawPluginApi,
-  managedSessions?: ClaudeManagedSessionStore,
-): void {
+function registerClaudeSessionCatalog(api: OpenClawPluginApi): void {
   const loadCatalogRuntime = createLazyRuntimeSurface(
     () => import("./session-catalog.js"),
-    (module) => module.createClaudeSessionCatalogRuntime(api, managedSessions),
+    (module) => module.createClaudeSessionCatalogRuntime(api),
   );
   const provider: SessionCatalogProvider = {
     id: "claude",
@@ -137,14 +133,11 @@ export function createClaudeSessionNodeInvokePolicies(): OpenClawPluginNodeInvok
   ];
 }
 
-export function registerClaudeSessionDiscovery(
-  api: OpenClawPluginApi,
-  managedSessions?: ClaudeManagedSessionStore,
-): void {
+export function registerClaudeSessionDiscovery(api: OpenClawPluginApi): void {
   if (!isClaudeSessionCatalogEnabled(api.pluginConfig)) {
     return;
   }
-  registerClaudeSessionCatalog(api, managedSessions);
+  registerClaudeSessionCatalog(api);
   for (const command of createClaudeSessionNodeHostCommands()) {
     api.registerNodeHostCommand(command);
   }

@@ -799,7 +799,7 @@ describe("Codex app-server binding store", () => {
     expect(values.size).toBe(0);
   });
 
-  it("expires physical and bounded stable-key retirement fences", async () => {
+  it("expires physical-session retirement fences but retains stable-key fences", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-13T00:00:00.000Z"));
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-codex-binding-state-"));
@@ -845,40 +845,6 @@ describe("Codex app-server binding store", () => {
         state: "cleared",
         retired: true,
       });
-
-      vi.advanceTimersByTime(31 * 24 * 60 * 60_000);
-
-      expect(state.lookup(bindingStoreKey(stable))).toBeUndefined();
-    } finally {
-      resetPluginStateStoreForTests();
-      fs.rmSync(stateDir, { recursive: true, force: true });
-    }
-  });
-
-  it("prunes pre-existing retired stable-key rows on store open", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-06-01T00:00:00.000Z"));
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-codex-binding-state-"));
-    try {
-      const state = createPluginStateSyncKeyedStoreForTests<StoredCodexAppServerBinding>("codex", {
-        namespace: "app-server-thread-bindings-retention-upgrade-test",
-        maxEntries: CODEX_APP_SERVER_BINDING_MAX_ENTRIES,
-        overflowPolicy: "reject-new",
-        env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
-      });
-      const retired = { version: 1, state: "cleared", retired: true } as const;
-      const oldKey = "session-key:main:old";
-      const recentKey = "session-key:main:recent";
-      state.register(oldKey, retired);
-      vi.advanceTimersByTime(31 * 24 * 60 * 60_000);
-      state.register(recentKey, retired);
-
-      createCodexAppServerBindingStore(state);
-
-      expect(state.lookup(oldKey)).toBeUndefined();
-      expect(state.lookup(recentKey)).toEqual(retired);
-      vi.advanceTimersByTime(31 * 24 * 60 * 60_000);
-      expect(state.lookup(recentKey)).toBeUndefined();
     } finally {
       resetPluginStateStoreForTests();
       fs.rmSync(stateDir, { recursive: true, force: true });

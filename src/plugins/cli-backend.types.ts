@@ -399,11 +399,6 @@ type CliBackendPluginBase = {
     | null
     | undefined;
   /**
-   * Persist provider-owned provenance before a fresh native session or fork
-   * successor becomes reusable. Resuming an adopted native session skips it.
-   */
-  recordManagedSession?: (ctx: { sessionId: string; nodeId?: string }) => Promise<void> | void;
-  /**
    * Backend-owned per-run argv rewrite.
    *
    * Use this for request-scoped CLI dialect flags that should not be modeled

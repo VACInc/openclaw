@@ -27,7 +27,12 @@ import {
 } from "./app-server/shared-client.js";
 import { codexControlRequest } from "./command-rpc.js";
 import { createCodexCatalogHomeResolver, type CodexCatalogHome } from "./session-catalog-homes.js";
-import { normalizeLimit, readControlCursor, toCatalogSession } from "./session-catalog-parsing.js";
+import {
+  MAX_TITLE_SEARCH_CATALOG_PAGES,
+  normalizeLimit,
+  readControlCursor,
+  toCatalogSession,
+} from "./session-catalog-parsing.js";
 import { isOpenClawManagedCodexThread } from "./session-catalog-provenance.js";
 import type {
   CodexSessionCatalogControl,
@@ -128,40 +133,62 @@ function createCodexSessionCatalogControlFromRequests(params: {
       // without that filter so this catalog remains a title-only surface.
       const search = pageParams.searchTerm?.trim().toLocaleLowerCase() || undefined;
       const cwd = pageParams.cwd?.trim() || undefined;
+      const maxPages = search ? MAX_TITLE_SEARCH_CATALOG_PAGES : 1;
       const sessions: CodexSessionCatalogSession[] = [];
       const managedThreads: Array<{ threadId: string; rolloutPath?: string }> = [];
-      const cursor = readControlCursor(pageParams.cursor, "request");
+      let cursor = readControlCursor(pageParams.cursor, "request");
+      let nextCursor: string | undefined;
+      let backwardsCursor: string | undefined;
+      const seenCursors = new Set(cursor ? [cursor] : []);
       const requests = params.createRequestSnapshot();
-      const response = await requests.listThreads(
-        {
-          archived: false,
-          limit,
-          modelProviders: [],
-          // Match Codex's resume picker/latest-session ordering so a session
-          // created outside OpenClaw enters the first catalog page immediately.
-          sortKey: "updated_at",
-          sortDirection: "desc",
-          ...(cwd ? { cwd } : {}),
-          ...(cursor ? { cursor } : {}),
-        },
-        requests.requestTimeoutMs,
-      );
-      for (const thread of response.data) {
-        if (await isOpenClawManagedCodexThread(thread)) {
-          const rolloutPath = typeof thread.path === "string" ? thread.path.trim() : "";
-          managedThreads.push({
-            threadId: thread.id,
-            ...(rolloutPath ? { rolloutPath } : {}),
-          });
-          continue;
+      const deadline = params.now() + requests.requestTimeoutMs;
+
+      for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+        const remainingTimeoutMs = Math.ceil(deadline - params.now());
+        if (remainingTimeoutMs <= 0) {
+          throw new Error("Codex session catalog listing timed out");
         }
-        const session = toCatalogSession(thread, false);
-        if (session && (!search || session.name?.toLocaleLowerCase().includes(search))) {
-          sessions.push(session);
+        const response = await requests.listThreads(
+          {
+            archived: false,
+            limit: limit - sessions.length,
+            modelProviders: [],
+            // Match Codex's resume picker/latest-session ordering so a session
+            // created outside OpenClaw enters the first catalog page immediately.
+            sortKey: "updated_at",
+            sortDirection: "desc",
+            ...(cwd ? { cwd } : {}),
+            ...(cursor ? { cursor } : {}),
+          },
+          remainingTimeoutMs,
+        );
+        if (pageIndex === 0) {
+          backwardsCursor = readControlCursor(response.backwardsCursor, "backwards response");
         }
+        for (const thread of response.data) {
+          if (await isOpenClawManagedCodexThread(thread)) {
+            const rolloutPath = typeof thread.path === "string" ? thread.path.trim() : "";
+            managedThreads.push({
+              threadId: thread.id,
+              ...(rolloutPath ? { rolloutPath } : {}),
+            });
+            continue;
+          }
+          const session = toCatalogSession(thread, false);
+          if (session && (!search || session.name?.toLocaleLowerCase().includes(search))) {
+            sessions.push(session);
+          }
+        }
+        nextCursor = readControlCursor(response.nextCursor, "next response");
+        if (!nextCursor || sessions.length >= limit) {
+          break;
+        }
+        if (seenCursors.has(nextCursor)) {
+          throw new Error("Codex session catalog returned a repeated search cursor");
+        }
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
       }
-      const nextCursor = readControlCursor(response.nextCursor, "next response");
-      const backwardsCursor = readControlCursor(response.backwardsCursor, "backwards response");
       return {
         sessions,
         ...(managedThreads.length > 0 ? { managedThreads } : {}),
