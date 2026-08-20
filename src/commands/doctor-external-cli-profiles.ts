@@ -59,9 +59,15 @@ export function maybeMigrateExternalCliProfileMetadata(params: {
       allowKeychainPrompt: false,
     }).filter((profile) => profile.persistence === "persisted");
     const importedProfileIds = new Set(imported.map((profile) => profile.profileId));
+    const importedCredentials = new Map(
+      imported.map((profile) => [profile.profileId, profile.credential] as const),
+    );
     for (const profileId of pendingMetadata.keys()) {
       if (
-        !importedProfileIds.has(profileId) &&
+        !isUsablePersistedExternalCliProfileCredential(
+          profileId,
+          importedCredentials.get(profileId),
+        ) &&
         !isUsablePersistedExternalCliProfileCredential(profileId, existing.profiles[profileId])
       ) {
         migrationSucceeded.set(profileId, false);
@@ -102,7 +108,7 @@ export function maybeMigrateExternalCliProfileMetadata(params: {
   for (const [profileId, canonical] of pendingMetadata) {
     if (candidateCount === 0 || !migrationSucceeded.get(profileId)) {
       warnings.push(
-        `Kept legacy external CLI metadata for ${profileId}: OAuth credentials were not imported and saved for every auth profile store.`,
+        `Kept legacy external CLI metadata for ${profileId}: identity-complete OAuth credentials were not saved for every auth profile store.`,
       );
       continue;
     }

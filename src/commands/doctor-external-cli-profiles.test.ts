@@ -43,6 +43,7 @@ describe("external CLI auth profile doctor migration", () => {
           access: "rotated-access",
           refresh: "rotated-refresh",
           expires: Date.now() + 30 * 60_000,
+          email: "stored@example.com",
         },
       },
     ]);
@@ -70,6 +71,44 @@ describe("external CLI auth profile doctor migration", () => {
     expect(result).toMatchObject({ configChanged: true, warnings: [] });
   });
 
+  it("keeps legacy metadata when the imported CLI credential has no identity", () => {
+    const profileId = "anthropic:claude-cli";
+    mocks.resolveExternalCliAuthProfiles.mockReturnValueOnce([
+      {
+        profileId,
+        persistence: "persisted",
+        credential: {
+          type: "oauth",
+          provider: "claude-cli",
+          access: "rotated-access",
+          refresh: "rotated-refresh",
+          expires: Date.now() + 30 * 60_000,
+        },
+      },
+    ]);
+    const cfg = {
+      auth: { profiles: { [profileId]: { provider: "anthropic", mode: "token" } } },
+    } as OpenClawConfig;
+
+    const result = maybeMigrateExternalCliProfileMetadata({ cfg, env: {} });
+
+    expect(cfg.auth?.profiles?.[profileId]).toEqual({ provider: "anthropic", mode: "token" });
+    expect(mocks.saveStore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profiles: expect.objectContaining({
+          [profileId]: expect.objectContaining({ type: "oauth" }),
+        }),
+      }),
+      "/tmp/main",
+      { syncExternalCli: false },
+      {},
+    );
+    expect(result).toMatchObject({ configChanged: false });
+    expect(result.warnings).toContain(
+      "Kept legacy external CLI metadata for anthropic:claude-cli: identity-complete OAuth credentials were not saved for every auth profile store.",
+    );
+  });
+
   it("keeps legacy metadata when no current CLI credential can be persisted", () => {
     const profileId = "anthropic:claude-cli";
     const cfg = {
@@ -82,7 +121,7 @@ describe("external CLI auth profile doctor migration", () => {
     expect(mocks.saveStore).not.toHaveBeenCalled();
     expect(result).toMatchObject({ configChanged: false });
     expect(result.warnings).toContain(
-      "Kept legacy external CLI metadata for anthropic:claude-cli: OAuth credentials were not imported and saved for every auth profile store.",
+      "Kept legacy external CLI metadata for anthropic:claude-cli: identity-complete OAuth credentials were not saved for every auth profile store.",
     );
   });
 

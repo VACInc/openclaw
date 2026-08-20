@@ -245,6 +245,59 @@ describe("auth external oauth helpers", () => {
     expect(getRuntimeExternalCliProfileIds(restarted)).toEqual([profileId]);
   });
 
+  it("recovers an identity-less persisted Claude profile after restart and access expiry", () => {
+    const profileId = "anthropic:claude-cli";
+    const config = {
+      auth: { profiles: { [profileId]: { provider: "anthropic", mode: "token" as const } } },
+    };
+    const restarted = overlayExternalAuthProfiles(
+      createStore({
+        [profileId]: createCredential({
+          provider: "claude-cli",
+          access: "persisted-access",
+          refresh: "persisted-refresh",
+          expires: createUsableOAuthExpiry(),
+        }),
+      }),
+      { config },
+    );
+
+    expect(getRuntimeExternalCliProfileIds(restarted)).toEqual([]);
+
+    readClaudeCliCredentialsCachedMock.mockReset().mockReturnValueOnce(
+      createCredential({
+        provider: "anthropic",
+        access: "rotated-access",
+        refresh: "rotated-refresh",
+        expires: createUsableOAuthExpiry(),
+      }),
+    );
+    const recovered = overlayExternalAuthProfiles(
+      {
+        ...restarted,
+        profiles: {
+          ...restarted.profiles,
+          [profileId]: {
+            ...restarted.profiles[profileId],
+            type: "oauth",
+            provider: "claude-cli",
+            access: "persisted-access",
+            refresh: "persisted-refresh",
+            expires: Date.now() - 60_000,
+          },
+        },
+      },
+      { config },
+    );
+
+    expect(recovered.profiles[profileId]).toMatchObject({
+      provider: "claude-cli",
+      access: "rotated-access",
+      refresh: "rotated-refresh",
+    });
+    expect(getRuntimeExternalCliProfileIds(recovered)).toEqual([profileId]);
+  });
+
   it("restores runtime CLI ownership for a steady-state persisted Claude profile", () => {
     const profileId = "anthropic:claude-cli";
     const prepared = overlayExternalAuthProfiles(
