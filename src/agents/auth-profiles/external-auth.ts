@@ -129,7 +129,9 @@ function resolveExternalAuthProfiles(params: {
     : params.externalCli;
   const resolved = resolveExternalCliAuthProfileMap({ ...params, externalCli });
   const runtimeExternalCliProfileIds = new Set(
-    [...resolved.values()].map((profile) => profile.profileId),
+    [...resolved.values()]
+      .filter((profile) => profile.persistence !== "persisted")
+      .map((profile) => profile.profileId),
   );
   // A persisted Claude CLI profile may be usable and identity-complete, in which
   // case its resolver intentionally avoids rereading the CLI and emits no overlay.

@@ -304,6 +304,35 @@ describe("auth external oauth helpers", () => {
     expect(readMiniMaxCliCredentialsCachedMock).toHaveBeenCalledOnce();
   });
 
+  it("refreshes persisted MiniMax without granting runtime CLI ownership", () => {
+    const profileId = "minimax-portal:minimax-cli";
+    readMiniMaxCliCredentialsCachedMock.mockReturnValueOnce(
+      createCredential({
+        provider: "minimax-portal",
+        access: "fresh-minimax-access",
+        refresh: "fresh-minimax-refresh",
+        expires: createUsableOAuthExpiry(),
+      }),
+    );
+
+    const prepared = overlayExternalAuthProfiles(
+      createStore({
+        [profileId]: createCredential({
+          provider: "minimax-portal",
+          access: "expired-minimax-access",
+          refresh: "expired-minimax-refresh",
+          expires: Date.now() - 60_000,
+        }),
+      }),
+    );
+
+    expect(prepared.profiles[profileId]).toMatchObject({
+      access: "fresh-minimax-access",
+      refresh: "fresh-minimax-refresh",
+    });
+    expect(getRuntimeExternalCliProfileIds(prepared)).toEqual([]);
+  });
+
   it("recovers an identity-less persisted Claude profile after restart and access expiry", () => {
     const profileId = "anthropic:claude-cli";
     const config = {

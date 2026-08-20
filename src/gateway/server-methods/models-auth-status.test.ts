@@ -763,6 +763,50 @@ describe("models.authStatus", () => {
     expect(provider).toMatchObject({ provider: "claude-cli", status: "expired" });
   });
 
+  it("keeps persisted MiniMax CLI OAuth expiry visible", async () => {
+    const profileId = "minimax-portal:minimax-cli";
+    const profile = {
+      profileId,
+      provider: "minimax-portal",
+      type: "oauth",
+      status: "expired",
+      expiresAt: 1,
+      remainingMs: -1,
+      source: "store",
+      label: profileId,
+    } satisfies AuthHealthSummary["profiles"][number];
+    setPreparedAuthStore({
+      version: 1,
+      profiles: {
+        [profileId]: {
+          type: "oauth",
+          provider: "minimax-portal",
+          access: "expired-access",
+          refresh: "persisted-refresh",
+          expires: 1,
+        },
+      },
+    });
+    mocks.buildAuthHealthSummary.mockReturnValue({
+      now: 2,
+      warnAfterMs: 0,
+      profiles: [profile],
+      providers: [
+        {
+          provider: "minimax-portal",
+          status: "expired",
+          expiresAt: 1,
+          remainingMs: -1,
+          profiles: [profile],
+        },
+      ],
+    });
+
+    const provider = await firstAuthStatusProvider();
+
+    expect(provider).toMatchObject({ provider: "minimax-portal", status: "expired" });
+  });
+
   it("does not publish a synthetic Anthropic missing row beside owned Claude CLI OAuth", async () => {
     const profileId = "anthropic:claude-cli";
     mocks.getRuntimeConfig.mockReturnValue({
