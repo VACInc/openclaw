@@ -1,15 +1,73 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, expect, test, vi } from "vitest";
-import { createDeferred } from "../../test/helpers/promise.js";
-import { clearConfigCache } from "../config/config.js";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { clearConfigCache, getRuntimeConfig } from "../config/config.js";
 import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
 import { installGatewayTestHooks, rpcReq, startConnectedServerWithClient } from "./test-helpers.js";
 
-installGatewayTestHooks();
+installGatewayTestHooks({ scope: "suite" });
+
+type ConnectedGateway = Awaited<ReturnType<typeof startConnectedServerWithClient>>;
+
+let gateway: ConnectedGateway | undefined;
+let minimalGatewayEnv: ReturnType<typeof captureEnv> | undefined;
+let preparedOwnerCaptureMiss = false;
+let resolvePreparedOwnerCaptureMiss: (() => void) | undefined;
+let restorePreparedOwnerSpy: (() => void) | undefined;
+
+function requireGateway(): ConnectedGateway {
+  if (!gateway) {
+    throw new Error("chat metadata Gateway is not ready");
+  }
+  return gateway;
+}
+
+beforeAll(async () => {
+  minimalGatewayEnv = captureEnv(["OPENCLAW_TEST_MINIMAL_GATEWAY"]);
+  const preparedModelCatalog = await import("../agents/prepared-model-catalog.js");
+  const originalGetPreparedOwner = preparedModelCatalog.getPreparedModelCatalogOwnerSnapshot;
+  const preparedOwnerSpy = vi
+    .spyOn(preparedModelCatalog, "getPreparedModelCatalogOwnerSnapshot")
+    .mockImplementation((params) => {
+      if (preparedOwnerCaptureMiss) {
+        resolvePreparedOwnerCaptureMiss?.();
+        return undefined;
+      }
+      return originalGetPreparedOwner(params);
+    });
+  restorePreparedOwnerSpy = () => preparedOwnerSpy.mockRestore();
+  // The production lifecycle has no refresh-on-read escape hatch. This must stay non-minimal,
+  // otherwise the old sticky behavior is hidden by the test-only lifecycle configuration.
+  setTestEnvValue("OPENCLAW_TEST_MINIMAL_GATEWAY", "0");
+  await writeGatewayConfig(CHAT_METADATA_BOUNDARY_CONFIG);
+  gateway = await startConnectedServerWithClient();
+  await gateway.server.startupSettled;
+}, 60_000);
+
+beforeEach(async () => {
+  setTestEnvValue("OPENCLAW_TEST_MINIMAL_GATEWAY", "0");
+  await writeGatewayConfig(CHAT_METADATA_BOUNDARY_CONFIG);
+  const { refreshPreparedModelRuntimeSnapshots } =
+    await import("../agents/prepared-model-runtime.js");
+  await refreshPreparedModelRuntimeSnapshots(getRuntimeConfig(), { gatewayLifecycle: true });
+  const ready = await rpcReq(requireGateway().ws, "chat.metadata", { agentId: "main" });
+  expect(ready.ok, JSON.stringify(ready)).toBe(true);
+});
 
 afterEach(() => {
-  vi.restoreAllMocks();
+  preparedOwnerCaptureMiss = false;
+  resolvePreparedOwnerCaptureMiss = undefined;
+});
+
+afterAll(async () => {
+  if (gateway) {
+    gateway.ws.close();
+    await gateway.server.close();
+    gateway.envSnapshot.restore();
+  }
+  restorePreparedOwnerSpy?.();
+  clearConfigCache();
+  minimalGatewayEnv?.restore();
 });
 
 const CHAT_METADATA_BOUNDARY_CONFIG = {
@@ -40,112 +98,78 @@ async function writeGatewayConfig(config: Record<string, unknown>) {
   clearConfigCache();
 }
 
-async function withProductionChatMetadataGateway(
-  run: (ws: Awaited<ReturnType<typeof startConnectedServerWithClient>>["ws"]) => Promise<void>,
-) {
-  const envSnapshot = captureEnv(["OPENCLAW_TEST_MINIMAL_GATEWAY"]);
-  let started: Awaited<ReturnType<typeof startConnectedServerWithClient>> | undefined;
-  try {
-    // The production lifecycle has no refresh-on-read escape hatch. This must stay non-minimal,
-    // otherwise the old sticky behavior is hidden by the test-only lifecycle configuration.
-    setTestEnvValue("OPENCLAW_TEST_MINIMAL_GATEWAY", "0");
-    await writeGatewayConfig(CHAT_METADATA_BOUNDARY_CONFIG);
-    started = await startConnectedServerWithClient();
-    await run(started.ws);
-  } finally {
-    if (started) {
-      started.ws.close();
-      await started.server.close();
-      started.envSnapshot.restore();
-    }
-    clearConfigCache();
-    envSnapshot.restore();
-  }
-}
+test("chat.metadata retries owner misses without broadly retrying cached failures", async () => {
+  const ws = requireGateway().ws;
+  const publicationEvents = await import("../agents/prepared-model-runtime.publication-events.js");
+  const initial = await rpcReq(ws, "chat.metadata", { agentId: "main" });
+  expect(initial.ok).toBe(true);
 
-test("chat.metadata recovers a published prepared-owner capture miss on the next Gateway read", async () => {
-  await withProductionChatMetadataGateway(async (ws) => {
-    const preparedModelCatalog = await import("../agents/prepared-model-catalog.js");
-    const publicationEvents =
-      await import("../agents/prepared-model-runtime.publication-events.js");
-    const originalGetPreparedOwner = preparedModelCatalog.getPreparedModelCatalogOwnerSnapshot;
-    const initial = await rpcReq(ws, "chat.metadata", { agentId: "main" });
-    expect(initial.ok).toBe(true);
-
-    let ownerVisible = false;
-    const ownerCaptureMissed = createDeferred();
-    vi.spyOn(preparedModelCatalog, "getPreparedModelCatalogOwnerSnapshot").mockImplementation(
-      (params) => {
-        if (!ownerVisible) {
-          ownerCaptureMissed.resolve();
-          return undefined;
-        }
-        return originalGetPreparedOwner(params);
-      },
-    );
-
-    // This is the lifecycle listener's real published catch-up. The owner exists, but this one
-    // capture sees it missing, reproducing the stale publication announcement that wedged UI.
-    publicationEvents.notifyPreparedModelRuntimePublication({ phase: "published" });
-    await ownerCaptureMissed.promise;
-    const unavailable = await rpcReq(ws, "chat.metadata", { agentId: "main" });
-    expect(unavailable).toMatchObject({
-      ok: false,
-      error: {
-        code: "UNAVAILABLE",
-        message: expect.stringContaining("prepared chat metadata owner is unavailable"),
-      },
-    });
-
-    ownerVisible = true;
-    const recovered = await rpcReq<{
-      models?: Array<{ id?: string; provider?: string }>;
-    }>(ws, "chat.metadata", { agentId: "main" });
-
-    // On the merge-base this remains false: readCurrent rethrows the cached unavailable error.
-    expect(recovered.ok).toBe(true);
-    expect(recovered.payload?.models).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "gpt-boundary", provider: "openai" })]),
-    );
+  const ownerCaptureMissed = new Promise<void>((resolve) => {
+    resolvePreparedOwnerCaptureMiss = resolve;
   });
-});
+  preparedOwnerCaptureMiss = true;
 
-test("chat.metadata does not retry a cached non-owner failure without lifecycle invalidation", async () => {
-  await withProductionChatMetadataGateway(async (ws) => {
-    const publicationEvents =
-      await import("../agents/prepared-model-runtime.publication-events.js");
-    const modelsListResult = await import("./server-methods/models-list-result.js");
-    const initial = await rpcReq(ws, "chat.metadata", { agentId: "main" });
-    expect(initial.ok).toBe(true);
-    const projectionFailure = new Error("configured model catalog unavailable");
-    const projectionSpy = vi
-      .spyOn(modelsListResult, "buildModelsListResult")
-      .mockRejectedValue(projectionFailure);
+  // This is the lifecycle listener's real published catch-up. The owner exists, but this one
+  // capture sees it missing, reproducing the stale publication announcement that wedged UI.
+  publicationEvents.notifyPreparedModelRuntimePublication({ phase: "published" });
+  await ownerCaptureMissed;
+  const unavailable = await rpcReq(ws, "chat.metadata", { agentId: "main" });
+  expect(unavailable).toMatchObject({
+    ok: false,
+    error: {
+      code: "UNAVAILABLE",
+      message: expect.stringContaining("prepared chat metadata owner is unavailable"),
+    },
+  });
 
-    publicationEvents.notifyPreparedModelRuntimePublication({ phase: "published" });
-    await vi.waitFor(() => expect(projectionSpy).toHaveBeenCalled(), {
-      interval: 1,
-      timeout: 2_000,
-    });
-    const unavailable = await rpcReq(ws, "chat.metadata", { agentId: "main" });
-    expect(unavailable).toMatchObject({
-      ok: false,
-      error: {
-        code: "UNAVAILABLE",
-        message: expect.stringContaining("configured model catalog unavailable"),
-      },
-    });
+  preparedOwnerCaptureMiss = false;
+  const recovered = await rpcReq<{
+    models?: Array<{ id?: string; provider?: string }>;
+  }>(ws, "chat.metadata", { agentId: "main" });
 
-    projectionSpy.mockRestore();
-    const stillUnavailable = await rpcReq(ws, "chat.metadata", { agentId: "main" });
+  // On the merge-base this remains false: readCurrent rethrows the cached unavailable error.
+  expect(recovered.ok).toBe(true);
+  expect(recovered.payload?.models).toEqual(
+    expect.arrayContaining([expect.objectContaining({ id: "gpt-boundary", provider: "openai" })]),
+  );
 
-    // A broad retry would turn this into a false recovery and hide a genuinely broken catalog.
-    expect(stillUnavailable).toMatchObject({
-      ok: false,
-      error: {
-        code: "UNAVAILABLE",
-        message: expect.stringContaining("configured model catalog unavailable"),
-      },
-    });
+  // Reset the published runtime between boundary cases without restarting the Gateway.
+  const { refreshPreparedModelRuntimeSnapshots } =
+    await import("../agents/prepared-model-runtime.js");
+  await refreshPreparedModelRuntimeSnapshots(getRuntimeConfig(), { gatewayLifecycle: true });
+  const reset = await rpcReq(ws, "chat.metadata", { agentId: "main" });
+  expect(reset.ok).toBe(true);
+
+  const modelsListResult = await import("./server-methods/models-list-result.js");
+  const projectionFailure = new Error("configured model catalog unavailable");
+  const projectionSpy = vi
+    .spyOn(modelsListResult, "buildModelsListResult")
+    .mockRejectedValue(projectionFailure);
+
+  publicationEvents.notifyPreparedModelRuntimePublication({ phase: "invalidated" });
+  publicationEvents.notifyPreparedModelRuntimePublication({ phase: "published" });
+  await vi.waitFor(() => expect(projectionSpy).toHaveBeenCalled(), {
+    interval: 1,
+    timeout: 2_000,
+  });
+  const projectionUnavailable = await rpcReq(ws, "chat.metadata", { agentId: "main" });
+  expect(projectionUnavailable).toMatchObject({
+    ok: false,
+    error: {
+      code: "UNAVAILABLE",
+      message: expect.stringContaining("configured model catalog unavailable"),
+    },
+  });
+
+  projectionSpy.mockRestore();
+  const stillUnavailable = await rpcReq(ws, "chat.metadata", { agentId: "main" });
+
+  // A broad retry would turn this into a false recovery and hide a genuinely broken catalog.
+  expect(stillUnavailable).toMatchObject({
+    ok: false,
+    error: {
+      code: "UNAVAILABLE",
+      message: expect.stringContaining("configured model catalog unavailable"),
+    },
   });
 });
