@@ -468,6 +468,16 @@ describe("resolveClaudeThinkingProfile", () => {
     },
   );
 
+  it("keeps Mythos Preview mandatory adaptive without claiming the Claude 5 effort ladder", () => {
+    const profile = resolveClaudeThinkingProfile("claude-mythos-preview");
+
+    expectFields(profile, {
+      defaultLevel: "adaptive",
+      preserveWhenCatalogReasoningFalse: true,
+    });
+    expect(readLevelIds(profile)).toEqual(["minimal", "low", "medium", "high", "adaptive"]);
+  });
+
   it("does not match longer unrelated Claude ids by prefix only", () => {
     expect(resolveClaudeThinkingProfile("vendor/claude-fable-500").defaultLevel).toBeUndefined();
     expect(resolveClaudeThinkingProfile("anthropic/claude-opus-4-60").defaultLevel).toBeUndefined();
