@@ -1,7 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import { clearConfigCache, getRuntimeConfig } from "../config/config.js";
+import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import {
+  clearConfigCache,
+  clearRuntimeConfigSnapshot,
+  getRuntimeConfig,
+} from "../config/config.js";
 import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
 import { installGatewayTestHooks, rpcReq, startConnectedServerWithClient } from "./test-helpers.js";
 
@@ -11,9 +15,6 @@ type ConnectedGateway = Awaited<ReturnType<typeof startConnectedServerWithClient
 
 let gateway: ConnectedGateway | undefined;
 let minimalGatewayEnv: ReturnType<typeof captureEnv> | undefined;
-let preparedOwnerCaptureMiss = false;
-let resolvePreparedOwnerCaptureMiss: (() => void) | undefined;
-let restorePreparedOwnerSpy: (() => void) | undefined;
 
 function requireGateway(): ConnectedGateway {
   if (!gateway) {
@@ -24,18 +25,6 @@ function requireGateway(): ConnectedGateway {
 
 beforeAll(async () => {
   minimalGatewayEnv = captureEnv(["OPENCLAW_TEST_MINIMAL_GATEWAY"]);
-  const preparedModelCatalog = await import("../agents/prepared-model-catalog.js");
-  const originalGetPreparedOwner = preparedModelCatalog.getPreparedModelCatalogOwnerSnapshot;
-  const preparedOwnerSpy = vi
-    .spyOn(preparedModelCatalog, "getPreparedModelCatalogOwnerSnapshot")
-    .mockImplementation((params) => {
-      if (preparedOwnerCaptureMiss) {
-        resolvePreparedOwnerCaptureMiss?.();
-        return undefined;
-      }
-      return originalGetPreparedOwner(params);
-    });
-  restorePreparedOwnerSpy = () => preparedOwnerSpy.mockRestore();
   // The production lifecycle has no refresh-on-read escape hatch. This must stay non-minimal,
   // otherwise the old sticky behavior is hidden by the test-only lifecycle configuration.
   setTestEnvValue("OPENCLAW_TEST_MINIMAL_GATEWAY", "0");
@@ -54,18 +43,12 @@ beforeEach(async () => {
   expect(ready.ok, JSON.stringify(ready)).toBe(true);
 });
 
-afterEach(() => {
-  preparedOwnerCaptureMiss = false;
-  resolvePreparedOwnerCaptureMiss = undefined;
-});
-
 afterAll(async () => {
   if (gateway) {
     gateway.ws.close();
     await gateway.server.close();
     gateway.envSnapshot.restore();
   }
-  restorePreparedOwnerSpy?.();
   clearConfigCache();
   minimalGatewayEnv?.restore();
 });
@@ -88,7 +71,21 @@ const CHAT_METADATA_BOUNDARY_CONFIG = {
   },
 } as const;
 
-async function writeGatewayConfig(config: Record<string, unknown>) {
+const CHAT_METADATA_MISSING_OWNER_CONFIG = {
+  ...CHAT_METADATA_BOUNDARY_CONFIG,
+  agents: {
+    ...CHAT_METADATA_BOUNDARY_CONFIG.agents,
+    entries: {
+      ...CHAT_METADATA_BOUNDARY_CONFIG.agents.entries,
+      missing: {},
+    },
+  },
+} as const;
+
+async function writeGatewayConfig(
+  config: Record<string, unknown>,
+  options: { clearRuntimeSnapshot?: boolean } = {},
+) {
   const configPath = process.env.OPENCLAW_CONFIG_PATH;
   if (!configPath) {
     throw new Error("OPENCLAW_CONFIG_PATH missing in gateway test environment");
@@ -96,6 +93,9 @@ async function writeGatewayConfig(config: Record<string, unknown>) {
   await fs.mkdir(path.dirname(configPath), { recursive: true });
   await fs.writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
   clearConfigCache();
+  if (options.clearRuntimeSnapshot) {
+    clearRuntimeConfigSnapshot();
+  }
 }
 
 test("chat.metadata retries owner misses without broadly retrying cached failures", async () => {
@@ -104,16 +104,18 @@ test("chat.metadata retries owner misses without broadly retrying cached failure
   const initial = await rpcReq(ws, "chat.metadata", { agentId: "main" });
   expect(initial.ok).toBe(true);
 
-  const ownerCaptureMissed = new Promise<void>((resolve) => {
-    resolvePreparedOwnerCaptureMiss = resolve;
-  });
-  preparedOwnerCaptureMiss = true;
-
-  // This is the lifecycle listener's real published catch-up. The owner exists, but this one
-  // capture sees it missing, reproducing the stale publication announcement that wedged UI.
+  // This is the lifecycle listener's real published catch-up. Config can expose an agent before
+  // its prepared owner exists, reproducing the stale publication announcement that wedged UI.
+  await writeGatewayConfig(CHAT_METADATA_MISSING_OWNER_CONFIG, { clearRuntimeSnapshot: true });
   publicationEvents.notifyPreparedModelRuntimePublication({ phase: "published" });
-  await ownerCaptureMissed;
-  const unavailable = await rpcReq(ws, "chat.metadata", { agentId: "main" });
+  let unavailable: Awaited<ReturnType<typeof rpcReq>> | undefined;
+  await vi.waitFor(
+    async () => {
+      unavailable = await rpcReq(ws, "chat.metadata", { agentId: "main" });
+      expect(unavailable.ok).toBe(false);
+    },
+    { interval: 1, timeout: 2_000 },
+  );
   expect(unavailable).toMatchObject({
     ok: false,
     error: {
@@ -122,7 +124,7 @@ test("chat.metadata retries owner misses without broadly retrying cached failure
     },
   });
 
-  preparedOwnerCaptureMiss = false;
+  await writeGatewayConfig(CHAT_METADATA_BOUNDARY_CONFIG, { clearRuntimeSnapshot: true });
   const recovered = await rpcReq<{
     models?: Array<{ id?: string; provider?: string }>;
   }>(ws, "chat.metadata", { agentId: "main" });
