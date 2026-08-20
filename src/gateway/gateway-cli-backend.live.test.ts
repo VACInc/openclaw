@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { resolveAgentDir } from "../agents/agent-scope.js";
+import { saveAuthProfileStore } from "../agents/auth-profiles/store.js";
 import {
   resolveCliBackendConfig,
   resolveCliBackendLiveTest,
@@ -77,6 +79,7 @@ const describeLive = LIVE && CLI_LIVE ? describe : describe.skip;
 
 const MCP_SCHEMA_PROBE_PLUGIN_ID = "mcp-schema-probe";
 const MCP_SCHEMA_PROBE_TOOL_NAME = "mcp_schema_probe_no_args";
+const CLI_CACHE_AUTH_PROFILE_ID = "claude-cli:live-cache";
 const CLI_CONTINUITY_PROBE_PLUGIN_ID = "cli-continuity-probe";
 const execFileAsync = promisify(execFile);
 
@@ -129,7 +132,6 @@ const CLI_BACKEND_RETRY_WRAPPED_AGENT_REQUESTS = 2;
 const CLI_BACKEND_MIN_CACHE_HIT_RATE = 0.9;
 const CLI_CACHE_PROBE_INITIAL_THINKING_LEVEL = "medium";
 const CLI_CACHE_PROBE_SWITCHED_THINKING_LEVEL = "high";
-const CLI_BACKEND_MIN_THINKING_SWITCH_CACHE_HIT_RATE = 0.3;
 const CLI_BACKEND_CODEX_TIMEOUT_RETRY_SEQUENCE_MS =
   CLI_BACKEND_REQUEST_TIMEOUT_MS * CLI_BACKEND_CODEX_TIMEOUT_RETRY_ATTEMPTS +
   CLI_BACKEND_CODEX_TIMEOUT_RETRY_SLEEP_MS * (CLI_BACKEND_CODEX_TIMEOUT_RETRY_ATTEMPTS - 1);
@@ -325,8 +327,11 @@ async function requestWithCodexTimeoutRetry<T>(
   return undefined;
 }
 
-async function createMcpSchemaProbePlugin(tempDir: string): Promise<string> {
+async function createMcpSchemaProbePlugin(
+  tempDir: string,
+): Promise<{ pluginPath: string; resultToken: string }> {
   const pluginDir = path.join(tempDir, MCP_SCHEMA_PROBE_PLUGIN_ID);
+  const resultToken = `MCP-SCHEMA-${randomBytes(6).toString("hex").toUpperCase()}`;
   await fs.mkdir(pluginDir, { recursive: true });
   const pluginFile = path.join(pluginDir, "index.cjs");
   await fs.writeFile(
@@ -336,7 +341,8 @@ async function createMcpSchemaProbePlugin(tempDir: string): Promise<string> {
         id: MCP_SCHEMA_PROBE_PLUGIN_ID,
         name: "MCP Schema Probe",
         description: "Live test plugin for no-argument MCP tool schemas",
-        configSchema: { type: "object", properties: {} },
+        configSchema: { type: "object", additionalProperties: false, properties: {} },
+        contracts: { tools: [MCP_SCHEMA_PROBE_TOOL_NAME] },
       },
       null,
       2,
@@ -353,14 +359,14 @@ async function createMcpSchemaProbePlugin(tempDir: string): Promise<string> {
       description: "Live test no-argument tool for MCP schema normalization",
       parameters: { type: "object" },
       async execute() {
-        return { content: [{ type: "text", text: "schema probe ok" }] };
+        return { content: [{ type: "text", text: "${resultToken}" }] };
       },
     });
   },
 };
 `,
   );
-  return pluginFile;
+  return { pluginPath: pluginDir, resultToken };
 }
 
 describeLive("gateway live (cli backend)", () => {
@@ -377,6 +383,11 @@ describeLive("gateway live (cli backend)", () => {
 
       clearRuntimeConfigSnapshot();
       applyCliBackendLiveEnv(preservedEnv);
+      if (CLI_CACHE_PROBE) {
+        // Cache proof crosses the production prepared-runtime and MCP dispatch boundary.
+        // Minimal Gateway mode intentionally omits that publication and cannot prove this path.
+        setTestEnvValue("OPENCLAW_TEST_MINIMAL_GATEWAY", "0");
+      }
 
       const token = `test-${randomUUID()}`;
       setTestEnvValue("OPENCLAW_GATEWAY_TOKEN", token);
@@ -480,9 +491,11 @@ describeLive("gateway live (cli backend)", () => {
       const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-live-cli-"));
       const stateDir = path.join(tempDir, "state");
       await fs.mkdir(stateDir, { recursive: true });
-      const schemaProbePluginPath = CLI_MCP_SCHEMA_PROBE
-        ? await createMcpSchemaProbePlugin(tempDir)
-        : undefined;
+      const schemaProbePlugin =
+        CLI_MCP_SCHEMA_PROBE || CLI_CACHE_PROBE
+          ? await createMcpSchemaProbePlugin(tempDir)
+          : undefined;
+      const schemaProbePluginPath = schemaProbePlugin?.pluginPath;
       const useMinimalToolsProfile = providerId === "codex-cli" && !schemaProbePluginPath;
       setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
       const bundleMcp = backendResolved.bundleMcp;
@@ -531,11 +544,28 @@ describeLive("gateway live (cli backend)", () => {
       const cfg: OpenClawConfig = {};
       const nextCfg: OpenClawConfig = {
         ...cfg,
+        ...(CLI_CACHE_PROBE
+          ? {
+              auth: {
+                profiles: {
+                  [CLI_CACHE_AUTH_PROFILE_ID]: { provider: "claude-cli", mode: "api_key" },
+                },
+                order: { "claude-cli": [CLI_CACHE_AUTH_PROFILE_ID] },
+              },
+            }
+          : {}),
         ...(schemaProbePluginPath || CLI_CACHE_PROBE
           ? {
               plugins: {
                 ...cfg.plugins,
                 enabled: true,
+                // Keep the warm-process tool catalog stable across turns. Unrelated bundled
+                // plugin sidecars can otherwise mutate the MCP fingerprint during this proof.
+                ...(CLI_CACHE_PROBE
+                  ? {
+                      slots: { memory: "none" },
+                    }
+                  : {}),
                 ...(schemaProbePluginPath
                   ? {
                       load: {
@@ -586,6 +616,7 @@ describeLive("gateway live (cli backend)", () => {
           defaults: {
             ...cfg.agents?.defaults,
             ...(bootstrapWorkspace ? { workspace: bootstrapWorkspace.workspaceRootDir } : {}),
+            ...(CLI_CACHE_PROBE ? { skipBootstrap: true } : {}),
             model: { primary: configModelKey },
             models: {
               [configModelKey]: {
@@ -602,12 +633,36 @@ describeLive("gateway live (cli backend)", () => {
           },
           // The live requests below use agent:dev:* session keys. Declare the
           // agent so the gateway recognizes those sessions as configured.
-          list: [{ id: "dev", default: true }],
+          entries: { dev: {} },
         },
       };
       const tempConfigPath = path.join(tempDir, "openclaw.json");
       await fs.writeFile(tempConfigPath, `${JSON.stringify(nextCfg, null, 2)}\n`);
       setTestEnvValue("OPENCLAW_CONFIG_PATH", tempConfigPath);
+      if (CLI_CACHE_PROBE) {
+        const apiKey =
+          process.env.ANTHROPIC_API_KEY?.trim() || process.env.ANTHROPIC_API_KEY_OLD?.trim();
+        if (!apiKey) {
+          throw new Error("Claude CLI cache probe requires an Anthropic API key");
+        }
+        // Exercise the same profile-owned secret-input path as an operator-configured key.
+        // The isolated state directory is removed when this live test finishes.
+        saveAuthProfileStore(
+          {
+            version: 1,
+            profiles: {
+              [CLI_CACHE_AUTH_PROFILE_ID]: {
+                type: "api_key",
+                provider: "claude-cli",
+                key: apiKey,
+              },
+            },
+            order: { "claude-cli": [CLI_CACHE_AUTH_PROFILE_ID] },
+          },
+          resolveAgentDir(nextCfg, "dev"),
+          { syncExternalCli: false },
+        );
+      }
       let cacheProbeBackend: RuntimeBackendEntry | undefined;
       if (CLI_CACHE_PROBE) {
         // This Vitest gateway uses the minimal startup path, so load the owning bundled plugin
@@ -741,7 +796,7 @@ describeLive("gateway live (cli backend)", () => {
         logCliBackendLiveStep("agent-request:done", { status: payload?.status });
 
         let cacheProbeOwner: Parameters<typeof getClaudeGeneration>[0] | undefined;
-        let cacheProbeInitialGeneration: string | undefined;
+        let cacheProbeSteadyGeneration: string | undefined;
         if (CLI_CACHE_PROBE) {
           const history = await activeClient.request<{ sessionId?: string }>("chat.history", {
             sessionKey,
@@ -752,11 +807,10 @@ describeLive("gateway live (cli backend)", () => {
           cacheProbeOwner = {
             backendId: providerId,
             agentId: "dev",
+            authProfileId: CLI_CACHE_AUTH_PROFILE_ID,
             sessionId: history.sessionId,
             sessionKey,
           };
-          cacheProbeInitialGeneration = getClaudeGeneration(cacheProbeOwner);
-          expect(cacheProbeInitialGeneration).toBeTruthy();
         }
 
         const text = extractPayloadText(payload?.result);
@@ -780,8 +834,10 @@ describeLive("gateway live (cli backend)", () => {
             resultWithMeta.meta?.systemPromptReport?.injectedWorkspaceFiles?.map(
               (entry) => entry.name,
             ) ?? [];
-          for (const expectedFile of bootstrapWorkspace?.expectedInjectedFiles ?? []) {
-            expect(injectedFileNames).toContain(expectedFile);
+          if (!CLI_CACHE_PROBE) {
+            for (const expectedFile of bootstrapWorkspace?.expectedInjectedFiles ?? []) {
+              expect(injectedFileNames).toContain(expectedFile);
+            }
           }
         }
 
@@ -874,9 +930,11 @@ describeLive("gateway live (cli backend)", () => {
                   message:
                     providerId === "codex-cli"
                       ? `Do not inspect files or run tools. Reply with exactly: CLI-RESUME-${resumeNonce}.`
-                      : resumeContinuityProbe
-                        ? resumeContinuityProbe.resumePrompt
-                        : `Reply with exactly: CLI backend RESUME OK ${resumeNonce}.`,
+                      : CLI_CACHE_PROBE
+                        ? `Call the ${MCP_SCHEMA_PROBE_TOOL_NAME} tool exactly once. Then reply with exactly: CLI-RESUME-${resumeNonce} <tool-result>.`
+                        : resumeContinuityProbe
+                          ? resumeContinuityProbe.resumePrompt
+                          : `Reply with exactly: CLI backend RESUME OK ${resumeNonce}.`,
                   deliver: false,
                   timeout: timeouts.agentTimeoutSeconds,
                 },
@@ -893,10 +951,15 @@ describeLive("gateway live (cli backend)", () => {
           if (CLI_CACHE_PROBE) {
             logCliCacheUsage("resume1-warmup", resolveCliCacheUsage(resumePayload.result));
             expect(cacheProbeOwner).toBeDefined();
-            expect(getClaudeGeneration(cacheProbeOwner!)).toBe(cacheProbeInitialGeneration);
           }
           const resumeText = extractPayloadText(resumePayload?.result);
-          if (providerId === "codex-cli") {
+          if (CLI_CACHE_PROBE) {
+            expect(resumeText).toContain(schemaProbePlugin?.resultToken);
+            // The first turn advertises one bootstrap-only tool. Establish the process baseline
+            // after that tool retires so steady-turn reuse is not confused with valid schema drift.
+            cacheProbeSteadyGeneration = getClaudeGeneration(cacheProbeOwner!);
+            expect(cacheProbeSteadyGeneration).toBeTruthy();
+          } else if (providerId === "codex-cli") {
             expect(resumeText).toContain(`CLI-RESUME-${resumeNonce}`);
           } else if (resumeContinuityProbe) {
             expect(resumeText).toContain(resumeContinuityProbe.expectedResumeMarker);
@@ -952,7 +1015,7 @@ describeLive("gateway live (cli backend)", () => {
               return;
             }
             expect(cacheHitRate).toBeGreaterThanOrEqual(CLI_BACKEND_MIN_CACHE_HIT_RATE);
-            expect(getClaudeGeneration(cacheProbeOwner!)).toBe(cacheProbeInitialGeneration);
+            expect(getClaudeGeneration(cacheProbeOwner!)).toBe(cacheProbeSteadyGeneration);
 
             const thinkingPatchPayload = await activeClient.request("sessions.patch", {
               key: sessionKey,
@@ -968,22 +1031,20 @@ describeLive("gateway live (cli backend)", () => {
             }
 
             const switchNonce = randomBytes(3).toString("hex").toUpperCase();
-            const switchHitRate = await requestCacheProbeTurn(
+            const switchProbeResult = await requestCacheProbeTurn(
               "thinking-switch",
               `CLI-THINKING-SWITCH-${switchNonce}`,
             );
-            if (switchHitRate === undefined) {
+            if (switchProbeResult === undefined) {
               return;
             }
-            // Anthropic caches tools, system, then messages. A thinking-parameter change only
-            // invalidates messages, so this floor proves the tools+system tiers survive:
+            // Thinking changes always invalidate messages and can invalidate tools/system on
+            // models that render the thinking configuration ahead of them. Assert the required
+            // process rotation here; the following steady turn proves the new prefix is reusable.
             // https://platform.claude.com/docs/en/build-with-claude/prompt-caching#what-invalidates-the-cache
-            expect(switchHitRate).toBeGreaterThanOrEqual(
-              CLI_BACKEND_MIN_THINKING_SWITCH_CACHE_HIT_RATE,
-            );
             const switchedGeneration = getClaudeGeneration(cacheProbeOwner!);
             expect(switchedGeneration).toBeTruthy();
-            expect(switchedGeneration).not.toBe(cacheProbeInitialGeneration);
+            expect(switchedGeneration).not.toBe(cacheProbeSteadyGeneration);
 
             const steadyNonce = randomBytes(3).toString("hex").toUpperCase();
             const steadyHitRate = await requestCacheProbeTurn(
