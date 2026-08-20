@@ -40,7 +40,11 @@ import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides
 import * as storedModelOverrides from "../../sessions/stored-model-overrides.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { normalizeThinkLevel, type ThinkLevel } from "../thinking.shared.js";
-import { normalizeRuntimeRef, resolveRuntimeNormalization } from "./model-runtime-normalization.js";
+import {
+  mergePreparedConfiguredCatalog,
+  normalizeRuntimeRef,
+  resolveRuntimeNormalization,
+} from "./model-runtime-normalization.js";
 import {
   isStaleHeartbeatAutoFallbackOverride,
   normalizeStoredRuntimeModelRef,
@@ -139,24 +143,6 @@ function findSelectedCatalogEntry(params: {
   const normalizedProvider = normalizeProviderId(params.provider);
   const selectedKey = modelKey(normalizedProvider, params.model);
   return params.catalog?.find((entry) => modelKey(entry.provider, entry.id) === selectedKey);
-}
-
-function mergePreparedConfiguredCatalog(params: {
-  configured: ModelCatalog;
-  prepared?: readonly ModelCatalogEntry[];
-}): ModelCatalog {
-  if (!params.prepared?.length) {
-    return params.configured;
-  }
-  const preparedByKey = new Map(
-    params.prepared.map((entry) => [modelKey(entry.provider, entry.id), entry]),
-  );
-  return params.configured.map((entry) => {
-    const prepared = preparedByKey.get(modelKey(entry.provider, entry.id));
-    // The prepared row owns runtime capabilities; the configured row limits
-    // visibility and retains any authored metadata absent from that snapshot.
-    return prepared ? { ...entry, ...prepared } : entry;
-  });
 }
 
 /** Resolves provider/model, allowlist, catalog, and thinking defaults for a reply run. */
