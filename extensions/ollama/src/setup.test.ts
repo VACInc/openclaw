@@ -462,29 +462,20 @@ describe("ollama setup", () => {
 
     expect(modelIds).toEqual(["minimax-m2.7", "minimax-m3", "kimi-k3", "glm-5.1", "glm-5.2"]);
     expect(models).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "minimax-m2.7",
-          contextWindow: 196_608,
-          reasoning: true,
-          input: ["text"],
-          compat: { supportsTools: true, supportsUsageInStreaming: true },
-        }),
-        expect.objectContaining({
-          id: "glm-5.1",
-          contextWindow: 202_752,
-          reasoning: true,
-          input: ["text"],
-          compat: { supportsTools: true, supportsUsageInStreaming: true },
-        }),
-        expect.objectContaining({
-          id: "glm-5.2",
-          contextWindow: 1_000_000,
-          reasoning: true,
-          input: ["text"],
-          compat: { supportsTools: true, supportsUsageInStreaming: true },
-        }),
-      ]),
+      expect.arrayContaining(
+        [
+          { id: "minimax-m2.7", contextWindow: 196_608 },
+          { id: "glm-5.1", contextWindow: 202_752 },
+          { id: "glm-5.2", contextWindow: 1_000_000 },
+        ].map((model) =>
+          expect.objectContaining({
+            ...model,
+            reasoning: true,
+            input: ["text"],
+            compat: { supportsTools: true, supportsUsageInStreaming: true },
+          }),
+        ),
+      ),
     );
   });
 
