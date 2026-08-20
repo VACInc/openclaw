@@ -91,10 +91,16 @@ async function applySqliteSessionEntryReplacementProjection<T, TReplacement>(
     // so an entry-object compare can differ from the transaction re-read with no write at all
     // and wedge the row's repairs forever.
     const expectedEntryJson = new Map(
-      entries.map(({ sessionKey }) => [
-        sessionKey,
-        readExactSessionEntryJson(database, sessionKey),
-      ]),
+      entries.map(({ sessionKey }) => {
+        const rawEntryJson = readExactSessionEntryJson(database, sessionKey);
+        if (rawEntryJson === undefined) {
+          // The row vanished between hydrating the snapshot and reading its bytes. Fail closed:
+          // a selected key must hold bytes, or a later missing-vs-missing compare would pass and
+          // rewrite the stale entry into a concurrently deleted key.
+          throw new Error(`SQLite session entry changed before replacement for ${sessionKey}`);
+        }
+        return [sessionKey, rawEntryJson];
+      }),
     );
     const operation = await params.update(entries);
     const replacements = normalize(operation.replacements);
