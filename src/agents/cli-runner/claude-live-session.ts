@@ -241,7 +241,10 @@ function buildClaudeLiveFingerprint(params: {
     authEpochHash: params.context.authEpoch ? sha256Hex(params.context.authEpoch) : undefined,
     extraSystemPromptHash: params.context.extraSystemPromptHash,
     promptToolNamesHash: params.context.promptToolNamesHash,
-    mcpConfigHash: params.context.preparedBackend.mcpConfigHash,
+    // A warm child carries the canonical MCP topology across turns. Per-turn
+    // authority rotates through the capture grant without restarting it.
+    mcpResumeHash:
+      params.context.preparedBackend.mcpResumeHash ?? params.context.preparedBackend.mcpConfigHash,
     credentialFingerprint: params.context.preparedBackend.secretInput?.fingerprint,
     skillsFingerprint,
     argv: stableArgv,

@@ -61,13 +61,20 @@ function createCapturedLiveTurnRunner(options: {
       ...lifecycle,
     };
   });
-  const runTurn = async (runId: string, args: string[], env: Record<string, string>) => {
+  const runTurn = async (
+    runId: string,
+    args: string[],
+    env: Record<string, string>,
+    mcpHashes?: { config: string; resume: string },
+  ) => {
     const context = buildClaudeLiveRunContext({
       runId,
       backend: {
         resumeArgs: ["-p", "--output-format", "stream-json", "--resume", "{sessionId}"],
       },
       mcpDeliveryCapture: true,
+      mcpConfigHash: mcpHashes?.config,
+      mcpResumeHash: mcpHashes?.resume,
     });
     const result = await runClaudeTurn({
       context,
@@ -128,6 +135,31 @@ describe("Claude live MCP capture lifetime", () => {
         .map(([message]) => message)
         .filter((message) => typeof message === "string" && message.includes("reason=restart")),
     ).toEqual([]);
+  });
+
+  it("reuses a captured process when only turn-local MCP config changes", async () => {
+    const { cancels, runTurn } = createCapturedLiveTurnRunner({
+      results: ["first-ok", "resume-ok"],
+    });
+    const env = { ANTHROPIC_BASE_URL: "https://one.example" };
+    const freshArgs = ["-p", "--output-format", "stream-json"];
+    const resumeArgs = ["-p", "--output-format", "stream-json", "--resume", "live-session"];
+
+    await expect(
+      runTurn("run-live-fresh", freshArgs, env, {
+        config: "turn-config-one",
+        resume: "stable-resume-config",
+      }),
+    ).resolves.toBe("first-ok");
+    await expect(
+      runTurn("run-live-resume", resumeArgs, env, {
+        config: "turn-config-two",
+        resume: "stable-resume-config",
+      }),
+    ).resolves.toBe("resume-ok");
+
+    expect(supervisorSpawnMock).toHaveBeenCalledOnce();
+    expect(cancels[0]).not.toHaveBeenCalled();
   });
 
   it("still restarts a captured Claude live process when resume identity changes", async () => {
@@ -248,10 +280,16 @@ describe("Claude live MCP capture lifetime", () => {
       },
     });
     mockClaudeLiveRun(supervisorSpawnMock, {
-      events: [
-        { type: "system", subtype: "init", session_id: "captured-thinking" },
-        { type: "result", session_id: "captured-thinking", result: "three" },
-      ],
+      onWrite: ({ emit, writeIndex }) => {
+        emit([
+          { type: "system", subtype: "init", session_id: "captured-thinking" },
+          {
+            type: "result",
+            session_id: "captured-thinking",
+            result: writeIndex === 0 ? "three" : "four",
+          },
+        ]);
+      },
     });
     const backend = {
       resumeArgs: ["-p", "--output-format", "stream-json", "--resume={sessionId}"],
@@ -274,8 +312,17 @@ describe("Claude live MCP capture lifetime", () => {
       buildContext("third", "16384"),
       "captured-thinking",
     );
+    const sameChangedLevel = await executePreparedCliRun(
+      buildContext("fourth", "16384"),
+      "captured-thinking",
+    );
 
-    expect([first.text, sameLevel.text, changedLevel.text]).toEqual(["one", "two", "three"]);
+    expect([first.text, sameLevel.text, changedLevel.text, sameChangedLevel.text]).toEqual([
+      "one",
+      "two",
+      "three",
+      "four",
+    ]);
     expect(supervisorSpawnMock).toHaveBeenCalledTimes(2);
     expect(firstLive.lifecycle.cancel).toHaveBeenCalledWith("manual-cancel");
   });
