@@ -204,10 +204,27 @@ describe("ollama setup", () => {
     });
     const modelIds = result.config.models?.providers?.ollama?.models?.map((m) => m.id);
 
-    expect(modelIds?.[0]).toBe("kimi-k3");
+    expect(modelIds?.[0]).toBe("minimax-m3");
+    // The resolved default follows OLLAMA_CLOUD_DEFAULT_MODELS[0]; pin the id itself so
+    // reordering that array cannot silently move what every new cloud setup selects.
+    expect(result.defaultModel).toBe("ollama/minimax-m3");
     expect(result.config.models?.providers?.ollama?.baseUrl).toBe("https://ollama.com");
     expect(result.config.models?.providers?.ollama?.apiKey).toBe("test-ollama-key");
     expect(result.credential).toBe("test-ollama-key");
+  });
+
+  it("keeps the resolved cloud default ahead of live discovery results", async () => {
+    const prompter = createCloudPrompter();
+    vi.stubGlobal("fetch", createOllamaFetchMock({ tags: ["some-other-cloud-model"] }));
+
+    const result = await promptAndConfigureOllama({
+      cfg: {},
+      env: {},
+      prompter,
+      allowSecretRefPrompt: false,
+    });
+
+    expect(result.defaultModel).toBe("ollama/minimax-m3");
   });
 
   it("uses generic token flags for cloud-only setup", async () => {
@@ -245,6 +262,7 @@ describe("ollama setup", () => {
 
     expect(modelIds).toEqual([
       "gemma4",
+      "minimax-m3:cloud",
       "kimi-k3:cloud",
       "minimax-m2.7:cloud",
       "glm-5.1:cloud",
@@ -458,8 +476,15 @@ describe("ollama setup", () => {
     const models = result.config.models?.providers?.ollama?.models;
     const modelIds = models?.map((m) => m.id);
 
-    expect(modelIds).toEqual(["kimi-k3", "minimax-m2.7", "glm-5.1", "glm-5.2"]);
+    expect(modelIds).toEqual(["minimax-m3", "kimi-k3", "minimax-m2.7", "glm-5.1", "glm-5.2"]);
     expect(models).toEqual([
+      expect.objectContaining({
+        id: "minimax-m3",
+        contextWindow: 524_288,
+        reasoning: true,
+        input: ["text", "image"],
+        compat: { supportsTools: true, supportsUsageInStreaming: true },
+      }),
       expect.objectContaining({
         id: "kimi-k3",
         contextWindow: 1_048_576,
@@ -509,6 +534,7 @@ describe("ollama setup", () => {
     const modelIds = models?.map((m) => m.id);
 
     expect(modelIds).toEqual([
+      "minimax-m3",
       "kimi-k3",
       "minimax-m2.7",
       "glm-5.1",
