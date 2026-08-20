@@ -381,7 +381,6 @@ describe("listThinkingLevels", () => {
     ];
 
     expect(listThinkingLevels("microsoft-foundry", "company-fable", catalog)).toEqual([
-      "off",
       "minimal",
       "low",
       "medium",

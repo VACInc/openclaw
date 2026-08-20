@@ -1,13 +1,9 @@
 // CLI backend live gateway tests exercise registered backend sessions, model switching, MCP loopback, and image probes.
-import { execFile } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { resolveAgentDir } from "../agents/agent-scope.js";
-import { saveAuthProfileStore } from "../agents/auth-profiles/store.js";
 import {
   resolveCliBackendConfig,
   resolveCliBackendLiveTest,
@@ -15,7 +11,6 @@ import {
 } from "../agents/cli-backends.js";
 import { testing as cliBackendsTesting } from "../agents/cli-backends.test-support.js";
 import { getClaudeGeneration } from "../agents/cli-runner/claude-live-registry.js";
-import { computeCacheHitRate } from "../agents/live-cache-test-support.js";
 import { isLiveTestEnabled } from "../agents/live-test-helpers.js";
 import { shouldSkipLiveProviderDrift } from "../agents/live-test-provider-drift.js";
 import { parseModelRef } from "../agents/model-selection.js";
@@ -26,8 +21,17 @@ import {
   resetGlobalHookRunner,
 } from "../plugins/hook-runner-global.js";
 import { createMockPluginRegistry } from "../plugins/hooks.test-helpers.js";
-import { loadOpenClawPlugins } from "../plugins/loader.js";
 import { setTestEnvValue } from "../test-utils/env.js";
+import {
+  CLI_CACHE_AUTH_PROFILE_ID,
+  createMcpSchemaProbePlugin,
+  initializeCacheProbeGitWorkspace,
+  logCliCacheUsage,
+  MCP_SCHEMA_PROBE_PLUGIN_ID,
+  MCP_SCHEMA_PROBE_TOOL_NAME,
+  prepareClaudeCacheProbeBackend,
+  type RuntimeBackendEntry,
+} from "./gateway-cli-backend.live-cache-helpers.js";
 import {
   applyCliBackendLiveEnv,
   buildClaudeCliResumeContinuityProbe,
@@ -77,15 +81,7 @@ const CLI_MCP_SCHEMA_PROBE = isTruthyEnvValue(
 const CLI_ALLOW_PROVIDER_SKIP = shouldAllowCliBackendLiveProviderSkip();
 const describeLive = LIVE && CLI_LIVE ? describe : describe.skip;
 
-const MCP_SCHEMA_PROBE_PLUGIN_ID = "mcp-schema-probe";
-const MCP_SCHEMA_PROBE_TOOL_NAME = "mcp_schema_probe_no_args";
-const CLI_CACHE_AUTH_PROFILE_ID = "claude-cli:live-cache";
 const CLI_CONTINUITY_PROBE_PLUGIN_ID = "cli-continuity-probe";
-const execFileAsync = promisify(execFile);
-
-type RuntimeBackendEntry = ReturnType<
-  (typeof import("../plugins/cli-backends.runtime.js"))["resolveRuntimeCliBackends"]
->[number];
 
 function createRuntimeBackendEntry(
   backend: ResolvedCliBackend,
@@ -96,27 +92,6 @@ function createRuntimeBackendEntry(
   return ownsNativeCompaction === true
     ? { ...base, ownsNativeCompaction: true, manualCompaction }
     : { ...base, ownsNativeCompaction: false };
-}
-
-async function initializeCacheProbeGitWorkspace(workspaceDir: string): Promise<void> {
-  await execFileAsync("git", ["init", "--quiet", workspaceDir]);
-  await execFileAsync("git", ["-C", workspaceDir, "config", "user.name", "OpenClaw Tests"]);
-  await execFileAsync("git", [
-    "-C",
-    workspaceDir,
-    "config",
-    "user.email",
-    "openclaw-tests@localhost",
-  ]);
-  await execFileAsync("git", ["-C", workspaceDir, "add", "--all"]);
-  await execFileAsync("git", [
-    "-C",
-    workspaceDir,
-    "commit",
-    "--quiet",
-    "-m",
-    "cache probe baseline",
-  ]);
 }
 
 const DEFAULT_PROVIDER = "claude-cli";
@@ -161,38 +136,6 @@ function logCliBackendLiveStep(step: string, details?: Record<string, unknown>):
   }
   const suffix = details && Object.keys(details).length > 0 ? ` ${JSON.stringify(details)}` : "";
   console.error(`[gateway-cli-live] ${step}${suffix}`);
-}
-
-type CliCacheUsage = {
-  input?: number;
-  cacheRead?: number;
-  cacheWrite?: number;
-};
-
-function resolveCliCacheUsage(result: unknown): CliCacheUsage {
-  const agentMeta = (
-    result as {
-      meta?: {
-        agentMeta?: {
-          usage?: CliCacheUsage;
-          lastCallUsage?: CliCacheUsage;
-        };
-      };
-    }
-  )?.meta?.agentMeta;
-  const usage = agentMeta?.lastCallUsage ?? agentMeta?.usage;
-  if (!usage) {
-    throw new Error("Claude CLI cache probe did not return normalized usage metadata");
-  }
-  return usage;
-}
-
-function logCliCacheUsage(turn: string, usage: CliCacheUsage): number {
-  const hitRate = computeCacheHitRate(usage);
-  process.stderr.write(
-    `[gateway-cli-cache] ${turn} input=${usage.input ?? 0} cacheRead=${usage.cacheRead ?? 0} cacheWrite=${usage.cacheWrite ?? 0} hitRate=${(hitRate * 100).toFixed(2)}%\n`,
-  );
-  return hitRate;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -325,48 +268,6 @@ async function requestWithCodexTimeoutRetry<T>(
     );
   }
   return undefined;
-}
-
-async function createMcpSchemaProbePlugin(
-  tempDir: string,
-): Promise<{ pluginPath: string; resultToken: string }> {
-  const pluginDir = path.join(tempDir, MCP_SCHEMA_PROBE_PLUGIN_ID);
-  const resultToken = `MCP-SCHEMA-${randomBytes(6).toString("hex").toUpperCase()}`;
-  await fs.mkdir(pluginDir, { recursive: true });
-  const pluginFile = path.join(pluginDir, "index.cjs");
-  await fs.writeFile(
-    path.join(pluginDir, "openclaw.plugin.json"),
-    `${JSON.stringify(
-      {
-        id: MCP_SCHEMA_PROBE_PLUGIN_ID,
-        name: "MCP Schema Probe",
-        description: "Live test plugin for no-argument MCP tool schemas",
-        configSchema: { type: "object", additionalProperties: false, properties: {} },
-        contracts: { tools: [MCP_SCHEMA_PROBE_TOOL_NAME] },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  await fs.writeFile(
-    pluginFile,
-    `module.exports = {
-  id: "${MCP_SCHEMA_PROBE_PLUGIN_ID}",
-  name: "MCP Schema Probe",
-  register(api) {
-    api.registerTool({
-      name: "${MCP_SCHEMA_PROBE_TOOL_NAME}",
-      description: "Live test no-argument tool for MCP schema normalization",
-      parameters: { type: "object" },
-      async execute() {
-        return { content: [{ type: "text", text: "${resultToken}" }] };
-      },
-    });
-  },
-};
-`,
-  );
-  return { pluginPath: pluginDir, resultToken };
 }
 
 describeLive("gateway live (cli backend)", () => {
@@ -639,62 +540,9 @@ describeLive("gateway live (cli backend)", () => {
       const tempConfigPath = path.join(tempDir, "openclaw.json");
       await fs.writeFile(tempConfigPath, `${JSON.stringify(nextCfg, null, 2)}\n`);
       setTestEnvValue("OPENCLAW_CONFIG_PATH", tempConfigPath);
-      if (CLI_CACHE_PROBE) {
-        const apiKey =
-          process.env.ANTHROPIC_API_KEY?.trim() || process.env.ANTHROPIC_API_KEY_OLD?.trim();
-        if (!apiKey) {
-          throw new Error("Claude CLI cache probe requires an Anthropic API key");
-        }
-        // Exercise the same profile-owned secret-input path as an operator-configured key.
-        // The isolated state directory is removed when this live test finishes.
-        saveAuthProfileStore(
-          {
-            version: 1,
-            profiles: {
-              [CLI_CACHE_AUTH_PROFILE_ID]: {
-                type: "api_key",
-                provider: "claude-cli",
-                key: apiKey,
-              },
-            },
-            order: { "claude-cli": [CLI_CACHE_AUTH_PROFILE_ID] },
-          },
-          resolveAgentDir(nextCfg, "dev"),
-          { syncExternalCli: false },
-        );
-      }
-      let cacheProbeBackend: RuntimeBackendEntry | undefined;
-      if (CLI_CACHE_PROBE) {
-        // This Vitest gateway uses the minimal startup path, so load the owning bundled plugin
-        // explicitly. The production Gateway loads the same runtime registration at startup.
-        const registry = loadOpenClawPlugins({
-          cache: false,
-          config: nextCfg,
-          onlyPluginIds: ["anthropic"],
-        });
-        const registration = registry.cliBackends.find((entry) => entry.backend.id === providerId);
-        if (!registration) {
-          const pluginStates = registry.plugins
-            .map(
-              (plugin) =>
-                `${plugin.id}:${plugin.status}${plugin.error ? ` (${plugin.error})` : ""}`,
-            )
-            .join(", ");
-          throw new Error(
-            `cache probe could not load runtime CLI backend ${providerId}; plugins=${pluginStates || "none"}`,
-          );
-        }
-        cacheProbeBackend = {
-          ...registration.backend,
-          // Keep the live harness's installed command and explicit API-key passthrough while
-          // exercising the owning plugin's real prepare/argv hooks.
-          config: liveBackend.config,
-          pluginId: registration.pluginId,
-          ...(registration.builtWithOpenClawVersion
-            ? { builtWithOpenClawVersion: registration.builtWithOpenClawVersion }
-            : {}),
-        };
-      }
+      const cacheProbeBackend = CLI_CACHE_PROBE
+        ? prepareClaudeCacheProbeBackend({ config: nextCfg, liveBackend, providerId })
+        : undefined;
       const deviceIdentity = await ensurePairedTestGatewayClientIdentity();
       let server: Awaited<ReturnType<typeof startGatewayServer>> | undefined;
       let client: Awaited<ReturnType<typeof connectTestGatewayClient>> | undefined;
@@ -949,7 +797,7 @@ describeLive("gateway live (cli backend)", () => {
           }
           logCliBackendLiveStep("agent-resume:done", { status: resumePayload?.status });
           if (CLI_CACHE_PROBE) {
-            logCliCacheUsage("resume1-warmup", resolveCliCacheUsage(resumePayload.result));
+            logCliCacheUsage("resume1-warmup", resumePayload.result);
             expect(cacheProbeOwner).toBeDefined();
           }
           const resumeText = extractPayloadText(resumePayload?.result);
@@ -1001,7 +849,7 @@ describeLive("gateway live (cli backend)", () => {
               }
               logCliBackendLiveStep(`agent-${turn}:done`, { status: probePayload.status });
               expect(extractPayloadText(probePayload.result)).toContain(marker);
-              return logCliCacheUsage(turn, resolveCliCacheUsage(probePayload.result));
+              return logCliCacheUsage(turn, probePayload.result);
             };
             const cacheNonce = randomBytes(3).toString("hex").toUpperCase();
             // Dirty the workspace between captured turns while the compatible Claude flag keeps
