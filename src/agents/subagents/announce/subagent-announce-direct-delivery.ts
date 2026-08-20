@@ -224,9 +224,6 @@ export async function sendSubagentAnnounceDirectly(params: {
         directIdempotencyKey: params.directIdempotencyKey,
         deliveryTarget,
         internalEvents: params.internalEvents,
-        ...(params.expectsCompletionMessage && !params.requesterIsSubagent
-          ? { requesterVisibleFinalDelivered: true }
-          : {}),
         onDeliveryResult: params.onDeliveryResult,
         isSourceSessionEffectsAllowed: isCompletionDeliveryAllowed,
       });
@@ -521,7 +518,8 @@ export async function sendSubagentAnnounceDirectly(params: {
       (hasMessagingToolDeliveryToSource(directAnnounceResult, deliveryTarget, {
         requireFinalReply: true,
       }) ||
-        (!requiresMessageToolDelivery &&
+        (shouldDeliverAgentFinal &&
+          !requiresMessageToolDelivery &&
           hasVisibleAgentPayload(
             {
               payloads: Array.isArray(directAnnounceResult.payloads)

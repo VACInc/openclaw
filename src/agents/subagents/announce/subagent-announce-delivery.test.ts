@@ -1739,19 +1739,10 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
 
     expect(onDeliveryResult).toHaveBeenCalledTimes(1);
     expect(onDeliveryResult).toHaveBeenCalledWith(
-      expect.objectContaining({
-        delivered: true,
-        path: "direct",
-        deliveredAt: expect.any(Number),
-        requesterVisibleFinalDelivered: true,
-      }),
+      expect.objectContaining({ delivered: true, path: "direct", deliveredAt: expect.any(Number) }),
     );
     releaseMirror();
-    await expect(delivery).resolves.toMatchObject({
-      delivered: true,
-      path: "direct",
-      requesterVisibleFinalDelivered: true,
-    });
+    await expect(delivery).resolves.toMatchObject({ delivered: true, path: "direct" });
     expect(onDeliveryResult).toHaveBeenCalledTimes(1);
   });
 

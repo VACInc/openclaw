@@ -507,12 +507,6 @@ export const startSubagentAnnounceCleanupFlow = (
   }
   const pendingPayload = loadPendingFinalDeliveryPayload(entry);
   const requesterOrigin = normalizeDeliveryContext(pendingPayload.requesterOrigin);
-  const requesterSettleWakeAtDispatch = entry.requesterSettleWake
-    ? {
-        ...entry.requesterSettleWake,
-        batchRunIds: [...(entry.requesterSettleWake.batchRunIds ?? [])],
-      }
-    : undefined;
   let latestDeliveryError = getDeliveryLastError(entry);
   const finalizeAnnounceCleanup = async (announceOutcome: SubagentAnnounceFlowOutcome) => {
     if (!context.isCleanupAttemptCurrent(runId, entry, cleanupGeneration)) {
@@ -585,7 +579,7 @@ export const startSubagentAnnounceCleanupFlow = (
         retireSupersededCleanupInBackground(context, runId, entry, cleanupGeneration);
         return;
       }
-      recordAnnounceDeliveryResult(entry, delivery, requesterSettleWakeAtDispatch, params.runs);
+      recordAnnounceDeliveryResult(entry, delivery, params.runs);
       if (delivery.delivered) {
         const deliveryState = ensureDeliveryState(entry);
         deliveryState.status = "delivered";

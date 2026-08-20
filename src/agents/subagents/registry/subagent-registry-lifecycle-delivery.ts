@@ -37,11 +37,7 @@ import type {
   SubagentLifecycleCommonContext,
   SubagentLifecycleOptions,
 } from "./subagent-registry-lifecycle-context.js";
-import type {
-  PendingFinalDeliveryPayload,
-  RequesterSettleWakeState,
-  SubagentRunRecord,
-} from "./subagent-registry.types.js";
+import type { PendingFinalDeliveryPayload, SubagentRunRecord } from "./subagent-registry.types.js";
 import { compareSubagentRunGeneration } from "./subagent-run-generation.js";
 import { hasSubagentRunEnded } from "./subagent-run-liveness.js";
 
@@ -83,7 +79,6 @@ export const formatAnnounceDeliveryError = (delivery: SubagentAnnounceDeliveryRe
 export const recordAnnounceDeliveryResult = (
   entry: SubagentRunRecord,
   delivery: SubagentAnnounceDeliveryResult,
-  requesterSettleWakeAtDispatch?: RequesterSettleWakeState,
   runs?: ReadonlyMap<string, SubagentRunRecord>,
 ) => {
   const deliveryState = ensureDeliveryState(entry);
@@ -95,34 +90,33 @@ export const recordAnnounceDeliveryResult = (
       typeof delivery.deliveredAt === "number" ? delivery.deliveredAt : Date.now();
     deliveryState.deliveredAt = deliveredAt;
     deliveryState.lastDropReason = undefined;
-    const requesterSettleWake = entry.requesterSettleWake;
-    const batchRunIds = requesterSettleWake?.batchRunIds;
-    const dispatchBatchRunIds = requesterSettleWakeAtDispatch?.batchRunIds;
-    const requesterSettleWakeGeneration = requesterSettleWakeAtDispatch?.rearmGeneration;
+    const requesterTurnRunId = entry.requesterTurnRunId?.trim();
     if (
       delivery.path === "direct" &&
-      delivery.requesterVisibleFinalDelivered === true &&
-      requesterSettleWake?.requesterYieldBatch === true &&
-      typeof requesterSettleWakeGeneration === "number" &&
-      Number.isSafeInteger(requesterSettleWakeGeneration) &&
-      requesterSettleWakeGeneration > 0 &&
-      requesterSettleWake.rearmGeneration === requesterSettleWakeGeneration &&
-      batchRunIds?.length === dispatchBatchRunIds?.length &&
-      batchRunIds?.includes(entry.runId) &&
-      batchRunIds.every((runId, index) => {
-        const sibling = runs?.get(runId);
-        return Boolean(
-          runId === dispatchBatchRunIds?.[index] &&
-          sibling &&
-          sibling.requesterSessionKey === entry.requesterSessionKey &&
-          sibling.requesterSettleWake?.requesterYieldBatch === true &&
-          sibling.requesterSettleWake.rearmGeneration === requesterSettleWakeGeneration &&
-          hasSubagentRunEnded(sibling) &&
-          (sibling === entry ? delivery.delivered : sibling.delivery?.status === "delivered"),
-        );
-      })
+      delivery.requesterVisibleFinalDelivered &&
+      requesterTurnRunId
     ) {
-      deliveryState.requesterVisibleFinalGeneration = requesterSettleWakeGeneration;
+      const siblings = [...(runs?.values() ?? [])].filter(
+        (sibling) =>
+          sibling.requesterSessionKey === entry.requesterSessionKey &&
+          sibling.requesterTurnRunId === requesterTurnRunId &&
+          sibling.expectsCompletionMessage === true,
+      );
+      if (
+        siblings.some((sibling) => sibling === entry) &&
+        siblings.every(
+          (sibling) =>
+            sibling.execution.status === "terminal" &&
+            hasSubagentRunEnded(sibling) &&
+            (sibling === entry || sibling.delivery?.status === "delivered"),
+        )
+      ) {
+        // Bind final evidence before yielding; direct delivery is fenced once a yield is frozen.
+        deliveryState.requesterVisibleFinal = {
+          requesterTurnRunId,
+          batchRunIds: siblings.map((sibling) => sibling.runId).toSorted(),
+        };
+      }
     }
   }
   deliveryState.disposition =

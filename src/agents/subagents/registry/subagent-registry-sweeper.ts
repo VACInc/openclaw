@@ -28,7 +28,6 @@ import {
   reconcileDurableSubagentKillIntent,
   reconcileProvisionalSubagentKill,
 } from "./subagent-registry-sweep-kill.js";
-import { resumeYieldedRecovery } from "./subagent-registry-yielded-recovery.js";
 import type {
   ContextEngineSubagentEndedParams,
   SubagentCompletionRequest,
@@ -292,7 +291,8 @@ export function createSubagentRegistrySweeper(params: {
           // The restored FIFO callback owns this row until durable settlement.
           continue;
         }
-        if (entry.requesterSettleWake && resumeYieldedRecovery(runId, entry, now, params)) {
+        if (entry.requesterSettleWake) {
+          params.resumeRequesterSettleWake(runId, entry);
           continue;
         }
         if (isSuspendedPendingFinalDelivery(entry)) {

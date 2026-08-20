@@ -94,7 +94,6 @@ export async function deliverCompletionDirect(params: {
     threadId?: string;
   };
   internalEvents?: readonly AgentInternalEvent[];
-  requesterVisibleFinalDelivered?: true;
   onDeliveryResult?: (delivery: SubagentAnnounceDeliveryResult) => void;
   isSourceSessionEffectsAllowed?: () => boolean;
 }): Promise<SubagentAnnounceDeliveryResult | undefined> {
@@ -139,14 +138,7 @@ export async function deliverCompletionDirect(params: {
         }
         // Platform identity is committed before transcript mirroring, which
         // may wait behind the requester's still-active SQLite writer.
-        committedDelivery = {
-          delivered: true,
-          path: "direct",
-          deliveredAt: Date.now(),
-          ...(params.requesterVisibleFinalDelivered
-            ? { requesterVisibleFinalDelivered: true }
-            : {}),
-        };
+        committedDelivery = { delivered: true, path: "direct", deliveredAt: Date.now() };
         params.onDeliveryResult?.(committedDelivery);
       },
       mirror: {
@@ -171,11 +163,7 @@ export async function deliverCompletionDirect(params: {
           : { disposition: "intentional_non_delivery" as const, terminal: true }),
       };
     }
-    return {
-      delivered: true,
-      path: "direct",
-      ...(params.requesterVisibleFinalDelivered ? { requesterVisibleFinalDelivered: true } : {}),
-    };
+    return { delivered: true, path: "direct" };
   } catch (err) {
     if (committedDelivery) {
       // Post-send bookkeeping must never turn an identified delivery into a
