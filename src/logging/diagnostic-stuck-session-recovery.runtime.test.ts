@@ -743,7 +743,7 @@ describe("stuck session recovery", () => {
     ]);
   });
 
-  it("reports when recovery finds no active work to release", async () => {
+  it("releases stale processing state when recovery finds no active work", async () => {
     mocks.resolveActiveEmbeddedRunHandleSessionId.mockReturnValue(undefined);
     mocks.resolveActiveEmbeddedRunSessionId.mockReturnValue(undefined);
     mocks.isEmbeddedAgentRunActive.mockReturnValue(false);
@@ -757,7 +757,8 @@ describe("stuck session recovery", () => {
 
     expect(mocks.resetCommandLane).toHaveBeenCalledWith("session:agent:main:main");
     expect(warnLogMessages()).toEqual([
-      "stuck session recovery outcome: status=noop action=none sessionId=stale-session sessionKey=agent:main:main lane=session:agent:main:main reason=no_active_work",
+      "stuck session recovery: sessionId=stale-session sessionKey=agent:main:main age=180s action=release_lane aborted=false drained=true released=0",
+      "stuck session recovery outcome: status=released action=release_lane sessionId=stale-session sessionKey=agent:main:main lane=session:agent:main:main reason=no_active_work released=0",
     ]);
   });
 
@@ -777,7 +778,7 @@ describe("stuck session recovery", () => {
     expect(mocks.resetCommandLane).toHaveBeenCalledWith("session:agent:main:main");
     expect(warnLogMessages()).toEqual([
       "stuck session recovery: sessionId=stale-session sessionKey=agent:main:main age=180s action=release_lane aborted=false drained=true released=0",
-      "stuck session recovery outcome: status=released action=release_lane sessionId=stale-session sessionKey=agent:main:main lane=session:agent:main:main released=0",
+      "stuck session recovery outcome: status=released action=release_lane sessionId=stale-session sessionKey=agent:main:main lane=session:agent:main:main reason=no_active_work released=0",
     ]);
   });
 
