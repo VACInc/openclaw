@@ -41,6 +41,7 @@ import * as storedModelOverrides from "../../sessions/stored-model-overrides.js"
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { normalizeThinkLevel, type ThinkLevel } from "../thinking.shared.js";
 import {
+  findSelectedCatalogEntry,
   mergePreparedConfiguredCatalog,
   normalizeRuntimeRef,
   resolveRuntimeNormalization,
@@ -133,16 +134,6 @@ function loadPreparedModelCatalogRuntime() {
 
 function loadSessionPersistenceRuntime() {
   return sessionPersistenceRuntimeLoader.load();
-}
-
-function findSelectedCatalogEntry(params: {
-  catalog?: readonly ModelCatalogEntry[];
-  provider: string;
-  model: string;
-}): ModelCatalogEntry | undefined {
-  const normalizedProvider = normalizeProviderId(params.provider);
-  const selectedKey = modelKey(normalizedProvider, params.model);
-  return params.catalog?.find((entry) => modelKey(entry.provider, entry.id) === selectedKey);
 }
 
 /** Resolves provider/model, allowlist, catalog, and thinking defaults for a reply run. */
