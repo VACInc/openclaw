@@ -204,7 +204,7 @@ describe("ollama setup", () => {
     });
     const modelIds = result.config.models?.providers?.ollama?.models?.map((m) => m.id);
 
-    expect(modelIds?.[0]).toBe("minimax-m2.7");
+    expect(modelIds?.[0]).toBe("kimi-k3");
     expect(result.config.models?.providers?.ollama?.baseUrl).toBe("https://ollama.com");
     expect(result.config.models?.providers?.ollama?.apiKey).toBe("test-ollama-key");
     expect(result.credential).toBe("test-ollama-key");
@@ -245,6 +245,7 @@ describe("ollama setup", () => {
 
     expect(modelIds).toEqual([
       "gemma4",
+      "kimi-k3:cloud",
       "minimax-m2.7:cloud",
       "glm-5.1:cloud",
       "glm-5.2:cloud",
@@ -457,8 +458,15 @@ describe("ollama setup", () => {
     const models = result.config.models?.providers?.ollama?.models;
     const modelIds = models?.map((m) => m.id);
 
-    expect(modelIds).toEqual(["minimax-m2.7", "glm-5.1", "glm-5.2"]);
+    expect(modelIds).toEqual(["kimi-k3", "minimax-m2.7", "glm-5.1", "glm-5.2"]);
     expect(models).toEqual([
+      expect.objectContaining({
+        id: "kimi-k3",
+        contextWindow: 1_048_576,
+        reasoning: true,
+        input: ["text", "image"],
+        compat: { supportsTools: true, supportsUsageInStreaming: true },
+      }),
       expect.objectContaining({
         id: "minimax-m2.7",
         contextWindow: 196_608,
@@ -501,6 +509,7 @@ describe("ollama setup", () => {
     const modelIds = models?.map((m) => m.id);
 
     expect(modelIds).toEqual([
+      "kimi-k3",
       "minimax-m2.7",
       "glm-5.1",
       "glm-5.2",

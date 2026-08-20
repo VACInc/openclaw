@@ -5,6 +5,7 @@ import type { Socket } from "node:net";
 import { expectDefined } from "@openclaw/normalization-core";
 import { jsonResponse, requestBodyText, requestUrl } from "openclaw/plugin-sdk/test-env";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { OLLAMA_DEFAULT_CONTEXT_WINDOW } from "./defaults.js";
 import {
   buildOllamaProvider,
   buildOllamaModelDefinition,
@@ -246,6 +247,22 @@ describe("ollama provider models", () => {
         contextWindow: 1_000_000,
         maxTokens: 8192,
       }),
+    );
+  });
+
+  it("resolves known cloud context windows for bare and :cloud model refs", () => {
+    // A suffixed ref must not silently drop to the generic default when live
+    // inspection is unavailable; both spellings name the same cloud model.
+    for (const modelId of ["kimi-k3", "kimi-k3:cloud"]) {
+      expect(buildOllamaModelDefinition(modelId)).toEqual(
+        expect.objectContaining({ id: modelId, contextWindow: 1_048_576 }),
+      );
+    }
+  });
+
+  it("keeps the generic default for cloud models with no known context window", () => {
+    expect(buildOllamaModelDefinition("not-a-known-model:cloud")).toEqual(
+      expect.objectContaining({ contextWindow: OLLAMA_DEFAULT_CONTEXT_WINDOW }),
     );
   });
 

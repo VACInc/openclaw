@@ -7,6 +7,11 @@ export const OLLAMA_CLOUD_PROVIDER_ID = "ollama-cloud";
 export const OLLAMA_GLM52_CLOUD_MODEL_ID = "glm-5.2";
 export const OLLAMA_CLOUD_DEFAULT_MODELS = [
   {
+    id: "kimi-k3",
+    contextWindow: 1_048_576,
+    capabilities: ["completion", "thinking", "tools", "vision"],
+  },
+  {
     id: "minimax-m2.7",
     contextWindow: 196_608,
     capabilities: ["completion", "thinking", "tools"],
@@ -22,6 +27,14 @@ export const OLLAMA_CLOUD_DEFAULT_MODELS = [
     capabilities: ["completion", "thinking", "tools"],
   },
 ] as const;
+
+/** Cloud models are referenced bare, `:cloud`-suffixed, and `-cloud`-suffixed. */
+export function normalizeOllamaCloudModelId(modelId: string): string {
+  return modelId
+    .trim()
+    .toLowerCase()
+    .replace(/(?::cloud|-cloud)$/, "");
+}
 
 export const OLLAMA_DEFAULT_CONTEXT_WINDOW = 128000;
 export const OLLAMA_LOCAL_CONTEXT_TOKENS = 32_768;
