@@ -12,6 +12,7 @@ import {
   replaceRuntimeAuthProfileStoreSnapshots,
 } from "../../agents/auth-profiles.js";
 import type { PreparedModelRuntimeAuth } from "../../agents/prepared-model-runtime-auth.js";
+import { materializeRuntimeCapabilities } from "../../agents/prepared-model-runtime.configured-catalog.js";
 import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { loadManifestMetadataSnapshot } from "../../plugins/manifest-contract-eligibility.js";
@@ -153,7 +154,10 @@ vi.mock("../../plugins/plugin-metadata-snapshot.js", async (importOriginal) => (
 }));
 
 vi.mock("../../plugins/provider-thinking.js", () => ({
-  resolveEffectiveThinkingProfile: () => undefined,
+  resolveEffectiveThinkingProfile: (params: { provider: string; context: { modelId: string } }) =>
+    params.provider === "claude-cli" && params.context.modelId === "claude-mythos-5"
+      ? { levels: [{ id: "off" }], defaultLevel: "off" }
+      : undefined,
 }));
 
 const withoutOpenAIEnvAuth = async <T>(run: () => Promise<T>): Promise<T> =>
@@ -626,6 +630,62 @@ describe("models.list", () => {
         ]),
       });
     }
+  });
+
+  it("publishes the concrete Claude CLI thinking policy for a configured logical model", async () => {
+    const modelId = "claude-mythos-5";
+    const runtimeConfig = {
+      agents: {
+        defaults: {
+          model: { primary: `anthropic/${modelId}` },
+          models: {
+            [`anthropic/${modelId}`]: { agentRuntime: { id: "claude-cli" } },
+          },
+        },
+      },
+      models: {
+        providers: {
+          anthropic: { models: [{ id: modelId, name: "Claude Mythos 5" }] },
+        },
+      },
+    } as unknown as OpenClawConfig;
+    const materializedCatalog = materializeRuntimeCapabilities(
+      [{ id: modelId, name: "Claude Mythos 5", provider: "anthropic" }],
+      [
+        {
+          provider: "anthropic",
+          modelId,
+          model: {
+            id: modelId,
+            name: "Claude Mythos 5 (Claude CLI)",
+            provider: "claude-cli",
+            reasoning: true,
+          } as never,
+        },
+      ],
+    );
+    const { request, respond } = requestModelsList({
+      view: "configured",
+      runtimeConfig,
+      loadGatewayModelCatalog: vi.fn(async () => materializedCatalog),
+    });
+
+    await request;
+
+    const payload = respond.mock.calls[0]?.[1] as
+      | { models: Array<Record<string, unknown>> }
+      | undefined;
+    const model = payload?.models.find(
+      (entry) => entry.provider === "anthropic" && entry.id === modelId,
+    );
+    expect(model).toMatchObject({
+      provider: "anthropic",
+      reasoning: true,
+      agentRuntime: { id: "claude-cli" },
+      thinkingLevels: [{ id: "off", label: "off" }],
+      thinkingDefault: "off",
+    });
+    expect(model).not.toHaveProperty("thinkingPolicyProvider");
   });
 
   it("keeps source-authored provider inventory when the canonical catalog is missing", async () => {

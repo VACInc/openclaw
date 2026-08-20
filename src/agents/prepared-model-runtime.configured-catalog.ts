@@ -98,8 +98,12 @@ export function materializeRuntimeCapabilities(
   );
   return entries.map((entry) => {
     const runtime = runtimeByKey.get(modelCatalogEntryKey(entry));
-    if (!runtime || entry.configuredReasoning !== undefined) {
+    if (!runtime) {
       return entry;
+    }
+    const thinkingPolicyProvider = runtime.provider;
+    if (entry.configuredReasoning !== undefined) {
+      return { ...entry, thinkingPolicyProvider };
     }
     const params =
       runtime.params || entry.params ? { ...runtime.params, ...entry.params } : undefined;
@@ -107,6 +111,7 @@ export function materializeRuntimeCapabilities(
       runtime.compat || entry.compat ? { ...runtime.compat, ...entry.compat } : undefined;
     return {
       ...entry,
+      thinkingPolicyProvider,
       ...(runtime.reasoning !== undefined ? { reasoning: runtime.reasoning } : {}),
       ...(params ? { params } : {}),
       ...(compat ? { compat } : {}),

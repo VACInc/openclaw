@@ -395,6 +395,7 @@ async function buildPublicModelsListEntries(params: {
                 model: entry.id,
                 modelCatalog: params.thinkingCatalog,
                 configuredReasoning: publicEntry.configuredReasoning,
+                thinkingPolicyProvider: publicEntry.thinkingPolicyProvider,
               })
             : undefined;
       return {
