@@ -401,6 +401,19 @@ export async function recoverStuckDiagnosticSession(
       diag.warn(`stuck session recovery outcome: ${formatRecoveryOutcome(outcome)}`);
       return outcome;
     }
+    // An active run that neither aborted nor released still owns its work. Reporting
+    // recovery here would clear the session's diagnostic state out from under it.
+    const outcome: StuckSessionRecoveryOutcome = {
+      status: "skipped",
+      action: "observe_only",
+      reason: "active_embedded_run",
+      sessionId: params.sessionId,
+      sessionKey: params.sessionKey,
+      activeSessionId,
+      activeWorkKind: "embedded_run",
+    };
+    diag.warn(`stuck session recovery outcome: ${formatRecoveryOutcome(outcome)}`);
+    return outcome;
   } catch (err) {
     const outcome: StuckSessionRecoveryOutcome = {
       status: "failed",

@@ -762,6 +762,29 @@ describe("stuck session recovery", () => {
     ]);
   });
 
+  it("keeps observing an active run that neither aborted nor released", async () => {
+    mocks.resolveActiveEmbeddedRunHandleSessionId.mockReturnValue("active-session");
+    mocks.resolveActiveEmbeddedRunSessionId.mockReturnValue("active-session");
+    mocks.isEmbeddedAgentRunActive.mockReturnValue(true);
+    mocks.abortEmbeddedAgentRun.mockReturnValue(false);
+    mocks.forceClearEmbeddedAgentRun.mockReturnValue(false);
+    mocks.resetCommandLane.mockReturnValue(0);
+
+    const outcome = await recoverStuckDiagnosticSession({
+      sessionId: "active-session",
+      sessionKey: "agent:main:main",
+      ageMs: 180_000,
+      allowActiveAbort: true,
+    });
+
+    expect(outcome).toMatchObject({
+      status: "skipped",
+      action: "observe_only",
+      reason: "active_embedded_run",
+      activeSessionId: "active-session",
+    });
+  });
+
   it("clears stale queued processing state even when the lane has no active work", async () => {
     mocks.resolveActiveEmbeddedRunHandleSessionId.mockReturnValue(undefined);
     mocks.resolveActiveEmbeddedRunSessionId.mockReturnValue(undefined);
