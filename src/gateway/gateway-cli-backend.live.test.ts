@@ -31,7 +31,7 @@ import {
   MCP_SCHEMA_PROBE_TOOL_NAME,
   prepareClaudeCacheProbeBackend,
   type RuntimeBackendEntry,
-} from "./gateway-cli-backend.live-cache-helpers.js";
+} from "./gateway-cli-backend.live-cache.test-helpers.js";
 import {
   applyCliBackendLiveEnv,
   buildClaudeCliResumeContinuityProbe,
