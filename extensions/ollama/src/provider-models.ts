@@ -346,7 +346,7 @@ export function isOllamaCloudModel(modelName: string | undefined): boolean {
  * Both spellings must reach the same known context window, or a suffixed ref silently
  * falls back to the generic default whenever live inspection is unavailable.
  */
-export function resolveOllamaCloudDefaultModel(
+function resolveOllamaCloudDefaultModel(
   modelId: string,
 ): (typeof OLLAMA_CLOUD_DEFAULT_MODELS)[number] | undefined {
   const normalized = normalizeOllamaCloudModelId(modelId);
