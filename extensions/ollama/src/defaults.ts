@@ -12,6 +12,11 @@ export const OLLAMA_GLM52_CLOUD_MODEL_ID = "glm-5.2";
  */
 export const OLLAMA_CLOUD_DEFAULT_MODELS = [
   {
+    id: "minimax-m2.7",
+    contextWindow: 196_608,
+    capabilities: ["completion", "thinking", "tools"],
+  },
+  {
     id: "minimax-m3",
     contextWindow: 524_288,
     capabilities: ["completion", "thinking", "tools", "vision"],
@@ -20,11 +25,6 @@ export const OLLAMA_CLOUD_DEFAULT_MODELS = [
     id: "kimi-k3",
     contextWindow: 1_048_576,
     capabilities: ["completion", "thinking", "tools", "vision"],
-  },
-  {
-    id: "minimax-m2.7",
-    contextWindow: 196_608,
-    capabilities: ["completion", "thinking", "tools"],
   },
   {
     id: "glm-5.1",

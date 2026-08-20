@@ -36,7 +36,7 @@ Non-interactive onboarding accepts the key directly:
 openclaw onboard --auth-choice ollama-cloud --ollama-cloud-api-key "<key>"
 ```
 
-Onboarding sets the default model to `ollama-cloud/minimax-m3`.
+Onboarding sets the default model to `ollama-cloud/minimax-m2.7`.
 
 ## Defaults
 
@@ -44,7 +44,7 @@ Onboarding sets the default model to `ollama-cloud/minimax-m3`.
 - Base URL: `https://ollama.com`
 - Env var: `OLLAMA_API_KEY`
 - API style: Ollama native `/api/chat`
-- Onboarding default model: `ollama-cloud/minimax-m3`
+- Onboarding default model: `ollama-cloud/minimax-m2.7`
 
 ## When to choose Ollama Cloud
 
@@ -72,8 +72,8 @@ openclaw models set ollama-cloud/kimi-k2.6
 
 Hosted ids in the live catalog include `deepseek-v4-flash`, `glm-5.2`,
 `gpt-oss:20b`, `kimi-k3`, and `minimax-m3`. When live discovery returns
-nothing, OpenClaw falls back to the bundled rows `minimax-m3`, `kimi-k3`,
-`minimax-m2.7`, `glm-5.1`, and `glm-5.2`. Retired `kimi-k2.5` remains marked
+nothing, OpenClaw falls back to the bundled rows `minimax-m2.7`, `minimax-m3`,
+`kimi-k3`, `glm-5.1`, and `glm-5.2`. Retired `kimi-k2.5` remains marked
 deprecated for existing exact references, but is no longer a current hosted
 model.
 
