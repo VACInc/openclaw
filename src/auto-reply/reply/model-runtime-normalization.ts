@@ -1,10 +1,6 @@
 /** Prepared plugin metadata handoff for runtime model normalization. */
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
-import {
-  modelKey,
-  normalizeModelRef,
-  normalizeProviderId,
-} from "../../agents/model-selection.js";
+import { modelKey, normalizeModelRef, normalizeProviderId } from "../../agents/model-selection.js";
 import { RUNTIME_MODEL_VISIBILITY_NORMALIZATION } from "../../agents/model-visibility-policy.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { getCurrentPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-snapshot.js";
