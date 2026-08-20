@@ -165,6 +165,20 @@ function verifyCanonicalIdentity(
   }
 }
 
+/** A valid canonical row keeps runtime identity authoritative over retired JSON (#120610). */
+function canonicalRowIsValid(
+  identity: NormalizedLegacyDeviceIdentity,
+  env: NodeJS.ProcessEnv,
+): boolean {
+  try {
+    const { db } = openOpenClawStateDatabase({ env });
+    const row = readCanonicalIdentity(db);
+    return row !== undefined && classifyCanonicalRow(row, identity) !== "invalid";
+  } catch {
+    return false;
+  }
+}
+
 function importAndRecordReceipt(params: {
   env: NodeJS.ProcessEnv;
   sourcePath: string;
@@ -316,6 +330,7 @@ async function cleanupReceiptSources(params: {
   }
   const changes: string[] = [];
   const warnings: string[] = [];
+  const notices: string[] = [];
   let removed = 0;
   for (const candidate of [params.detected.sourcePath, params.detected.claimPath]) {
     if (!(await params.stateRoot.exists(relativeLegacyPath(params.stateDir, candidate)))) {
@@ -333,9 +348,19 @@ async function cleanupReceiptSources(params: {
       continue;
     }
     if (snapshot.sha256 !== params.receipt.sourceSha256) {
-      warnings.push(
-        `Retired device identity cleanup preserved ${candidate}: bytes differ from the migration receipt.`,
-      );
+      // #120610 made the canonical SQLite row authoritative over retired JSON, so a
+      // divergent preserved file is inert while that row is valid. A warning here trips
+      // the startup-migration readiness gate and crash-loops the gateway over a file
+      // runtime never reads; only a missing/invalid canonical row keeps this fatal.
+      if (canonicalRowIsValid(snapshot.identity, params.env)) {
+        notices.push(
+          `Preserved retired device identity ${candidate}: bytes differ from the migration receipt; the canonical SQLite identity remains authoritative. Archive or delete the file to clear this notice.`,
+        );
+      } else {
+        warnings.push(
+          `Retired device identity cleanup preserved ${candidate}: bytes differ from the migration receipt.`,
+        );
+      }
       continue;
     }
     try {
@@ -352,7 +377,7 @@ async function cleanupReceiptSources(params: {
   if (removed > 0) {
     changes.push("Removed retired device identity JSON covered by its SQLite receipt.");
   }
-  return { changes, warnings };
+  return { changes, warnings, notices };
 }
 
 async function migrateWithExclusiveStateOwnership(params: {
