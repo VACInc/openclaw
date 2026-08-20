@@ -3,7 +3,7 @@
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { asDateTimestampMs } from "@openclaw/normalization-core/number-coercion";
 import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
-import { tryResolveSystemAgentTargetAgentId } from "../../agents/agent-scope-config.js";
+import { tryResolveAmbientOwnerAgentId } from "../../agents/agent-scope-config.js";
 import {
   type AuthHealthSummary,
   type AuthProfileHealthStatus,
@@ -580,7 +580,7 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
       resolveModelAuthAgentScope(
         cfg,
         params.agentId === undefined || params.agentId === ""
-          ? tryResolveSystemAgentTargetAgentId(cfg)
+          ? tryResolveAmbientOwnerAgentId(cfg)
           : params.agentId,
       );
     try {

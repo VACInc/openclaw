@@ -878,10 +878,10 @@
 .chat-tool-card__widget-actions::part(menu) {
   min-width: 176px;
   padding: var(--menu-padding);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--overlay-border);
   border-radius: var(--menu-radius);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--overlay-shadow);
 }
 
 .chat-tool-card__widget-actions-trigger,
@@ -1130,10 +1130,10 @@
 }
 
 /* Completed-turn work rollup: slim "Worked for X" disclosure standing in for
-   the turn's intermediate tool/commentary groups. Sits snug above the final
-   reply, aligned with the message column via a gutter matching the avatar. */
+   the turn's intermediate tool/commentary groups. Keep it equally separated
+   from the prompt and final reply. */
 .chat-group--work {
-  padding-bottom: 8px;
+  padding-block: 9px;
 }
 
 .chat-work-group .chat-activity-group__label {
