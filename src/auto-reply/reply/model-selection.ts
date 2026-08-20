@@ -143,6 +143,24 @@ function findSelectedCatalogEntry(params: {
   return params.catalog?.find((entry) => modelKey(entry.provider, entry.id) === selectedKey);
 }
 
+function mergePreparedConfiguredCatalog(params: {
+  configured: ModelCatalog;
+  prepared?: readonly ModelCatalogEntry[];
+}): ModelCatalog {
+  if (!params.prepared?.length) {
+    return params.configured;
+  }
+  const preparedByKey = new Map(
+    params.prepared.map((entry) => [modelKey(entry.provider, entry.id), entry]),
+  );
+  return params.configured.map((entry) => {
+    const prepared = preparedByKey.get(modelKey(entry.provider, entry.id));
+    // The prepared row owns runtime capabilities; the configured row limits
+    // visibility and retains any authored metadata absent from that snapshot.
+    return prepared ? { ...entry, ...prepared } : entry;
+  });
+}
+
 /** Resolves provider/model, allowlist, catalog, and thinking defaults for a reply run. */
 export async function createModelSelectionState(params: {
   cfg: OpenClawConfig;
@@ -229,7 +247,10 @@ export async function createModelSelectionState(params: {
     provider: defaultProvider,
     model: defaultModel,
   });
-  const configuredModelCatalog = buildConfiguredModelCatalog({ cfg, manifestPlugins });
+  const configuredModelCatalog = mergePreparedConfiguredCatalog({
+    configured: buildConfiguredModelCatalog({ cfg, manifestPlugins }),
+    prepared: params.preparedModelCatalog?.entries,
+  });
   const needsModelCatalog =
     params.hasModelDirective ||
     (hasAllowlist && visibilityPolicy.hasProviderWildcards && !defaultModelVisibleByWildcard);

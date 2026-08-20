@@ -93,16 +93,21 @@ function resolveThinkingPolicyContext(params: {
   configuredReasoning?: boolean;
 }) {
   const providerRaw = normalizeOptionalString(params.provider);
-  const normalizedProvider = providerRaw ? normalizeProviderId(providerRaw) : "";
   const modelId = normalizeOptionalString(params.model) ?? "";
   const modelKey = normalizeOptionalLowercaseString(params.model) ?? "";
   const candidate = resolveThinkingCatalogEntry(params);
+  const thinkingPolicyProvider = normalizeOptionalString(candidate?.thinkingPolicyProvider);
+  // Prepared catalogs keep the logical model identity but record the concrete
+  // runtime policy owner so every session and directive surface stays aligned.
+  const normalizedProvider = providerRaw
+    ? normalizeProviderId(thinkingPolicyProvider ?? providerRaw)
+    : "";
   return {
     normalizedProvider,
     modelId,
     modelKey,
     api: candidate?.api,
-    reasoning: params.configuredReasoning ?? candidate?.reasoning,
+    reasoning: params.configuredReasoning ?? candidate?.configuredReasoning ?? candidate?.reasoning,
     ...(candidate?.params ? { params: candidate.params } : {}),
     compat: candidate?.compat,
   };

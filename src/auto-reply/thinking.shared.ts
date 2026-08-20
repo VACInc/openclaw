@@ -32,6 +32,8 @@ export type ThinkingCatalogEntry = {
   api?: string;
   reasoning?: boolean;
   configuredReasoning?: boolean;
+  /** Concrete runtime owner of thinking policy; internal and never project to clients. */
+  thinkingPolicyProvider?: string;
   input?: readonly ("text" | "image" | "audio" | "video" | "document")[];
   params?: Record<string, unknown>;
   compat?: {
