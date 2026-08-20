@@ -154,10 +154,30 @@ vi.mock("../../plugins/plugin-metadata-snapshot.js", async (importOriginal) => (
 }));
 
 vi.mock("../../plugins/provider-thinking.js", () => ({
-  resolveEffectiveThinkingProfile: (params: { provider: string; context: { modelId: string } }) =>
-    params.provider === "claude-cli" && params.context.modelId === "claude-mythos-5"
-      ? { levels: [{ id: "off" }], defaultLevel: "off" }
-      : undefined,
+  resolveEffectiveThinkingProfile: (params: { provider: string; context: { modelId: string } }) => {
+    if (params.provider !== "claude-cli") {
+      return undefined;
+    }
+    if (params.context.modelId === "claude-mythos-5") {
+      return { levels: [{ id: "off" }], defaultLevel: "off" };
+    }
+    if (params.context.modelId === "claude-fable-5") {
+      return {
+        levels: [
+          { id: "minimal" },
+          { id: "low" },
+          { id: "medium" },
+          { id: "high" },
+          { id: "xhigh" },
+          { id: "adaptive" },
+          { id: "max" },
+        ],
+        defaultLevel: "high",
+        preserveWhenCatalogReasoningFalse: true,
+      };
+    }
+    return undefined;
+  },
 }));
 
 const withoutOpenAIEnvAuth = async <T>(run: () => Promise<T>): Promise<T> =>
@@ -579,6 +599,68 @@ describe("models.list", () => {
       reasoning: false,
       agentRuntime: { id: "claude-cli" },
       thinkingLevels: [{ id: "off", label: "off" }],
+    });
+  });
+
+  it("preserves mandatory Claude CLI thinking despite a configured reasoning opt-out", async () => {
+    const modelId = "claude-fable-5";
+    const runtimeConfig = {
+      agents: {
+        defaults: {
+          models: {
+            [`anthropic/${modelId}`]: { agentRuntime: { id: "claude-cli" } },
+          },
+        },
+      },
+      models: {
+        providers: {
+          anthropic: {
+            models: [{ id: modelId, name: modelId, reasoning: false }],
+          },
+        },
+      },
+    } as unknown as OpenClawConfig;
+    const materializedCatalog = materializeRuntimeCapabilities(
+      [{ id: modelId, name: modelId, provider: "anthropic", reasoning: false }],
+      [
+        {
+          provider: "anthropic",
+          modelId,
+          model: {
+            id: modelId,
+            name: `${modelId} (Claude CLI)`,
+            provider: "claude-cli",
+            reasoning: true,
+          } as never,
+        },
+      ],
+    );
+    const { request, respond } = requestModelsList({
+      view: "configured",
+      runtimeConfig,
+      loadGatewayModelCatalog: vi.fn(async () => materializedCatalog),
+    });
+
+    await request;
+
+    const payload = respond.mock.calls[0]?.[1] as
+      | { models: Array<Record<string, unknown>> }
+      | undefined;
+    expect(
+      payload?.models.find((entry) => entry.provider === "anthropic" && entry.id === modelId),
+    ).toMatchObject({
+      reasoning: false,
+      agentRuntime: { id: "claude-cli" },
+      thinkingLevels: [
+        { id: "minimal", label: "minimal" },
+        { id: "low", label: "low" },
+        { id: "medium", label: "medium" },
+        { id: "adaptive", label: "adaptive" },
+        { id: "high", label: "high" },
+        { id: "xhigh", label: "xhigh" },
+        { id: "max", label: "max" },
+      ],
+      thinkingDefault: "high",
     });
   });
 

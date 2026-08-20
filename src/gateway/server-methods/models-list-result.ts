@@ -385,19 +385,17 @@ async function buildPublicModelsListEntries(params: {
         entry,
       });
       const thinkingProfile =
-        publicEntry.reasoning === false
-          ? { thinkingLevels: [{ id: "off", label: "off" }], thinkingDefault: "off" as const }
-          : publicEntry.reasoning === true
-            ? resolveGatewayModelThinkingProfile({
-                cfg: params.cfg,
-                agentId: params.agentId,
-                provider: entry.provider,
-                model: entry.id,
-                modelCatalog: params.thinkingCatalog,
-                configuredReasoning: publicEntry.configuredReasoning,
-                thinkingPolicyProvider: publicEntry.thinkingPolicyProvider,
-              })
-            : undefined;
+        typeof publicEntry.reasoning !== "boolean"
+          ? undefined
+          : resolveGatewayModelThinkingProfile({
+              cfg: params.cfg,
+              agentId: params.agentId,
+              provider: entry.provider,
+              model: entry.id,
+              modelCatalog: params.thinkingCatalog,
+              configuredReasoning: publicEntry.configuredReasoning ?? publicEntry.reasoning,
+              thinkingPolicyProvider: publicEntry.thinkingPolicyProvider,
+            });
       return {
         ...buildPublicModelProjection(publicEntry),
         ...(configuredEntry?.tags.size ? { tags: [...configuredEntry.tags] } : {}),
