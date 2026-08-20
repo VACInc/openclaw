@@ -128,6 +128,10 @@ export type RunCliAgentParams = {
   modelProvider?: string;
   /** Vision capability resolved by the run owner from its prepared model catalog. */
   modelHasVision?: boolean;
+  /** Native context window resolved by the run owner from its prepared model catalog. */
+  modelContextWindow?: number;
+  /** Effective context cap resolved by the run owner from its prepared model catalog. */
+  modelContextTokens?: number;
   provider: string;
   model?: string;
   thinkLevel?: ThinkLevel;
