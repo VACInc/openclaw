@@ -1,6 +1,6 @@
-/** Canonical metadata for the legacy built-in external CLI auth profile slots. */
+/** Canonical metadata for the legacy built-in Claude CLI auth profile slot. */
 import type { AuthProfileConfig } from "../../config/types.auth.js";
-import { CLAUDE_CLI_PROFILE_ID, MINIMAX_CLI_PROFILE_ID } from "./constants.js";
+import { CLAUDE_CLI_PROFILE_ID } from "./constants.js";
 import { hasUsableOAuthCredential } from "./credential-state.js";
 import type { AuthProfileCredential } from "./types.js";
 
@@ -14,13 +14,6 @@ const EXTERNAL_CLI_PROFILE_METADATA = new Map<
   }
 >([
   [CLAUDE_CLI_PROFILE_ID, { provider: "claude-cli", legacyProviders: ["anthropic", "claude-cli"] }],
-  [
-    MINIMAX_CLI_PROFILE_ID,
-    {
-      provider: "minimax-portal",
-      legacyProviders: ["minimax", "minimax-cli", "minimax-portal"],
-    },
-  ],
 ]);
 
 export function listExternalCliProfileMetadataIds(): string[] {

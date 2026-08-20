@@ -31,6 +31,20 @@ import { maybeMigrateExternalCliProfileMetadata } from "./doctor-external-cli-pr
 afterEach(() => vi.clearAllMocks());
 
 describe("external CLI auth profile doctor migration", () => {
+  it("leaves legacy MiniMax metadata outside the Claude migration scope", () => {
+    const profileId = "minimax-portal:minimax-cli";
+    const cfg = {
+      auth: { profiles: { [profileId]: { provider: "minimax", mode: "token" } } },
+    } as OpenClawConfig;
+
+    const result = maybeMigrateExternalCliProfileMetadata({ cfg, env: {} });
+
+    expect(cfg.auth?.profiles?.[profileId]).toEqual({ provider: "minimax", mode: "token" });
+    expect(mocks.resolveExternalCliAuthProfiles).not.toHaveBeenCalled();
+    expect(mocks.saveStore).not.toHaveBeenCalled();
+    expect(result).toEqual({ changes: [], warnings: [], configChanged: false });
+  });
+
   it("persists the CLI credential before canonicalizing legacy Claude metadata", () => {
     const profileId = "anthropic:claude-cli";
     mocks.resolveExternalCliAuthProfiles.mockReturnValueOnce([

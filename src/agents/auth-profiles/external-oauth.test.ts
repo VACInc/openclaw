@@ -8,7 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderExternalAuthProfile } from "../../plugins/types.js";
 import { resolveAgentCredentialMapFromStore } from "../agent-auth-credentials.js";
 import { addEnvBackedAgentCredentials } from "../agent-auth-discovery-core.js";
-import { overlayExternalAuthProfiles } from "./external-auth.js";
+import {
+  overlayExternalAuthProfiles,
+  syncPersistedExternalCliAuthProfiles,
+} from "./external-auth.js";
 import { testing } from "./external-auth.test-support.js";
 import { readExternalCliBootstrapCredential } from "./external-cli-sync.js";
 import { getRuntimeExternalCliProfileIds } from "./runtime-external-profile-references.js";
@@ -30,11 +33,14 @@ const readCodexCliCredentialsCachedMock = vi.hoisted(() => {
 const readClaudeCliCredentialsCachedMock = vi.hoisted(() =>
   vi.fn<(_options?: unknown) => OAuthCredential | null>(() => null),
 );
+const readMiniMaxCliCredentialsCachedMock = vi.hoisted(() =>
+  vi.fn<(_options?: unknown) => OAuthCredential | null>(() => null),
+);
 
 vi.mock("../cli-credentials.js", () => ({
   readClaudeCliCredentialsCached: readClaudeCliCredentialsCachedMock,
   readCodexCliCredentialsCached: readCodexCliCredentialsCachedMock,
-  readMiniMaxCliCredentialsCached: () => null,
+  readMiniMaxCliCredentialsCached: readMiniMaxCliCredentialsCachedMock,
 }));
 
 function createStore(profiles: AuthProfileStore["profiles"] = {}): AuthProfileStore {
@@ -72,6 +78,8 @@ describe("auth external oauth helpers", () => {
     readCodexCliCredentialsCachedMock.mockReturnValue(null);
     readClaudeCliCredentialsCachedMock.mockReset();
     readClaudeCliCredentialsCachedMock.mockReturnValue(null);
+    readMiniMaxCliCredentialsCachedMock.mockReset();
+    readMiniMaxCliCredentialsCachedMock.mockReturnValue(null);
     testing.setResolveExternalAuthProfilesForTest(resolveExternalAuthProfilesWithPluginsMock);
   });
 
@@ -243,6 +251,57 @@ describe("auth external oauth helpers", () => {
       access: "rotated-claude-access",
     });
     expect(getRuntimeExternalCliProfileIds(restarted)).toEqual([profileId]);
+  });
+
+  it("does not reinterpret legacy MiniMax metadata as managed CLI ownership", () => {
+    const profileId = "minimax-portal:minimax-cli";
+    readMiniMaxCliCredentialsCachedMock.mockReturnValueOnce(
+      createCredential({
+        provider: "minimax-portal",
+        access: "minimax-cli-access",
+        refresh: "minimax-cli-refresh",
+        expires: createUsableOAuthExpiry(),
+      }),
+    );
+
+    const restarted = overlayExternalAuthProfiles(createStore(), {
+      config: {
+        auth: { profiles: { [profileId]: { provider: "minimax", mode: "token" } } },
+      },
+    });
+
+    expect(restarted.profiles[profileId]).toBeUndefined();
+    expect(getRuntimeExternalCliProfileIds(restarted)).toEqual([]);
+    expect(readMiniMaxCliCredentialsCachedMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves the existing MiniMax persisted refresh sync", () => {
+    const profileId = "minimax-portal:minimax-cli";
+    readMiniMaxCliCredentialsCachedMock.mockReturnValueOnce(
+      createCredential({
+        provider: "minimax-portal",
+        access: "fresh-minimax-access",
+        refresh: "fresh-minimax-refresh",
+        expires: createUsableOAuthExpiry(),
+      }),
+    );
+
+    const synced = syncPersistedExternalCliAuthProfiles(
+      createStore({
+        [profileId]: createCredential({
+          provider: "minimax-portal",
+          access: "expired-minimax-access",
+          refresh: "expired-minimax-refresh",
+          expires: Date.now() - 60_000,
+        }),
+      }),
+    );
+
+    expect(synced.profiles[profileId]).toMatchObject({
+      access: "fresh-minimax-access",
+      refresh: "fresh-minimax-refresh",
+    });
+    expect(readMiniMaxCliCredentialsCachedMock).toHaveBeenCalledOnce();
   });
 
   it("recovers an identity-less persisted Claude profile after restart and access expiry", () => {
