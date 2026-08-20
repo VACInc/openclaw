@@ -456,13 +456,14 @@ async function runSerializedClaudeTurn(
     });
   }
   if (session) {
+    const reusableSession = session;
     try {
-      if (!adoptClaudeLiveProcessMcpGrant({ session, context: params.context })) {
-        session.close("restart");
+      if (!adoptClaudeLiveProcessMcpGrant({ session: reusableSession, context: params.context })) {
+        reusableSession.close("restart");
         session = undefined;
       }
     } catch (error) {
-      session.close("restart", error);
+      reusableSession.close("restart", error);
       session = undefined;
       if (params.requiredSessionGeneration) {
         await cleanup();

@@ -304,17 +304,17 @@ export function transferMcpLoopbackClientGrant(params: {
   const target = clientGrantsByToken.get(params.targetToken);
   if (
     !source ||
-    !target ||
     source.runtimeOwnerToken !== params.runtimeOwnerToken ||
-    target.runtimeOwnerToken !== params.runtimeOwnerToken
+    (target && target.runtimeOwnerToken !== params.runtimeOwnerToken)
   ) {
     return false;
   }
   if (params.sourceToken === params.targetToken) {
     return true;
   }
-  // The child cannot replace its bearer after launch. Replace everything the
-  // bearer authorizes instead, and drop any prior capture before the next turn.
+  // The child cannot replace its bearer after launch. Turn cleanup may already
+  // have revoked that bearer, so recreate it only from this fresh admitted grant.
+  // An existing bearer owned by another runtime is never replaceable.
   const { activeCaptureKey: _activeCaptureKey, ...inactiveSource } = source;
   clientGrantsByToken.set(params.targetToken, {
     ...inactiveSource,

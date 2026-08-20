@@ -183,6 +183,7 @@ describe("Claude live MCP capture lifetime", () => {
     });
     const activateCapture = vi.fn<(captureKey: string) => void>();
     const deactivateCapture = vi.fn<(captureKey: string) => void>();
+    const revokeProcessToken = vi.fn<() => void>();
     const adoptedProcessTokens: string[] = [];
     const backend = {
       resumeArgs: ["-p", "--output-format", "stream-json", "--resume={sessionId}"],
@@ -198,6 +199,7 @@ describe("Claude live MCP capture lifetime", () => {
       context.preparedBackend.mcpClientGrantCapture = {
         transportToken,
         adoptProcessToken: (processToken) => adoptedProcessTokens.push(processToken),
+        revokeProcessToken,
         activate: activateCapture,
         deactivate: deactivateCapture,
       };
@@ -223,6 +225,9 @@ describe("Claude live MCP capture lifetime", () => {
     expect(deactivateCapture.mock.invocationCallOrder[0]).toBeLessThan(
       activateCapture.mock.invocationCallOrder[1]!,
     );
+    expect(revokeProcessToken).not.toHaveBeenCalled();
+    resetClaudeLiveSessionsForTest();
+    expect(revokeProcessToken).toHaveBeenCalledOnce();
   });
 
   it("reuses a captured process only while its thinking launch environment matches", async () => {

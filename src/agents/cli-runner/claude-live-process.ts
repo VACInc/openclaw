@@ -500,6 +500,8 @@ export async function spawnClaudeProcess(params: {
     await mcpCaptureAttempt.cleanup?.();
     throw error;
   }
+  const revokeMcpProcessGrant =
+    params.context.preparedBackend.mcpClientGrantCapture?.revokeProcessToken;
   session = {
     backend: params.context.preparedBackend.backend,
     key: params.key,
@@ -518,8 +520,15 @@ export async function spawnClaudeProcess(params: {
     currentTurn: null,
     idleTimer: null,
     cleanup: async () => {
-      await mcpCaptureAttempt.cleanup?.();
-      await params.cleanup();
+      try {
+        revokeMcpProcessGrant?.();
+      } finally {
+        try {
+          await mcpCaptureAttempt.cleanup?.();
+        } finally {
+          await params.cleanup();
+        }
+      }
     },
     cleanupPromise: null,
     closing: false,

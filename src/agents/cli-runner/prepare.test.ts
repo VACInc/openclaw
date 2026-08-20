@@ -3227,6 +3227,8 @@ describe("prepareCliRunContext", () => {
       runtimeOwnerToken: "loopback-owner-token",
       captureKey: "capture-test",
     });
+    context.preparedBackend.mcpClientGrantCapture?.revokeProcessToken();
+    expect(revokeMcpLoopbackClientGrant).toHaveBeenCalledExactlyOnceWith("stable-loopback-token");
     expect(context.mcpDeliveryCapture).toBe(true);
     expect(resolveMcpLoopbackScopedTools).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -3271,7 +3273,8 @@ describe("prepareCliRunContext", () => {
     );
     expect(context.systemPrompt).not.toContain("current source is default target");
     await context.preparedBackend.cleanup?.();
-    expect(revokeMcpLoopbackClientGrant).toHaveBeenCalledExactlyOnceWith("loopback-token");
+    expect(revokeMcpLoopbackClientGrant).toHaveBeenCalledTimes(2);
+    expect(revokeMcpLoopbackClientGrant).toHaveBeenLastCalledWith("loopback-token");
   });
 
   it("enables gateway delivery capture for Claude-style JSONL bundle MCP", async () => {

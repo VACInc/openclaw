@@ -1164,6 +1164,9 @@ export async function prepareCliRunContext(
                 }
                 activeToken = processToken;
               },
+              revokeProcessToken: () => {
+                prepareDeps.revokeMcpLoopbackClientGrant(activeToken);
+              },
               activate: (captureKey: string) => {
                 const activated = prepareDeps.activateMcpLoopbackClientGrantCapture({
                   token: activeToken,

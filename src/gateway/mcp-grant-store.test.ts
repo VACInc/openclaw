@@ -328,6 +328,9 @@ describe("mcp-grant-store", () => {
         captureKey: "stale-capture",
       }),
     ).toBe(true);
+    // Turn cleanup revokes the process bearer while the warm child still holds its token.
+    // The next admitted turn must be able to restore that exact inactive bearer.
+    expect(revokeMcpLoopbackClientGrant(stable.token)).toBe(true);
     const revocations: Array<{ token: string; runtimeOwnerToken: string }> = [];
     const unregister = registerMcpLoopbackClientGrantRevocationListener((event) => {
       revocations.push(event);
