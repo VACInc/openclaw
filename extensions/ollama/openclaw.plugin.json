@@ -385,26 +385,6 @@
             }
           },
           {
-            "id": "gpt-oss",
-            "name": "gpt-oss",
-            "reasoning": true,
-            "input": [
-              "text"
-            ],
-            "cost": {
-              "input": 0,
-              "output": 0,
-              "cacheRead": 0,
-              "cacheWrite": 0
-            },
-            "contextWindow": 131072,
-            "maxTokens": 8192,
-            "compat": {
-              "supportsTools": true,
-              "supportsUsageInStreaming": true
-            }
-          },
-          {
             "id": "gpt-oss:120b",
             "name": "gpt-oss:120b",
             "reasoning": true,
@@ -486,53 +466,12 @@
             }
           },
           {
-            "id": "mistral-large-3",
-            "name": "mistral-large-3",
-            "reasoning": false,
-            "input": [
-              "text",
-              "image"
-            ],
-            "cost": {
-              "input": 0,
-              "output": 0,
-              "cacheRead": 0,
-              "cacheWrite": 0
-            },
-            "contextWindow": 262144,
-            "maxTokens": 8192,
-            "compat": {
-              "supportsTools": true,
-              "supportsUsageInStreaming": true
-            }
-          },
-          {
             "id": "mistral-large-3:675b",
             "name": "mistral-large-3:675b",
             "reasoning": false,
             "input": [
               "text",
               "image"
-            ],
-            "cost": {
-              "input": 0,
-              "output": 0,
-              "cacheRead": 0,
-              "cacheWrite": 0
-            },
-            "contextWindow": 262144,
-            "maxTokens": 8192,
-            "compat": {
-              "supportsTools": true,
-              "supportsUsageInStreaming": true
-            }
-          },
-          {
-            "id": "nemotron-3-nano",
-            "name": "nemotron-3-nano",
-            "reasoning": true,
-            "input": [
-              "text"
             ],
             "cost": {
               "input": 0,

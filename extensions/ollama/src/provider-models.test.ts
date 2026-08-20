@@ -63,6 +63,7 @@ describe("ollama provider models", () => {
           {
             models: Array<{
               id: string;
+              status?: string;
               contextWindow: number;
               input: string[];
               reasoning: boolean;
@@ -79,33 +80,38 @@ describe("ollama provider models", () => {
     const models = manifest.modelCatalog.providers["ollama-cloud"]?.models ?? [];
     const declared = new Map(models.map((model) => [model.id, model]));
 
-    (
-      [
-        ["glm-5.1", 202_752, ["text"], true],
-        ["glm-5.2", 1_000_000, ["text"], true],
-        ["minimax-m2.7", 196_608, ["text"], true],
-        ["deepseek-v4-flash:0731", 1_048_576, ["text"], true],
-        ["deepseek-v4-flash:preview", 1_048_576, ["text"], true],
-        ["deepseek-v4-pro", 1_048_576, ["text"], true],
-        ["deepseek-v4-pro:0813", 1_048_576, ["text"], true],
-        ["deepseek-v4-pro:preview", 524_288, ["text"], true],
-        ["gemma4:31b", 262_144, ["text", "image"], true],
-        ["gpt-oss:120b", 131_072, ["text"], true],
-        ["gpt-oss:20b", 131_072, ["text"], true],
-        ["kimi-k2.5", 262_144, ["text", "image"], true],
-        ["kimi-k2.6", 262_144, ["text", "image"], true],
-        ["kimi-k2.7-code", 262_144, ["text", "image"], true],
-        ["kimi-k3", 1_048_576, ["text", "image"], true],
-        ["minimax-m3", 524_288, ["text", "image"], true],
-        ["mistral-large-3:675b", 262_144, ["text", "image"], false],
-        ["nemotron-3-nano:30b", 262_144, ["text"], true],
-        ["nemotron-3-super", 262_144, ["text"], true],
-        ["nemotron-3-ultra", 262_144, ["text"], true],
-        ["qwen3.5:397b", 262_144, ["text", "image"], true],
-      ] as const
-    ).forEach(([id, contextWindow, input, reasoning]) => {
+    const servedModels = [
+      ["glm-5.1", 202_752, ["text"], true],
+      ["glm-5.2", 1_000_000, ["text"], true],
+      ["minimax-m2.7", 196_608, ["text"], true],
+      ["deepseek-v4-flash", 1_048_576, ["text"], true],
+      ["deepseek-v4-flash:0731", 1_048_576, ["text"], true],
+      ["deepseek-v4-flash:preview", 1_048_576, ["text"], true],
+      ["deepseek-v4-pro", 1_048_576, ["text"], true],
+      ["deepseek-v4-pro:0813", 1_048_576, ["text"], true],
+      ["deepseek-v4-pro:preview", 524_288, ["text"], true],
+      ["gemma4", 262_144, ["text", "image"], true],
+      ["gemma4:31b", 262_144, ["text", "image"], true],
+      ["gpt-oss:120b", 131_072, ["text"], true],
+      ["gpt-oss:20b", 131_072, ["text"], true],
+      ["kimi-k2.6", 262_144, ["text", "image"], true],
+      ["kimi-k2.7-code", 262_144, ["text", "image"], true],
+      ["kimi-k3", 1_048_576, ["text", "image"], true],
+      ["minimax-m3", 524_288, ["text", "image"], true],
+      ["mistral-large-3:675b", 262_144, ["text", "image"], false],
+      ["nemotron-3-nano:30b", 262_144, ["text"], true],
+      ["nemotron-3-super", 262_144, ["text"], true],
+      ["nemotron-3-ultra", 262_144, ["text"], true],
+      ["qwen3.5", 262_144, ["text", "image"], true],
+      ["qwen3.5:397b", 262_144, ["text", "image"], true],
+    ] as const;
+    servedModels.forEach(([id, contextWindow, input, reasoning]) => {
       expect(declared.get(id)).toMatchObject({ contextWindow, input, reasoning });
     });
+    expect([...declared.keys()].toSorted()).toEqual(
+      [...servedModels.map(([id]) => id), "kimi-k2.5"].toSorted(),
+    );
+    expect(declared.get("kimi-k2.5")).toMatchObject({ status: "deprecated" });
     expect(declared.get("kimi-k3")?.cost).toEqual({ input: 3, output: 15, cacheRead: 0.3 });
   });
 
