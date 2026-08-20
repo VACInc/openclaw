@@ -11,6 +11,7 @@ import type {
 } from "./session-accessor.sqlite-contract.js";
 import {
   deleteLegacySessionEntryRows,
+  readExactSessionEntryJson,
   readExactSessionEntryRow,
   readSessionEntryStore,
   writeSessionEntry,
@@ -85,8 +86,15 @@ async function applySqliteSessionEntryReplacementProjection<T, TReplacement>(
     const replacementAuthorityKeys = selectedStatuses
       ? new Set(entries.map(({ sessionKey }) => sessionKey))
       : selectedKeys;
+    // Compare persisted row bytes, never a hydrated entry. Participants and owner live in
+    // their own table/columns, and each selection reader projects a different subset of them,
+    // so an entry-object compare can differ from the transaction re-read with no write at all
+    // and wedge the row's repairs forever.
     const expectedEntryJson = new Map(
-      entries.map(({ sessionKey, entry }) => [sessionKey, JSON.stringify(entry)]),
+      entries.map(({ sessionKey }) => [
+        sessionKey,
+        readExactSessionEntryJson(database, sessionKey),
+      ]),
     );
     const operation = await params.update(entries);
     const replacements = normalize(operation.replacements);
@@ -153,7 +161,10 @@ async function applySqliteSessionEntryReplacementProjection<T, TReplacement>(
         const transactionEntries = new Map<string, SessionEntry>();
         for (const sessionKey of validationKeys) {
           const transactionEntry = readExactSessionEntryRow(transactionDb, sessionKey)?.entry;
-          if (JSON.stringify(transactionEntry) !== expectedEntryJson.get(sessionKey)) {
+          if (
+            readExactSessionEntryJson(transactionDb, sessionKey) !==
+            expectedEntryJson.get(sessionKey)
+          ) {
             throw new Error(`SQLite session entry changed before replacement for ${sessionKey}`);
           }
           if (transactionEntry) {
