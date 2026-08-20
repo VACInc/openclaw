@@ -15,6 +15,8 @@ export type CodexCatalogHome = {
   label: string;
   agentDir: string;
   appServer: CodexAppServerRuntimeOptions;
+  /** Trusted local root for rollout provenance reads; absent for remote app-server connections. */
+  localSessionsRoot?: string;
   usesProcessHomeFallback: boolean;
 };
 

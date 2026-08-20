@@ -219,7 +219,7 @@ export async function listCodexSessionCatalog(params: {
         agentId,
         bindingStore: params.bindingStore,
         config: params.config,
-        control: params.control.forRequest(agentId, source),
+        control: params.control.forRequest(agentId, ownershipSource),
         query,
         runtime: params.runtime,
         sessionEntries: params.sessionEntries,
@@ -316,10 +316,11 @@ export function createCodexSessionCatalogNodeHostCommands(
     }
     const request = { ...parsed };
     delete request.agentId;
+    const source = controlFactory.homesForAgent(agentId)[0];
     return {
       agentId,
-      control: controlFactory.forRequest(agentId),
-      sourceHomeId: controlFactory.homesForAgent(agentId)[0]?.sourceHomeId,
+      control: controlFactory.forRequest(agentId, source),
+      sourceHomeId: source?.sourceHomeId,
       params: request,
       paramsJSON: JSON.stringify(request),
     };

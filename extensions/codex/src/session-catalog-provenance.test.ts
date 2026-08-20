@@ -33,8 +33,56 @@ describe("Codex catalog provenance", () => {
     });
 
     await expect(
-      isOpenClawManagedCodexThread({ id: "managed-thread", path: file } as CodexThread),
+      isOpenClawManagedCodexThread(
+        { id: "managed-thread", path: file } as CodexThread,
+        path.dirname(file),
+      ),
     ).resolves.toBe(true);
+  });
+
+  it("does not inspect a rollout outside the selected local sessions root", async () => {
+    const sessionsRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "openclaw-codex-provenance-root-"),
+    );
+    temporaryDirectories.push(sessionsRoot);
+    const file = await writeRollout({
+      id: "outside-managed-thread",
+      originator: "openclaw",
+      source: "vscode",
+    });
+    await expect(
+      isOpenClawManagedCodexThread(
+        { id: "outside-managed-thread", path: file } as CodexThread,
+        sessionsRoot,
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      isOpenClawManagedCodexThread(
+        { id: "outside-managed-thread", path: file } as CodexThread,
+        undefined,
+      ),
+    ).resolves.toBe(false);
+  });
+
+  it("does not follow a rollout symlink outside the selected local sessions root", async () => {
+    const sessionsRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "openclaw-codex-provenance-root-"),
+    );
+    temporaryDirectories.push(sessionsRoot);
+    const outside = await writeRollout({
+      id: "symlinked-managed-thread",
+      originator: "openclaw",
+      source: "vscode",
+    });
+    const linked = path.join(sessionsRoot, "rollout.jsonl");
+    await fs.symlink(outside, linked);
+
+    await expect(
+      isOpenClawManagedCodexThread(
+        { id: "symlinked-managed-thread", path: linked } as CodexThread,
+        sessionsRoot,
+      ),
+    ).resolves.toBe(false);
   });
 
   it("reads the complete session-meta line when embedded instructions exceed one chunk", async () => {
@@ -45,7 +93,10 @@ describe("Codex catalog provenance", () => {
     });
 
     await expect(
-      isOpenClawManagedCodexThread({ id: "large-managed-thread", path: file } as CodexThread),
+      isOpenClawManagedCodexThread(
+        { id: "large-managed-thread", path: file } as CodexThread,
+        path.dirname(file),
+      ),
     ).resolves.toBe(true);
   });
 
@@ -60,10 +111,13 @@ describe("Codex catalog provenance", () => {
     await fs.rm(file);
 
     await expect(
-      isOpenClawManagedCodexThread({
-        id: "compressed-managed-thread",
-        path: file,
-      } as CodexThread),
+      isOpenClawManagedCodexThread(
+        {
+          id: "compressed-managed-thread",
+          path: file,
+        } as CodexThread,
+        path.dirname(file),
+      ),
     ).resolves.toBe(true);
   });
 
@@ -80,13 +134,19 @@ describe("Codex catalog provenance", () => {
     });
 
     await expect(
-      isOpenClawManagedCodexThread({ id: "native-thread", path: native } as CodexThread),
+      isOpenClawManagedCodexThread(
+        { id: "native-thread", path: native } as CodexThread,
+        path.dirname(native),
+      ),
     ).resolves.toBe(false);
     await expect(
-      isOpenClawManagedCodexThread({ id: "requested-thread", path: mismatched } as CodexThread),
+      isOpenClawManagedCodexThread(
+        { id: "requested-thread", path: mismatched } as CodexThread,
+        path.dirname(mismatched),
+      ),
     ).resolves.toBe(false);
-    await expect(isOpenClawManagedCodexThread({ id: "missing-path" } as CodexThread)).resolves.toBe(
-      false,
-    );
+    await expect(
+      isOpenClawManagedCodexThread({ id: "missing-path" } as CodexThread, path.dirname(native)),
+    ).resolves.toBe(false);
   });
 });

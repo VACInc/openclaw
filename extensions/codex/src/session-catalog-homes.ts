@@ -119,6 +119,9 @@ function resolveCodexCatalogHomes(params: {
               env: { ...base.start.env, CODEX_HOME: candidate.codexHome },
             },
           },
+      ...(base.connectionClass === "remote"
+        ? {}
+        : { localSessionsRoot: path.join(candidate.codexHome, "sessions") }),
       usesProcessHomeFallback: candidate.usesProcessHomeFallback ?? false,
     });
     if (homes.length >= MAX_HOST_COUNT) {

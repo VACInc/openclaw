@@ -118,6 +118,7 @@ function createCodexSessionCatalogControlFromRequests(params: {
   clientId?: string;
   connectionFingerprint?: string;
   createRequestSnapshot: () => CodexSessionCatalogRequestSnapshot;
+  localSessionsRoot?: string;
   now: () => number;
   withPinnedConnection: CodexSessionCatalogControl["withPinnedConnection"];
 }): CodexSessionCatalogControl {
@@ -166,7 +167,7 @@ function createCodexSessionCatalogControlFromRequests(params: {
           backwardsCursor = readControlCursor(response.backwardsCursor, "backwards response");
         }
         for (const thread of response.data) {
-          if (await isOpenClawManagedCodexThread(thread)) {
+          if (await isOpenClawManagedCodexThread(thread, params.localSessionsRoot)) {
             const rolloutPath = typeof thread.path === "string" ? thread.path.trim() : "";
             managedThreads.push({
               threadId: thread.id,
@@ -334,6 +335,7 @@ export function createCodexSessionCatalogControl(params: {
             clientId: resolveCodexAppServerClientInstanceId(client),
             connectionFingerprint: buildCodexAppServerConnectionFingerprint(runtime, agentDir),
             createRequestSnapshot: () => requests,
+            ...(source?.localSessionsRoot ? { localSessionsRoot: source.localSessionsRoot } : {}),
             now,
             withPinnedConnection: async (nestedRun) => await nestedRun(pinnedControl),
           });
@@ -344,6 +346,7 @@ export function createCodexSessionCatalogControl(params: {
     };
     const control = createCodexSessionCatalogControlFromRequests({
       createRequestSnapshot: () => createRequestSnapshot(agentId, source),
+      ...(source?.localSessionsRoot ? { localSessionsRoot: source.localSessionsRoot } : {}),
       now,
       withPinnedConnection,
     });

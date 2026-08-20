@@ -656,7 +656,9 @@ describe("Codex supervision catalog", () => {
       await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-provenance-page-")),
     );
     tempDirs.push(root);
-    const rolloutPath = path.join(root, "managed.jsonl");
+    const sessionsRoot = path.join(root, "sessions");
+    await fs.mkdir(sessionsRoot);
+    const rolloutPath = path.join(sessionsRoot, "managed.jsonl");
     await fs.writeFile(
       rolloutPath,
       `${JSON.stringify({
