@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
-import path from "node:path";
 import { embeddedAgentLog } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { PluginStateSyncKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
 import { z } from "zod";
-import { canonicalCodexCatalogHome, codexCatalogHomeId } from "../session-catalog-home-id.js";
 
 export const CODEX_MANAGED_THREAD_NAMESPACE = "app-server-managed-threads";
 export const CODEX_MANAGED_THREAD_MAX_ENTRIES = 20_000;
@@ -25,23 +23,14 @@ export type CodexManagedThreadStore = {
 
 export async function markStartedCodexManagedThread(
   store: CodexManagedThreadStore | undefined,
-  params: { codexHome?: () => string | undefined; rolloutPath?: string; threadId: string },
+  params: { sourceHomeId: string; rolloutPath?: string; threadId: string },
 ): Promise<void> {
   if (!store) {
     return;
   }
-  const codexHome =
-    (params.rolloutPath ? codexHomeFromRolloutPath(params.rolloutPath) : undefined) ??
-    params.codexHome?.();
-  if (!codexHome) {
-    embeddedAgentLog.warn("codex managed thread ownership has no resolvable Codex home", {
-      threadId: params.threadId,
-    });
-    return;
-  }
   try {
     await store.mark({
-      sourceHomeId: codexCatalogHomeId(codexHome),
+      sourceHomeId: params.sourceHomeId,
       threadId: params.threadId,
       ...(params.rolloutPath ? { rolloutPath: params.rolloutPath } : {}),
     });
@@ -50,18 +39,6 @@ export async function markStartedCodexManagedThread(
     // A catalog duplicate is less harmful than rejecting an otherwise valid new session.
     embeddedAgentLog.warn("failed to record Codex managed thread ownership", { error });
   }
-}
-
-/** Recovers CODEX_HOME from a canonical rollout path under CODEX_HOME/sessions. */
-function codexHomeFromRolloutPath(rolloutPath: string): string | undefined {
-  const resolved = path.resolve(rolloutPath);
-  const segments = resolved.split(path.sep);
-  const sessionsIndex = segments.lastIndexOf("sessions");
-  if (sessionsIndex <= 0 || sessionsIndex === segments.length - 1) {
-    return undefined;
-  }
-  const home = segments.slice(0, sessionsIndex).join(path.sep) || path.parse(resolved).root;
-  return canonicalCodexCatalogHome(home);
 }
 
 function managedThreadStoreKey(sourceHomeId: string, threadId: string): string {

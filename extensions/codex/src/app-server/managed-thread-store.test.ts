@@ -59,15 +59,17 @@ describe("Codex managed thread store", () => {
     await expect(createCodexManagedThreadStore(state).snapshot()).resolves.toEqual(new Map());
   });
 
-  it("records the catalog home derived from a nested rollout path", async () => {
+  it("records the supplied catalog home instead of deriving ownership from rollout metadata", async () => {
     const { state, values } = createStateStore();
+    const sourceHomeId = codexCatalogHomeId("/tmp/configured-codex-home");
     await markStartedCodexManagedThread(createCodexManagedThreadStore(state), {
+      sourceHomeId,
       threadId: "thread-1",
-      rolloutPath: "/tmp/codex/sessions/2026/08/rollout.jsonl",
+      rolloutPath: "/tmp/other-codex-home/sessions/2026/08/rollout.jsonl",
     });
 
     expect([...values.values()][0]).toMatchObject({
-      sourceHomeId: codexCatalogHomeId("/tmp/codex"),
+      sourceHomeId,
       threadId: "thread-1",
     });
   });

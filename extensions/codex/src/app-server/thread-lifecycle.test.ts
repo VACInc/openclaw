@@ -5,6 +5,8 @@ import path from "node:path";
 import type { EmbeddedRunAttemptParamsV2 as EmbeddedRunAttemptParams } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { GPT5_BEHAVIOR_CONTRACT as CODEX_GPT5_BEHAVIOR_CONTRACT } from "openclaw/plugin-sdk/provider-model-shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { codexCatalogHomeId } from "../session-catalog-home-id.js";
+import { resolveCodexAppServerHomeDir } from "./auth-start-options.js";
 import { CodexAppServerRpcError } from "./client.js";
 import { createCodexTestHostCapabilities } from "./host-capability.test-support.js";
 import { buildCodexAppServerConnectionFingerprint } from "./plugin-app-cache-key.js";
@@ -2438,6 +2440,58 @@ describe("Codex plugin binding recovery", () => {
         binding: expect.objectContaining({ threadId: "thread-managed" }),
       }),
     );
+  });
+
+  it.each([
+    ["a different remote home", "remote"],
+    ["a local-looking remote path", "local-looking"],
+  ])("keys remote ownership to the selected catalog home for %s", async (_label, pathKind) => {
+    const rolloutPath =
+      pathKind === "remote"
+        ? "/remote/codex/sessions/2026/08/thread-managed-remote.jsonl"
+        : path.join(tempDir, "poison", "sessions", "2026", "08", "thread-managed-remote.jsonl");
+    const params = createThreadLifecycleParams(
+      path.join(tempDir, "session-managed-remote.jsonl"),
+      path.join(tempDir, "workspace-managed-remote"),
+    );
+    params.agentDir = path.join(tempDir, "agent");
+    const mark = vi.fn(async () => undefined);
+    const bindingStore = Object.assign(
+      createCodexAppServerBindingStore(createCodexTestBindingStateStore()),
+      { managedThreads: { mark, snapshot: vi.fn(async () => new Map()) } },
+    );
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/start") {
+        const result = threadStartResult("thread-managed-remote");
+        return { ...result, thread: { ...result.thread, path: rolloutPath } };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+    const appServer = createThreadLifecycleAppServerOptions();
+    appServer.start = {
+      ...appServer.start,
+      transport: "websocket",
+      url: "wss://codex.example.test/app-server",
+    };
+    appServer.connectionClass = "remote";
+
+    await startOrResumeThreadImpl({
+      client: {
+        request,
+        getRuntimeIdentity: () => ({ codexHome: "/remote/codex" }),
+      } as never,
+      params,
+      cwd: params.workspaceDir!,
+      dynamicTools: [],
+      appServer,
+      bindingStore,
+    });
+
+    expect(mark).toHaveBeenCalledWith({
+      sourceHomeId: codexCatalogHomeId(resolveCodexAppServerHomeDir(params.agentDir)),
+      threadId: "thread-managed-remote",
+      rolloutPath,
+    });
   });
 
   it("starts a durable thread when catalog ownership bookkeeping fails", async () => {

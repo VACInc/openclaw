@@ -1,5 +1,7 @@
 import path from "node:path";
 import { embeddedAgentLog } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { resolveAgentDir, resolveSessionAgentIds } from "openclaw/plugin-sdk/agent-runtime";
+import { codexCatalogHomeId } from "../session-catalog-home-id.js";
 import {
   CODEX_APP_SERVER_UNSUBSCRIBE_TIMEOUT_MS,
   closeCodexStartupClientBestEffort,
@@ -7,6 +9,7 @@ import {
   isCodexAppServerUnsafeSubscriptionError,
   unsubscribeCodexThreadBestEffort,
 } from "./attempt-client-cleanup.js";
+import { resolveCodexAppServerLocalHomeDir } from "./auth-start-options.js";
 import {
   CodexAppServerRpcError,
   isCodexAppServerConnectionClosedError,
@@ -107,6 +110,19 @@ type StartThreadContext = ThreadRequestContext & {
   rotatedContextEngineBinding: boolean;
   replacementPredecessor?: CodexAppServerThreadBinding;
 };
+
+function resolveManagedThreadSourceHomeId(params: CodexStartOrResumeThreadParams): string {
+  const agentId = resolveSessionAgentIds({
+    config: params.params.config,
+    sessionKey: params.params.sessionKey,
+    agentId: params.agentId ?? params.params.agentId,
+  }).sessionAgentId;
+  const agentDir =
+    params.agentDir ??
+    params.params.agentDir ??
+    resolveAgentDir(params.params.config ?? {}, agentId);
+  return codexCatalogHomeId(resolveCodexAppServerLocalHomeDir(params.appServer.start, agentDir));
+}
 
 function resolveCodexThreadRolloutPath(thread: CodexThread): string | undefined {
   const rolloutPath = thread.path?.trim();
@@ -626,9 +642,10 @@ export async function startFreshCodexThread(
         );
       }
     };
+    const managedSourceHomeId = resolveManagedThreadSourceHomeId(params);
     await lifecycleTiming.measure("thread-start-mark-managed", () =>
       markStartedCodexManagedThread(params.bindingStore.managedThreads, {
-        codexHome: () => params.client.getRuntimeIdentity()?.codexHome,
+        sourceHomeId: managedSourceHomeId,
         threadId: response.thread.id,
         ...(rolloutPath ? { rolloutPath } : {}),
       }),

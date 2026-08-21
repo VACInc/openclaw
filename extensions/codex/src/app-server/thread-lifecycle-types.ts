@@ -50,6 +50,7 @@ export type CodexStartOrResumeThreadParams = {
   bindingStore: CodexAppServerBindingStore;
   params: EmbeddedRunAttemptParams;
   agentId?: string;
+  agentDir?: string;
   cwd: string;
   dynamicTools: CodexDynamicToolSpec[];
   persistentWebSearchAllowed?: boolean;
