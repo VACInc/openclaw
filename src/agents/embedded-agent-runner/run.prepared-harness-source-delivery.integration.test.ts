@@ -29,7 +29,10 @@ import {
 import { buildTestCtx } from "../../auto-reply/reply/test-ctx.js";
 import type { MsgContext } from "../../auto-reply/templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../../auto-reply/types.js";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
 import { registerAgentHarness } from "../harness/registry.js";
+import { withPreparedModelRuntimePluginGenerationScope } from "../prepared-model-runtime-generation-scope.js";
+import type { PreparedModelRuntimePluginGeneration } from "../prepared-model-runtime.types.js";
 import { makeAttemptResult } from "./run.overflow-compaction.fixture.js";
 import {
   loadRunOverflowCompactionHarness,
@@ -37,6 +40,7 @@ import {
   mockedBuildEmbeddedRunPayloads,
   mockedGlobalHookRunner,
   mockedRunEmbeddedAttempt,
+  overflowBaseRunParams,
   useOpenAIPlatformAuthFixture,
 } from "./run.overflow-compaction.harness.js";
 import type { RunEmbeddedAgentInternalParams } from "./run/internal-params.js";
@@ -494,6 +498,101 @@ describe("prepared harness source delivery", () => {
       }),
       expect.any(Object),
     );
+  });
+
+  it("completes an admitted turn on its generation after a plugin-runtime replacement", async () => {
+    const { runEmbeddedAgent } = await loadRunOverflowCompactionHarness();
+    const config = {};
+    const workspaceDir = "/tmp/workspace";
+    const pluginRegistry = createEmptyPluginRegistry();
+    // The harness's default lease supplies a realistic metadata snapshot shape;
+    // two distinct clones stand for the reply admission and the gateway
+    // replacement that commits while the turn executes.
+    mockedAcquireAgentRunPreparedModelRuntime.mockClear();
+    const baseMetadata = await mockedAcquireAgentRunPreparedModelRuntime({
+      agentId: "main",
+      agentDir: "/tmp/agent",
+      workspaceDir,
+    });
+    const admittedMetadataSnapshot = {
+      ...baseMetadata.snapshot.metadataSnapshot,
+      policyHash: "admitted",
+      workspaceDir,
+    };
+    const admittedGeneration: PreparedModelRuntimePluginGeneration = {
+      configuredCatalogEntries: [],
+      inlineProviderModels: [],
+      pluginMetadataSnapshot: admittedMetadataSnapshot,
+      pluginRegistry,
+    };
+    const replacementMetadataSnapshot = {
+      ...baseMetadata.snapshot.metadataSnapshot,
+      policyHash: "replacement",
+      workspaceDir,
+    };
+    const release = vi.fn();
+    let servedMetadataSnapshot: unknown;
+    // Owner contract after the injected replacement: unpinned acquisition
+    // serves the current replacement generation, pinned callers lease their
+    // exact admitted generation back. The harness reset only clears calls, so
+    // restore the captured default lease before returning to sibling tests.
+    const defaultAcquire = mockedAcquireAgentRunPreparedModelRuntime.getMockImplementation();
+    mockedAcquireAgentRunPreparedModelRuntime.mockImplementation(
+      async (
+        _input,
+        options?: {
+          pluginGeneration?: { pluginMetadataSnapshot: typeof admittedMetadataSnapshot };
+        },
+      ) => {
+        const metadataSnapshot =
+          options?.pluginGeneration?.pluginMetadataSnapshot ?? replacementMetadataSnapshot;
+        servedMetadataSnapshot = metadataSnapshot;
+        return {
+          snapshot: {
+            agentId: "main",
+            agentDir: "/tmp/agent",
+            config,
+            workspaceDir,
+            pluginRegistry,
+            metadataSnapshot,
+            createStores: () => ({ authStorage: {}, modelRegistry: {} }),
+          },
+          release,
+        };
+      },
+    );
+    mockedBuildEmbeddedRunPayloads.mockReturnValue([{ text: "ok" }]);
+    mockedRunEmbeddedAttempt.mockResolvedValueOnce(makeAttemptResult({ assistantTexts: ["ok"] }));
+    useOpenAIPlatformAuthFixture();
+
+    try {
+      const result = await withPreparedModelRuntimePluginGenerationScope(
+        admittedGeneration,
+        async () =>
+          await runEmbeddedAgent({
+            ...overflowBaseRunParams,
+            config,
+            provider: "openai",
+            model: "gpt-5.4",
+            runId: "admitted-generation-replacement",
+            sessionKey: undefined,
+          }),
+      );
+
+      // The orchestrator's acquisition is the second lease in this run.
+      expect(mockedAcquireAgentRunPreparedModelRuntime).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ config, workspaceDir }),
+        expect.objectContaining({ pluginGeneration: admittedGeneration }),
+      );
+      expect(servedMetadataSnapshot).toBe(admittedGeneration.pluginMetadataSnapshot);
+      expect(result.payloads).toEqual([{ text: "ok" }]);
+      expect(release).toHaveBeenCalledOnce();
+    } finally {
+      if (defaultAcquire) {
+        mockedAcquireAgentRunPreparedModelRuntime.mockImplementation(defaultAcquire);
+      }
+    }
   });
 
   it.each([
