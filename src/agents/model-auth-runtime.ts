@@ -238,6 +238,7 @@ type SyntheticProviderAuthResolution = {
 function resolveProviderSyntheticRuntimeAuth(params: {
   cfg: OpenClawConfig | undefined;
   provider: string;
+  modelId?: string;
   modelApi?: string;
   secretSentinels?: boolean;
 }): SyntheticProviderAuthResolution {
@@ -260,6 +261,7 @@ function resolveProviderSyntheticRuntimeAuth(params: {
         context: {
           config,
           provider: params.provider,
+          modelId: params.modelId,
           providerConfig,
         },
         modelApi: params.modelApi,
@@ -300,6 +302,7 @@ function resolveProviderSyntheticRuntimeAuth(params: {
 export function resolveSyntheticLocalProviderAuth(params: {
   cfg: OpenClawConfig | undefined;
   provider: string;
+  modelId?: string;
   modelApi?: string;
   secretSentinels?: boolean;
   allowPluginSyntheticAuth?: boolean;

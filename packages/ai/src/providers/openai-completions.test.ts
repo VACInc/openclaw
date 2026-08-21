@@ -337,6 +337,24 @@ describe("OpenAI-compatible completions params", () => {
     });
   });
 
+  it("omits credentials for an explicitly anonymous model", async () => {
+    mockOpenAIOptionsRef.options = [];
+    mockChunksRef.chunks = [makeTextChunk("ok"), makeFinishChunk("stop")];
+
+    const result = await streamSimpleOpenAICompletions(
+      { ...model, provider: "public-preview", requiresApiKey: false },
+      context,
+    ).result();
+
+    expect(result.stopReason).toBe("stop");
+    expect(mockOpenAIOptionsRef.options).toContainEqual(
+      expect.objectContaining({
+        apiKey: "unused",
+        defaultHeaders: { Authorization: null },
+      }),
+    );
+  });
+
   it("surfaces chat-completions refusal deltas as visible assistant text", async () => {
     mockChunksRef.chunks = [makeRefusalChunk("I can't help with that.")];
 

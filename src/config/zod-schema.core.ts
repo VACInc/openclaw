@@ -430,6 +430,7 @@ const ModelDefinitionSchema = z
     maxTokens: z.number().positive().optional(),
     thinkingLevelMap: ThinkingLevelMapSchema.optional(),
     params: z.record(z.string(), z.unknown()).optional(),
+    requiresApiKey: z.boolean().optional(),
     agentRuntime: ModelAgentRuntimePolicySchema,
     headers: z.record(z.string(), z.string()).optional(),
     compat: ModelCompatSchema,

@@ -195,6 +195,8 @@ export type ModelDefinitionConfig = {
   thinkingLevelMap?: ThinkingLevelMap;
   /** Provider-specific request/runtime parameters passed through to provider plugins. */
   params?: Record<string, unknown>;
+  /** Whether this model requires request credentials. Defaults to true. */
+  requiresApiKey?: boolean;
   /** Optional agent execution runtime override for this provider/model pair. */
   agentRuntime?: AgentRuntimePolicyConfig;
   /** Static headers merged into requests for this model. */

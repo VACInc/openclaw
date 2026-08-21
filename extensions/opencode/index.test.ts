@@ -89,6 +89,7 @@ const ACTIVE_MODEL_IDS = [
   "qwen3.6-plus",
   "qwen3.5-plus",
   "big-pickle",
+  "x-preview-f-free",
   "deepseek-v4-flash-free",
   "mimo-v2.5-free",
   "ling-3.0-tiny-free",
@@ -138,6 +139,12 @@ describe("opencode provider plugin", () => {
       groupId: "opencode",
       groupHint: "Shared API key infrastructure for Zen + Go",
     });
+    expect(provider.resolveSyntheticAuth?.({ modelId: "x-preview-f-free" } as never)).toEqual({
+      apiKey: "opencode-zen-anonymous",
+      source: "OpenCode Zen Ox Alpha Free (anonymous route)",
+      mode: "api-key",
+    });
+    expect(provider.resolveSyntheticAuth?.({ modelId: "gpt-5.6-sol" } as never)).toBeUndefined();
   });
 
   it("registers image media understanding through the OpenCode plugin", async () => {
@@ -219,6 +226,18 @@ describe("opencode provider plugin", () => {
     expect(opus46.reasoning).toBe(true);
     expect(opus46.contextWindow).toBe(1_000_000);
     expect(opus46.maxTokens).toBe(128_000);
+
+    expect(requireMapEntry(models, "x-preview-f-free")).toMatchObject({
+      name: "Ox Alpha Free",
+      api: "openai-completions",
+      baseUrl: "https://opencode.ai/zen/v1",
+      input: ["text"],
+      reasoning: true,
+      requiresApiKey: false,
+      contextWindow: 1_000_000,
+      maxTokens: 131_072,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    });
 
     expect(requireMapEntry(models, "gpt-5.5")).toMatchObject({
       api: "openai-responses",
@@ -382,6 +401,7 @@ describe("opencode provider plugin", () => {
       "minimax-m2.7",
       "kimi-k3",
       "big-pickle",
+      "x-preview-f-free",
       "deepseek-v4-flash-free",
       "mimo-v2.5-free",
       "laguna-s-2.1-free",
@@ -436,6 +456,24 @@ describe("opencode provider plugin", () => {
       input: ["text", "image"],
       cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
       contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    });
+    const manifestOxAlpha = requireRecord(
+      manifestModels.find(
+        (model) => requireRecord(model, "manifest model").id === "x-preview-f-free",
+      ),
+      "manifest Ox Alpha Free",
+    );
+    expect(manifestOxAlpha).toMatchObject({
+      name: "Ox Alpha Free",
+      api: "openai-completions",
+      provider: "opencode",
+      baseUrl: "https://opencode.ai/zen/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      requiresApiKey: false,
+      contextWindow: 1_000_000,
       maxTokens: 131_072,
     });
   });

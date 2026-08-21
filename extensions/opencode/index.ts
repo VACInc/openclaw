@@ -14,6 +14,7 @@ import {
   buildStaticOpencodeZenProviderConfig,
   listOpencodeZenModelCatalogEntries,
   normalizeOpencodeZenBaseUrl,
+  OPENCODE_ZEN_OX_ALPHA_MODEL_ID,
   resolveOpencodeZenModel,
   resolveOpencodeZenStarterModel,
 } from "./provider-catalog.js";
@@ -22,6 +23,7 @@ import { registerOpenCodeSessionCatalog } from "./session-catalog-plugin.js";
 import { wrapOpencodeProviderStream } from "./stream.js";
 
 const PROVIDER_ID = "opencode";
+const OPENCODE_ZEN_ANONYMOUS_AUTH_MARKER = "opencode-zen-anonymous";
 const MINIMAX_MODERN_MODEL_MATCHERS = ["minimax-m2.7"] as const;
 type OpencodeZenCatalogAuth = { apiKey?: string; discoveryApiKey?: string };
 
@@ -102,6 +104,14 @@ export default defineSingleProviderPluginEntry({
         : undefined;
     },
     resolveDynamicModel: ({ modelId }) => resolveOpencodeZenModel(modelId),
+    resolveSyntheticAuth: ({ modelId }) =>
+      normalizeLowercaseStringOrEmpty(modelId) === OPENCODE_ZEN_OX_ALPHA_MODEL_ID
+        ? {
+            apiKey: OPENCODE_ZEN_ANONYMOUS_AUTH_MARKER,
+            source: "OpenCode Zen Ox Alpha Free (anonymous route)",
+            mode: "api-key" as const,
+          }
+        : undefined,
     catalog: {
       order: "simple",
       run: async (ctx) => {

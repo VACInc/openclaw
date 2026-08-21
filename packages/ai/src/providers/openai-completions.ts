@@ -692,7 +692,7 @@ export const streamSimpleOpenAICompletions: StreamFunction<
   SimpleStreamOptions
 > = (model: Model<"openai-completions">, context: Context, options?: SimpleStreamOptions) => {
   const apiKey = options?.apiKey || getEnvApiKey(model.provider);
-  if (!apiKey) {
+  if (!apiKey && model.requiresApiKey !== false) {
     throw new Error(`No API key for provider: ${model.provider}`);
   }
 
@@ -723,11 +723,16 @@ function createClient(
   sessionId?: string,
   compat: ResolvedOpenAICompletionsCompat = resolveOpenAICompletionsCompat(model),
 ) {
-  if (!apiKey) {
+  if (!apiKey && model.requiresApiKey !== false) {
     throw new Error(`No API key for provider: ${model.provider}`);
   }
 
-  const headers = { ...model.headers };
+  const headers: Record<string, string | null> = { ...model.headers };
+  if (model.requiresApiKey === false) {
+    // The OpenAI SDK requires an apiKey constructor value and otherwise adds a
+    // bearer header. This model contract intentionally omits credentials.
+    headers.Authorization = null;
+  }
   if (model.provider === "github-copilot") {
     const hasImages = hasCopilotVisionInput(context.messages);
     const copilotHeaders = buildCopilotDynamicHeaders({
@@ -762,7 +767,7 @@ function createClient(
       : headers;
 
   return new OpenAI({
-    apiKey,
+    apiKey: apiKey || "unused",
     baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model) : model.baseUrl,
     dangerouslyAllowBrowser: true,
     defaultHeaders,

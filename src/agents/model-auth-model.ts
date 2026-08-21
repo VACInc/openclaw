@@ -165,7 +165,11 @@ export async function hasAvailableAuthForProvider(params: {
   ) {
     return true;
   }
-  const syntheticLocalAuth = resolveSyntheticLocalProviderAuth({ cfg, provider });
+  const syntheticLocalAuth = resolveSyntheticLocalProviderAuth({
+    cfg,
+    provider,
+    modelId: params.modelId,
+  });
   if (
     syntheticLocalAuth &&
     (!authConfig.isConfigBackedInlineProviderApiKey({

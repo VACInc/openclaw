@@ -8,6 +8,9 @@
     "onStartup": true
   },
   "providerCatalogEntry": "./provider-discovery.ts",
+  "nonSecretAuthMarkers": [
+    "opencode-zen-anonymous"
+  ],
   "enabledByDefault": true,
   "providers": [
     "opencode"
@@ -408,6 +411,32 @@
             "contextWindow": 200000,
             "contextTokens": 160000,
             "maxTokens": 32000,
+            "compat": {
+              "supportsUsageInStreaming": true,
+              "maxTokensField": "max_tokens",
+              "supportsDeveloperRole": false,
+              "supportsStrictMode": false
+            }
+          },
+          {
+            "id": "x-preview-f-free",
+            "name": "Ox Alpha Free",
+            "api": "openai-completions",
+            "provider": "opencode",
+            "baseUrl": "https://opencode.ai/zen/v1",
+            "reasoning": true,
+            "requiresApiKey": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 1000000,
+            "maxTokens": 131072,
             "compat": {
               "supportsUsageInStreaming": true,
               "maxTokensField": "max_tokens",

@@ -42,6 +42,7 @@ const MODEL_DEFINITION_CONFIG_KEYS = [
   "maxTokens",
   "thinkingLevelMap",
   "params",
+  "requiresApiKey",
   "agentRuntime",
   "headers",
   "compat",

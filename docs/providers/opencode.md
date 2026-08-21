@@ -23,7 +23,7 @@ provider ids split so upstream per-model routing stays correct.
 <Tabs>
   <Tab title="Zen catalog">
     **Best for:** the curated OpenCode multi-model proxy (Claude, GPT, Gemini, GLM,
-    DeepSeek, Kimi, MiniMax, Qwen).
+    DeepSeek, Kimi, MiniMax, Qwen, and the key-free Ox Alpha Free preview).
 
     <Steps>
       <Step title="Run onboarding">
@@ -99,10 +99,10 @@ provider ids split so upstream per-model routing stays correct.
 
 ### Zen
 
-| Property         | Value                                                                                                                 |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Runtime provider | `opencode`                                                                                                            |
-| Example models   | `opencode/gpt-5.6-sol`, `opencode/kimi-k3`, `opencode/gemini-3.6-flash`, `opencode/minimax-m3`, `opencode/big-pickle` |
+| Property         | Value                                                                                                                       |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Runtime provider | `opencode`                                                                                                                  |
+| Example models   | `opencode/gpt-5.6-sol`, `opencode/kimi-k3`, `opencode/gemini-3.6-flash`, `opencode/minimax-m3`, `opencode/x-preview-f-free` |
 
 Run `openclaw models list --provider opencode` for the current active list,
 which also includes the promoted free-tier rows `opencode/big-pickle`,
@@ -110,6 +110,11 @@ which also includes the promoted free-tier rows `opencode/big-pickle`,
 `opencode/ling-3.0-tiny-free`, `opencode/longcat-2.0-free`,
 `opencode/mimo-v2.5-free`,
 `opencode/nemotron-3-ultra-free`, and `opencode/north-mini-code-free`.
+
+`opencode/x-preview-f-free` (Ox Alpha Free) accepts text, tool calls, and
+streaming without an OpenCode API key. It has a verified 1,000,000-token input
+cap and 131,072-token output cap. Other Zen refs continue to require an
+OpenCode API key.
 
 Live discovery safely intersects OpenCode's returned IDs with trusted OpenClaw
 metadata. A key-scoped response can omit models that are unavailable to that

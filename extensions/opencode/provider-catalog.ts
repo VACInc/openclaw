@@ -14,6 +14,7 @@ import type {
 } from "openclaw/plugin-sdk/provider-model-shared";
 
 const PROVIDER_ID = "opencode";
+export const OPENCODE_ZEN_OX_ALPHA_MODEL_ID = "x-preview-f-free";
 
 const OPENCODE_ZEN_OPENAI_BASE_URL = "https://opencode.ai/zen/v1";
 const OPENCODE_ZEN_ANTHROPIC_BASE_URL = "https://opencode.ai/zen";
@@ -36,6 +37,7 @@ type ZenModelCapabilities = {
   reasoningEfforts?: readonly string[];
   status?: "deprecated";
   replacedBy?: string;
+  requiresApiKey?: boolean;
 };
 
 const T = ["text"] as const;
@@ -142,6 +144,9 @@ const MODEL_CAPABILITY_ROWS = [
   ["qwen3.6-plus", 262144, 65536, TI],
   ["qwen3.5-plus", 262144, 65536, TI],
   ["big-pickle", 200000, 32000, T, undefined, INPUT_160],
+  // Zen does not publish capability metadata for this stealth row. The public
+  // API accepts a 1M-token text prompt and rejects max_tokens above 131,072.
+  [OPENCODE_ZEN_OX_ALPHA_MODEL_ID, 1000000, 131072, T],
   ["deepseek-v4-flash-free", 200000, 128000, T, E_LOW_HIGH_MAX],
   ["mimo-v2.5-free", 200000, 32000, TI],
   ["ling-3.0-flash-free", 262144, 32768, T, E_LMH, DEPRECATED],
@@ -162,6 +167,7 @@ const MODEL_CAPABILITIES = Object.fromEntries(
       maxTokens,
       input,
       ...(reasoningEfforts ? { reasoningEfforts } : {}),
+      ...(id === OPENCODE_ZEN_OX_ALPHA_MODEL_ID ? { requiresApiKey: false } : {}),
       ...metadata,
     },
   ]),
@@ -311,6 +317,7 @@ const MODEL_COSTS: Record<ZenModelId, ModelDefinitionConfig["cost"]> = {
   "north-mini-code-free": FREE_COST,
   "qwen3.5-plus": { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
   "qwen3.6-plus": { input: 0.5, output: 3, cacheRead: 0.05, cacheWrite: 0.625 },
+  "x-preview-f-free": FREE_COST,
 };
 
 const MODEL_NAMES: Record<ZenModelId, string> = {
@@ -376,6 +383,7 @@ const MODEL_NAMES: Record<ZenModelId, string> = {
   "north-mini-code-free": "North Mini Code Free",
   "qwen3.5-plus": "Qwen3.5 Plus",
   "qwen3.6-plus": "Qwen3.6 Plus",
+  "x-preview-f-free": "Ox Alpha Free",
 };
 
 type OpencodeZenModelDefinition = ModelDefinitionConfig & {
@@ -428,6 +436,7 @@ function buildOpencodeZenModel(modelId: ZenModelId): OpencodeZenModelDefinition 
     cost: MODEL_COSTS[modelId],
     contextWindow: capabilities.contextWindow,
     ...(capabilities.contextTokens ? { contextTokens: capabilities.contextTokens } : {}),
+    ...(capabilities.requiresApiKey === false ? { requiresApiKey: false } : {}),
     maxTokens: capabilities.maxTokens,
     ...(transport.api === "openai-responses" && !capabilities.reasoningEfforts?.includes("none")
       ? { thinkingLevelMap: { off: null } }
