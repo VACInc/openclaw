@@ -145,6 +145,13 @@ describe("opencode provider plugin", () => {
       source: "OpenCode Zen Ox Alpha Free (anonymous route)",
       mode: "api-key",
     });
+    expect(
+      provider.resolveSyntheticAuth?.({ modelId: "opencode/x-preview-f-free" } as never),
+    ).toEqual({
+      apiKey: "opencode-zen-anonymous",
+      source: "OpenCode Zen Ox Alpha Free (anonymous route)",
+      mode: "api-key",
+    });
     expect(provider.resolveSyntheticAuth?.({ modelId: "gpt-5.6-sol" } as never)).toBeUndefined();
   });
 
