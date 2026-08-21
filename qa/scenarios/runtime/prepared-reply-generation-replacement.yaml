@@ -1,0 +1,31 @@
+title: Prepared reply generation replacement
+
+scenario:
+  id: prepared-reply-generation-replacement
+  surface: gateway
+  category: gateway.session-apis
+  coverage:
+    secondary:
+      - gateway.config-reload-hot-reload
+      - plugins.activation-hot-reload
+  objective: Prove an admitted Gateway chat turn keeps its exact admitted plugin-runtime generation when a newer generation commits through the config hot-reload path before its nested embedded prepared-runtime acquisition runs.
+  successCriteria:
+    - An ephemeral isolated Gateway with a mocked OpenAI transport delivers a baseline embedded turn on the admitted generation A.
+    - A held turn occupies the main agent lane inside its provider call while a second turn is admitted behind it, before that turn's nested embedded acquisition.
+    - Generation B publishes through the real openclaw.json hot-reload path in the same Gateway process, and the committed replacement happens between the parked turn's admission and acquisition.
+    - Releasing the held completion delivers both replies exactly once, the parked turn executes on generation A credentials, and no "prepared model runtime replaced the admitted plugin generation" error appears.
+  docsRefs:
+    - docs/concepts/qa-e2e-automation.md
+  codeRefs:
+    - src/auto-reply/reply/get-reply-run.ts
+    - src/agents/embedded-agent-runner/run-orchestrator.ts
+    - src/agents/prepared-model-runtime-generation-scope.ts
+    - test/e2e/qa-lab/runtime/prepared-reply-generation-replacement-proof.ts
+  execution:
+    kind: script
+    path: test/e2e/qa-lab/runtime/prepared-reply-generation-replacement-proof.ts
+    summary: Holds one embedded completion, admits a second turn behind it, hot-publishes generation B in-process, then proves the parked turn still executes and replies on its admitted generation A.
+    timeoutMs: 900000
+    args:
+      - --artifact-base
+      - ${outputDir}
