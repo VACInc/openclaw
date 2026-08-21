@@ -21,10 +21,11 @@ import {
 } from "../../plugins/hook-agent-context.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { loadPluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.js";
+import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
 import {
   getPreparedModelRuntimePluginGeneration,
-  withPluginRuntimeGenerationScope,
-} from "../../plugins/runtime/generation-scope.js";
+  withPreparedModelRuntimePluginGenerationScope,
+} from "../prepared-model-runtime-generation-scope.js";
 import { resolveUserPath } from "../../utils.js";
 import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
 import {
@@ -459,13 +460,14 @@ async function runEmbeddedAgentInternal(
             preparedModelRuntime,
           });
         };
-        return await withPluginRuntimeGenerationScope(
-          {
-            ...preparedModelRuntime,
-            ...(pluginGeneration ? { preparedModelRuntimePluginGeneration: pluginGeneration } : {}),
-          },
-          runPrepared,
-        );
+        const runWithPreparedRuntime = () =>
+          withPluginRuntimeGenerationScope(preparedModelRuntime, runPrepared);
+        return pluginGeneration
+          ? await withPreparedModelRuntimePluginGenerationScope(
+              pluginGeneration,
+              runWithPreparedRuntime,
+            )
+          : await runWithPreparedRuntime();
       } finally {
         preparedModelRuntimeLease.release();
       }

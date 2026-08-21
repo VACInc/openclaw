@@ -1,13 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getPreparedModelRuntimePluginGeneration } from "../../agents/prepared-model-runtime-generation-scope.js";
 import {
   getCurrentPluginMetadataSnapshot,
   setCurrentPluginMetadataSnapshot,
 } from "../../plugins/current-plugin-metadata-snapshot.js";
 import { resolveInstalledPluginIndexPolicyHash } from "../../plugins/installed-plugin-index-policy.js";
-import {
-  getPluginRuntimeGenerationRegistry,
-  getPreparedModelRuntimePluginGeneration,
-} from "../../plugins/runtime/generation-scope.js";
+import { getPluginRuntimeGenerationRegistry } from "../../plugins/runtime/generation-scope.js";
 import { runPreparedReply } from "./get-reply-run.js";
 import { bindPreparedReplyDispatchRuntime } from "./prepared-reply-dispatch-context.js";
 
