@@ -144,9 +144,10 @@ const MODEL_CAPABILITY_ROWS = [
   ["qwen3.6-plus", 262144, 65536, TI],
   ["qwen3.5-plus", 262144, 65536, TI],
   ["big-pickle", 200000, 32000, T, undefined, INPUT_160],
-  // Zen does not publish capability metadata for this stealth row. The public
-  // API accepts a 1M-token text prompt and rejects max_tokens above 131,072.
-  [OPENCODE_ZEN_OX_ALPHA_MODEL_ID, 1000000, 131072, T],
+  // Zen does not publish capability metadata for this stealth row. Its public
+  // API accepts a 1M-token text prompt, caps max_tokens at 131,072, and accepts
+  // only low, high, or max reasoning effort.
+  [OPENCODE_ZEN_OX_ALPHA_MODEL_ID, 1000000, 131072, T, E_LOW_HIGH_MAX],
   ["deepseek-v4-flash-free", 200000, 128000, T, E_LOW_HIGH_MAX],
   ["mimo-v2.5-free", 200000, 32000, TI],
   ["ling-3.0-flash-free", 262144, 32768, T, E_LMH, DEPRECATED],

@@ -92,4 +92,17 @@ describe("opencode provider policy public artifact", () => {
       }),
     ).toEqual({ levels: [{ id: "off", label: "always on" }], defaultLevel: "off" });
   });
+
+  it("keeps Ox Alpha's mandatory reasoning profile exact", () => {
+    expect(
+      resolveThinkingProfile({
+        provider: "opencode",
+        modelId: "x-preview-f-free",
+        compat: { supportedReasoningEfforts: ["low", "high", "max"] },
+      }),
+    ).toEqual({
+      levels: [{ id: "low" }, { id: "high" }, { id: "max" }],
+      defaultLevel: "max",
+    });
+  });
 });

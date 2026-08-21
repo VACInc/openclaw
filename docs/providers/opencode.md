@@ -113,8 +113,9 @@ which also includes the promoted free-tier rows `opencode/big-pickle`,
 
 `opencode/x-preview-f-free` (Ox Alpha Free) accepts text, tool calls, and
 streaming without an OpenCode API key. It has a verified 1,000,000-token input
-cap and 131,072-token output cap. Other Zen refs continue to require an
-OpenCode API key.
+cap and 131,072-token output cap. Reasoning is mandatory: use `low`, `high`,
+or `max` (the default); `off` is not supported. Other Zen refs continue to
+require an OpenCode API key.
 
 Live discovery safely intersects OpenCode's returned IDs with trusted OpenClaw
 metadata. A key-scoped response can omit models that are unavailable to that

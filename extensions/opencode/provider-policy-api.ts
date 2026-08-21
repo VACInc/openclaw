@@ -10,6 +10,11 @@ const FIXED_REASONING_PROFILE = {
   defaultLevel: "off",
 } as const satisfies ProviderThinkingProfile;
 
+const OX_ALPHA_THINKING_PROFILE = {
+  levels: [{ id: "low" }, { id: "high" }, { id: "max" }],
+  defaultLevel: "max",
+} as const satisfies ProviderThinkingProfile;
+
 const THINKING_LEVEL_IDS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 function resolveEffortThinkingProfile(
@@ -37,6 +42,9 @@ function resolveEffortThinkingProfile(
 
 export function resolveThinkingProfile(params: ProviderDefaultThinkingPolicyContext) {
   const modelId = params.modelId.trim().toLowerCase();
+  if (modelId === "x-preview-f-free") {
+    return OX_ALPHA_THINKING_PROFILE;
+  }
   if (modelId.startsWith("claude-")) {
     return resolveClaudeThinkingProfile(modelId);
   }
