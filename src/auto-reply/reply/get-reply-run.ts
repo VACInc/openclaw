@@ -48,7 +48,9 @@ export async function runPreparedReply(
     return await withPreparedModelRuntimePluginGenerationScope(
       dispatchRuntime.pluginGeneration,
       () =>
-        withPluginRuntimeGenerationScope(lease.snapshot, () => executePreparedReplyContext(context)),
+        withPluginRuntimeGenerationScope(lease.snapshot, () =>
+          executePreparedReplyContext(context),
+        ),
     );
   } finally {
     lease.release();

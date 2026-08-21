@@ -13,10 +13,7 @@ const PLUGIN_RUNTIME_GENERATION_REGISTRY_SCOPE_KEY: unique symbol = Symbol.for(
 
 const pluginRuntimeGenerationRegistryScope = resolveGlobalSingleton<
   AsyncLocalStorage<PluginRegistry>
->(
-  PLUGIN_RUNTIME_GENERATION_REGISTRY_SCOPE_KEY,
-  () => new AsyncLocalStorage<PluginRegistry>(),
-);
+>(PLUGIN_RUNTIME_GENERATION_REGISTRY_SCOPE_KEY, () => new AsyncLocalStorage<PluginRegistry>());
 
 /** Carries one prepared plugin generation through all nested runtime lookups. */
 export function withPluginRuntimeGenerationScope<T>(

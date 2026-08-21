@@ -22,10 +22,6 @@ import {
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { loadPluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.js";
 import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
-import {
-  getPreparedModelRuntimePluginGeneration,
-  withPreparedModelRuntimePluginGenerationScope,
-} from "../prepared-model-runtime-generation-scope.js";
 import { resolveUserPath } from "../../utils.js";
 import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
 import {
@@ -35,6 +31,10 @@ import {
 } from "../agent-scope.js";
 import { resolveLegacyInheritedAuthDir } from "../legacy-inherited-auth-dir.js";
 import { resolveModelCandidateChain } from "../model-fallback-candidates.js";
+import {
+  getPreparedModelRuntimePluginGeneration,
+  withPreparedModelRuntimePluginGenerationScope,
+} from "../prepared-model-runtime-generation-scope.js";
 import {
   acquireAgentRunPreparedModelRuntime,
   acquireReadOnlyPreparedModelRuntime,
