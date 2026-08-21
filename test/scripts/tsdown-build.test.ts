@@ -22,6 +22,7 @@ import {
   resolveTsdownBuildInvocation,
   resolveTsdownBuildInvocations,
   resolveTsdownCleanOutputRoots,
+  resolveTsdownDeclarationConcurrency,
   runTsdownBuildInvocation,
 } from "../../scripts/tsdown-build.mts";
 import { createScriptTestHarness } from "./test-helpers.js";
@@ -156,7 +157,7 @@ describe("resolveTsdownBuildInvocation", () => {
     expect(result.args.slice(-2)).toEqual(["--format", "esm"]);
   });
 
-  it("builds AI, packages, runtime, and bounded declarations sequentially", () => {
+  it("builds AI, packages, runtime, and bounded declaration partitions", () => {
     const results = resolveTsdownBuildInvocations({
       args: ["--format", "esm"],
       platform: "linux",
@@ -202,7 +203,7 @@ describe("resolveTsdownBuildInvocation", () => {
     expect(results[1]?.args).not.toContain("--filter");
   });
 
-  it("serializes declaration graphs when --dts overrides the no-DTS environment", () => {
+  it("emits declaration graphs when --dts overrides the no-DTS environment", () => {
     const results = resolveTsdownBuildInvocations({
       args: ["--dts"],
       platform: "linux",
@@ -928,6 +929,45 @@ describe("createTsdownOutputScanner", () => {
     );
 
     expect(scanner.finish().fatalUnresolvedImport).toBeNull();
+  });
+});
+
+describe("resolveTsdownDeclarationConcurrency", () => {
+  const GiB = 1024 * 1024 * 1024;
+  // Default 12 GiB heap + 768 MiB headroom per child; fixtures bypass the host.
+  const base = { ...NO_MEMORY_LIMIT, platform: "linux", partitionCount: 8, env: {} };
+
+  it.each([
+    {
+      name: "stays serial when memory is unknown",
+      availableMemoryBytes: null,
+      cpuCount: 64,
+      want: 1,
+    },
+    {
+      name: "stays serial on a 16 GiB CI host",
+      availableMemoryBytes: 16 * GiB,
+      cpuCount: 64,
+      want: 1,
+    },
+    { name: "fans out by memory", availableMemoryBytes: 85 * GiB, cpuCount: 64, want: 6 },
+    { name: "bounds by cores", availableMemoryBytes: 120 * GiB, cpuCount: 8, want: 2 },
+    { name: "never exceeds partitions", availableMemoryBytes: 512 * GiB, cpuCount: 128, want: 8 },
+  ])("$name", ({ availableMemoryBytes, cpuCount, want }) => {
+    expect(resolveTsdownDeclarationConcurrency({ ...base, availableMemoryBytes, cpuCount })).toBe(
+      want,
+    );
+  });
+
+  it("caps available memory at the cgroup limit", () => {
+    expect(
+      resolveTsdownDeclarationConcurrency({
+        ...base,
+        cgroupMemoryLimitBytes: 7 * GiB,
+        availableMemoryBytes: 120 * GiB,
+        cpuCount: 64,
+      }),
+    ).toBe(1);
   });
 });
 

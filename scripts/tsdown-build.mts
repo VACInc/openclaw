@@ -10,6 +10,7 @@ import {
   type SpawnSyncReturns,
 } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { BUNDLED_PLUGIN_PATH_PREFIX } from "./lib/bundled-plugin-paths.mjs";
@@ -43,6 +44,7 @@ const DEFAULT_WINDOWS_TSDOWN_MAX_OLD_SPACE_MB = 8192;
 const TSDOWN_MAX_OLD_SPACE_MB_ENV = "OPENCLAW_TSDOWN_MAX_OLD_SPACE_MB";
 const MIN_TSDOWN_MAX_OLD_SPACE_MB = 2048;
 const TSDOWN_CGROUP_MEMORY_HEADROOM_MB = 768;
+const TSDOWN_DECLARATION_CPUS_PER_CHILD = 4;
 const CGROUP_MEMORY_LIMIT_PATHS = [
   "/sys/fs/cgroup/memory.max",
   "/sys/fs/cgroup/memory/memory.limit_in_bytes",
@@ -508,6 +510,30 @@ function parseProcMemTotalBytes(value: string) {
   return Number(parsed);
 }
 
+function parseProcMemAvailableBytes(value: string) {
+  const match = value.match(/^MemAvailable:\s+(\d+)\s+kB$/imu);
+  const kibibytes = match?.[1];
+  if (!kibibytes) {
+    return null;
+  }
+  const parsed = BigInt(kibibytes) * 1024n;
+  if (parsed <= 0n || parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return null;
+  }
+  return Number(parsed);
+}
+
+function readProcMemAvailableBytes(params: MemoryLimitParams = {}) {
+  const fsImpl = params.fs ?? fs;
+  try {
+    return parseProcMemAvailableBytes(
+      fsImpl.readFileSync(params.procMeminfoPath ?? PROC_MEMINFO_PATH, "utf8"),
+    );
+  } catch {
+    return null;
+  }
+}
+
 function readProcMemTotalBytes(params: MemoryLimitParams = {}) {
   const configuredTotal = params.procMemTotalBytes;
   if (configuredTotal && Number.isFinite(configuredTotal) && configuredTotal > 0) {
@@ -552,6 +578,40 @@ function resolveTsdownMaxOldSpaceMb(params: MemoryLimitParams = {}) {
     limitMb - TSDOWN_CGROUP_MEMORY_HEADROOM_MB,
   );
   return Math.min(defaultMaxOldSpaceMb, cgroupCap);
+}
+
+// DTS partitions are disjoint emit-only graphs, so they may fan out.
+// Bound each child by cgroup/MemAvailable and cores; constrained hosts retain
+// #116021's sequential peak-memory behavior.
+export function resolveTsdownDeclarationConcurrency(
+  params: MemoryLimitParams & {
+    partitionCount: number;
+    availableMemoryBytes?: number | null;
+    cpuCount?: number;
+  },
+) {
+  if (params.partitionCount <= 1) {
+    return Math.max(1, params.partitionCount);
+  }
+  const perChildMb = resolveTsdownMaxOldSpaceMb(params) + TSDOWN_CGROUP_MEMORY_HEADROOM_MB;
+  const cgroupLimitBytes = readCgroupMemoryLimitBytes(params);
+  const procAvailableBytes =
+    params.availableMemoryBytes === undefined
+      ? readProcMemAvailableBytes(params)
+      : params.availableMemoryBytes;
+  const availableBytes =
+    cgroupLimitBytes === null
+      ? procAvailableBytes
+      : Math.min(cgroupLimitBytes, procAvailableBytes ?? cgroupLimitBytes);
+  if (availableBytes === null) {
+    return 1;
+  }
+  const memoryBound = Math.floor(availableBytes / 1024 / 1024 / perChildMb);
+  const cpuCount = params.cpuCount ?? os.availableParallelism();
+  // Each tsdown child is itself multi-threaded (rolldown + TypeScript emit);
+  // oversubscribing cores makes every partition slower without saving wall time.
+  const cpuBound = Math.floor(cpuCount / TSDOWN_DECLARATION_CPUS_PER_CHILD);
+  return Math.max(1, Math.min(params.partitionCount, memoryBound, cpuBound));
 }
 
 function parseMaxOldSpaceSizeMb(value: unknown, fallbackMb: number) {
@@ -736,7 +796,7 @@ export function resolveTsdownBuildInvocation(
   };
 }
 
-/** Builds declarations in dependency order without overlapping the largest graphs. */
+/** Builds runtime bundles first, then declaration graphs that capacity permits to fan out. */
 export function resolveTsdownBuildInvocations(params: TsdownBuildParams = {}) {
   const forwardedArgs = params.args ?? [];
   const env = params.env ?? process.env;
@@ -1046,18 +1106,55 @@ if (isMainModule()) {
   pruneStaleRuntimeSymlinks();
   cleanTsdownOutputRoots({ roots: resolveTsdownCleanOutputRoots(args.forwardedArgs) });
   const invocations = resolveTsdownBuildInvocations({ args: args.forwardedArgs });
-  let result: TsdownBuildResult | undefined;
-  for (const [index, invocation] of invocations.entries()) {
+  const isBlocking = (candidate: TsdownBuildResult) =>
+    candidate.status !== 0 ||
+    candidate.hasIneffectiveDynamicImport ||
+    candidate.fatalUnresolvedImport;
+  async function runIndexedInvocation(index: number) {
     const startedAt = performance.now();
-    result = await runTsdownBuildInvocation(invocation);
+    const indexedResult = await runTsdownBuildInvocation(invocations[index]!);
     // Per-invocation timing separates the AI-declarations pass from the main
     // graph in CI logs; the combined step is otherwise a single opaque cost.
     console.log(
       `[tsdown-build] invocation ${index + 1}/${invocations.length} finished in ${((performance.now() - startedAt) / 1000).toFixed(1)}s`,
     );
-    if (result.status !== 0 || result.hasIneffectiveDynamicImport || result.fatalUnresolvedImport) {
+    return indexedResult;
+  }
+  // Runtime bundles run in order; the trailing declaration partitions share no
+  // outputs and fan out up to the memory/CPU-derived concurrency.
+  const firstDeclarationIndex = invocations.findIndex((invocation) =>
+    isUnifiedDtsGroup(readForwardedOption(invocation.args, ["--filter", "-F"])),
+  );
+  const serialCount = firstDeclarationIndex === -1 ? invocations.length : firstDeclarationIndex;
+  let result: TsdownBuildResult | undefined;
+  for (let index = 0; index < serialCount; index += 1) {
+    result = await runIndexedInvocation(index);
+    if (isBlocking(result)) {
       break;
     }
+  }
+  if ((result === undefined || !isBlocking(result)) && serialCount < invocations.length) {
+    const concurrency = resolveTsdownDeclarationConcurrency({
+      partitionCount: invocations.length - serialCount,
+    });
+    console.log(`[tsdown-build] declaration partitions running ${concurrency} at a time`);
+    let nextIndex = serialCount;
+    let blockingResult: TsdownBuildResult | undefined;
+    const workers = Array.from({ length: concurrency }, async () => {
+      while (nextIndex < invocations.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        result = await runIndexedInvocation(index);
+        if (isBlocking(result)) {
+          // Keep the first blocking partition; idle workers stop claiming more
+          // while in-flight siblings finish so their failures are still logged.
+          blockingResult ??= result;
+          nextIndex = invocations.length;
+        }
+      }
+    });
+    await Promise.all(workers);
+    result = blockingResult ?? result;
   }
 
   if (!result) {
