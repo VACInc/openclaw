@@ -11,6 +11,9 @@
   "nonSecretAuthMarkers": [
     "opencode-zen-anonymous"
   ],
+  "syntheticAuthRefs": [
+    "opencode"
+  ],
   "enabledByDefault": true,
   "providers": [
     "opencode"

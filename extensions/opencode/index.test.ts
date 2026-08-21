@@ -130,6 +130,7 @@ describe("opencode provider plugin", () => {
   it("registers only the Zen auth choice from its own provider manifest", async () => {
     const provider = await registerSingleProviderPlugin(plugin);
 
+    expect(manifest.syntheticAuthRefs).toEqual(["opencode"]);
     expect(provider.id).toBe("opencode");
     expect(provider.envVars).toEqual(["OPENCODE_API_KEY", "OPENCODE_ZEN_API_KEY"]);
     expect(provider.auth.map((method) => method.id)).toEqual(["api-key"]);
