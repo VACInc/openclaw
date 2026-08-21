@@ -235,6 +235,28 @@ type SyntheticProviderAuthResolution = {
   blockedOnManagedSecretRef?: boolean;
 };
 
+function resolvePluginSyntheticAuth(params: {
+  cfg: OpenClawConfig | undefined;
+  provider: string;
+  modelId?: string;
+  modelApi?: string;
+}): ResolvedProviderAuth | undefined {
+  const providerConfig = authConfig.resolveProviderConfig(params.cfg, params.provider);
+  return (
+    resolveProviderSyntheticAuthWithPlugin({
+      provider: params.provider,
+      config: params.cfg,
+      context: {
+        config: params.cfg,
+        provider: params.provider,
+        modelId: params.modelId,
+        providerConfig,
+      },
+      modelApi: params.modelApi,
+    }) ?? undefined
+  );
+}
+
 function resolveProviderSyntheticRuntimeAuth(params: {
   cfg: OpenClawConfig | undefined;
   provider: string;
@@ -250,24 +272,8 @@ function resolveProviderSyntheticRuntimeAuth(params: {
     return { blockedOnManagedSecretRef: true };
   }
 
-  const resolveFromConfig = (
-    config: OpenClawConfig | undefined,
-  ): ResolvedProviderAuth | undefined => {
-    const providerConfig = authConfig.resolveProviderConfig(config, params.provider);
-    return (
-      resolveProviderSyntheticAuthWithPlugin({
-        provider: params.provider,
-        config,
-        context: {
-          config,
-          provider: params.provider,
-          modelId: params.modelId,
-          providerConfig,
-        },
-        modelApi: params.modelApi,
-      }) ?? undefined
-    );
-  };
+  const resolveFromConfig = (config: OpenClawConfig | undefined) =>
+    resolvePluginSyntheticAuth({ ...params, cfg: config });
 
   const directAuth = resolveFromConfig(params.cfg);
   if (!directAuth) {
@@ -307,10 +313,15 @@ export function resolveSyntheticLocalProviderAuth(params: {
   secretSentinels?: boolean;
   allowPluginSyntheticAuth?: boolean;
 }): ResolvedProviderAuth | null {
-  // Prepared direct attempts may use local no-auth config, but must not widen
-  // back into an unprepared plugin-owned credential source.
-  const syntheticProviderAuth =
-    params.allowPluginSyntheticAuth === false ? {} : resolveProviderSyntheticRuntimeAuth(params);
+  // Prepared direct attempts cannot borrow plugin credentials. A manifest-declared
+  // non-secret marker is transport setup, though, not a credential fallback.
+  const syntheticProviderAuth: SyntheticProviderAuthResolution =
+    params.allowPluginSyntheticAuth === false
+      ? (() => {
+          const auth = resolvePluginSyntheticAuth(params);
+          return auth?.apiKey && isNonSecretApiKeyMarker(auth.apiKey) ? { auth } : {};
+        })()
+      : resolveProviderSyntheticRuntimeAuth(params);
   if (syntheticProviderAuth.auth) {
     return syntheticProviderAuth.auth;
   }

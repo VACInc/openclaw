@@ -118,7 +118,10 @@ vi.mock("../plugins/provider-runtime.js", () => {
         };
       };
       modelApi?: string;
-      context: { providerConfig?: { api?: string; baseUrl?: string; models?: unknown[] } };
+      context: {
+        modelId?: string;
+        providerConfig?: { api?: string; baseUrl?: string; models?: unknown[] };
+      };
     }) => {
       if (params.provider === "plugin-web") {
         if (
@@ -150,6 +153,13 @@ vi.mock("../plugins/provider-runtime.js", () => {
           apiKey: "native-cli-access-token",
           source: "Native CLI auth",
           mode: "oauth" as const,
+        };
+      }
+      if (params.provider === "anonymous-preview" && params.context.modelId === "preview") {
+        return {
+          apiKey: "gcp-vertex-credentials",
+          source: "Anonymous preview route",
+          mode: "api-key" as const,
         };
       }
       const effectiveApi = params.modelApi ?? params.context.providerConfig?.api;
@@ -1518,6 +1528,31 @@ describe("resolveApiKeyForProviderCore", () => {
       source: "Native CLI auth",
       mode: "oauth",
     });
+  });
+
+  it("keeps manifest-declared non-secret plugin auth on a prepared direct route", async () => {
+    await expect(
+      resolveApiKeyForProviderCore({
+        provider: "anonymous-preview",
+        modelId: "preview",
+        allowAuthProfileFallback: false,
+        store: { version: 1, profiles: {} },
+      }),
+    ).resolves.toEqual({
+      apiKey: "gcp-vertex-credentials",
+      source: "Anonymous preview route",
+      mode: "api-key",
+    });
+  });
+
+  it("does not borrow secret plugin auth on a prepared direct route", async () => {
+    await expect(
+      resolveApiKeyForProviderCore({
+        provider: "native-cli",
+        allowAuthProfileFallback: false,
+        store: { version: 1, profiles: {} },
+      }),
+    ).rejects.toThrow('No API key found for provider "native-cli"');
   });
 
   it("reuses the loaded auth profile store after deferring an explicit synthetic profile", async () => {
