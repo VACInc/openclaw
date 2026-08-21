@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { PreparedModelRuntimePluginGeneration } from "../../agents/prepared-model-runtime.types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import { withPluginMetadataSnapshotScope } from "../current-plugin-metadata-snapshot.js";
@@ -11,9 +12,17 @@ const PLUGIN_RUNTIME_GENERATION_REGISTRY_SCOPE_KEY: unique symbol = Symbol.for(
   "openclaw.pluginRuntimeGenerationRegistryScope",
 );
 
+type PluginRuntimeGenerationScope = {
+  pluginRegistry: PluginRegistry;
+  preparedModelRuntimePluginGeneration?: PreparedModelRuntimePluginGeneration;
+};
+
 const pluginRuntimeGenerationRegistryScope = resolveGlobalSingleton<
-  AsyncLocalStorage<PluginRegistry>
->(PLUGIN_RUNTIME_GENERATION_REGISTRY_SCOPE_KEY, () => new AsyncLocalStorage<PluginRegistry>());
+  AsyncLocalStorage<PluginRuntimeGenerationScope>
+>(
+  PLUGIN_RUNTIME_GENERATION_REGISTRY_SCOPE_KEY,
+  () => new AsyncLocalStorage<PluginRuntimeGenerationScope>(),
+);
 
 /** Carries one prepared plugin generation through all nested runtime lookups. */
 export function withPluginRuntimeGenerationScope<T>(
@@ -21,14 +30,28 @@ export function withPluginRuntimeGenerationScope<T>(
     config: OpenClawConfig;
     metadataSnapshot: PluginMetadataSnapshot;
     pluginRegistry?: PluginRegistry;
+    /** Exact admission generation for nested prepared model-runtime acquisition. */
+    preparedModelRuntimePluginGeneration?: PreparedModelRuntimePluginGeneration;
   },
   run: () => T,
 ): T {
   const pluginRegistry = generation.pluginRegistry ?? createEmptyPluginRegistry();
+  const parentGeneration = pluginRuntimeGenerationRegistryScope.getStore();
+  const scope: PluginRuntimeGenerationScope = {
+    pluginRegistry,
+    ...(generation.preparedModelRuntimePluginGeneration
+      ? { preparedModelRuntimePluginGeneration: generation.preparedModelRuntimePluginGeneration }
+      : parentGeneration?.preparedModelRuntimePluginGeneration
+        ? {
+            preparedModelRuntimePluginGeneration:
+              parentGeneration.preparedModelRuntimePluginGeneration,
+          }
+        : {}),
+  };
   return withPluginMetadataSnapshotScope(
     generation.metadataSnapshot,
     () =>
-      pluginRuntimeGenerationRegistryScope.run(pluginRegistry, () =>
+      pluginRuntimeGenerationRegistryScope.run(scope, () =>
         withPluginRuntimeRegistryScope(pluginRegistry, run),
       ),
     {
@@ -43,5 +66,12 @@ export function withPluginRuntimeGenerationScope<T>(
 
 /** Exact registry owned by the prepared generation, when one is active. */
 export function getPluginRuntimeGenerationRegistry(): PluginRegistry | undefined {
-  return pluginRuntimeGenerationRegistryScope.getStore();
+  return pluginRuntimeGenerationRegistryScope.getStore()?.pluginRegistry;
+}
+
+/** Exact admitted generation active for nested prepared model-runtime acquisition. */
+export function getPreparedModelRuntimePluginGeneration():
+  | PreparedModelRuntimePluginGeneration
+  | undefined {
+  return pluginRuntimeGenerationRegistryScope.getStore()?.preparedModelRuntimePluginGeneration;
 }

@@ -21,7 +21,10 @@ import {
 } from "../../plugins/hook-agent-context.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { loadPluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.js";
-import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
+import {
+  getPreparedModelRuntimePluginGeneration,
+  withPluginRuntimeGenerationScope,
+} from "../../plugins/runtime/generation-scope.js";
 import { resolveUserPath } from "../../utils.js";
 import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
 import {
@@ -102,6 +105,8 @@ export function runEmbeddedAgent(
 async function runEmbeddedAgentInternal(
   paramsInput: RunEmbeddedAgentInternalParams,
 ): Promise<EmbeddedAgentRunResult> {
+  const pluginGeneration =
+    paramsInput.pluginGeneration ?? getPreparedModelRuntimePluginGeneration();
   const contextEngineAgentId =
     normalizeOptionalString(paramsInput.sessionTarget?.agentId) ??
     normalizeOptionalString(paramsInput.agentId);
@@ -233,7 +238,7 @@ async function runEmbeddedAgentInternal(
           sessionKey: params.sessionKey,
         });
       const pluginMetadataSnapshot =
-        params.pluginGeneration?.pluginMetadataSnapshot ??
+        pluginGeneration?.pluginMetadataSnapshot ??
         loadPluginMetadataSnapshot({
           config,
           workspaceDir: requestedWorkspaceResolution.workspaceDir,
@@ -293,16 +298,16 @@ async function runEmbeddedAgentInternal(
                 // Turns need only configured admission facts. Full live model inventory remains
                 // available through the snapshot's lazy control-plane loader.
                 catalogMode: "static",
-                ...(params.pluginGeneration ? { pluginGeneration: params.pluginGeneration } : {}),
+                ...(pluginGeneration ? { pluginGeneration } : {}),
               }),
       );
       startupStages.mark("prepared-runtime");
       const preparedModelRuntimeOwnerSnapshot = preparedModelRuntimeLease.snapshot;
       try {
         if (
-          params.pluginGeneration &&
+          pluginGeneration &&
           preparedModelRuntimeOwnerSnapshot.metadataSnapshot !==
-            params.pluginGeneration.pluginMetadataSnapshot
+            pluginGeneration.pluginMetadataSnapshot
         ) {
           throw new Error("prepared model runtime replaced the admitted plugin generation");
         }
@@ -454,7 +459,13 @@ async function runEmbeddedAgentInternal(
             preparedModelRuntime,
           });
         };
-        return await withPluginRuntimeGenerationScope(preparedModelRuntime, runPrepared);
+        return await withPluginRuntimeGenerationScope(
+          {
+            ...preparedModelRuntime,
+            ...(pluginGeneration ? { preparedModelRuntimePluginGeneration: pluginGeneration } : {}),
+          },
+          runPrepared,
+        );
       } finally {
         preparedModelRuntimeLease.release();
       }

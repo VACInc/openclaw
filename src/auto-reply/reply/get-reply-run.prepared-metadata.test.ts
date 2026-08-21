@@ -4,7 +4,10 @@ import {
   setCurrentPluginMetadataSnapshot,
 } from "../../plugins/current-plugin-metadata-snapshot.js";
 import { resolveInstalledPluginIndexPolicyHash } from "../../plugins/installed-plugin-index-policy.js";
-import { getPluginRuntimeGenerationRegistry } from "../../plugins/runtime/generation-scope.js";
+import {
+  getPluginRuntimeGenerationRegistry,
+  getPreparedModelRuntimePluginGeneration,
+} from "../../plugins/runtime/generation-scope.js";
 import { runPreparedReply } from "./get-reply-run.js";
 import { bindPreparedReplyDispatchRuntime } from "./prepared-reply-dispatch-context.js";
 
@@ -68,16 +71,20 @@ describe("runPreparedReply prepared metadata", () => {
     }));
     let admissionSnapshot: unknown;
     let admissionRegistry: unknown;
+    let admissionPluginGeneration: unknown;
     mocks.prepareAdmission.mockImplementation(async () => {
       admissionSnapshot = getCurrentPluginMetadataSnapshot({ config, workspaceDir });
       admissionRegistry = getPluginRuntimeGenerationRegistry();
+      admissionPluginGeneration = getPreparedModelRuntimePluginGeneration();
       return { kind: "run" };
     });
     let executionSnapshot: unknown;
     let executionRegistry: unknown;
+    let executionPluginGeneration: unknown;
     mocks.execute.mockImplementation(async () => {
       executionSnapshot = getCurrentPluginMetadataSnapshot({ config, workspaceDir });
       executionRegistry = getPluginRuntimeGenerationRegistry();
+      executionPluginGeneration = getPreparedModelRuntimePluginGeneration();
       return { text: "ok" };
     });
 
@@ -106,8 +113,11 @@ describe("runPreparedReply prepared metadata", () => {
     expect(executionSnapshot).toBe(metadataSnapshot);
     expect(admissionRegistry).toBe(pluginRegistry);
     expect(executionRegistry).toBe(pluginRegistry);
+    expect(admissionPluginGeneration).toBe(pluginGeneration);
+    expect(executionPluginGeneration).toBe(pluginGeneration);
     expect(release).toHaveBeenCalledOnce();
     expect(getCurrentPluginMetadataSnapshot({ config, workspaceDir })).toBeUndefined();
     expect(getPluginRuntimeGenerationRegistry()).toBeUndefined();
+    expect(getPreparedModelRuntimePluginGeneration()).toBeUndefined();
   });
 });
