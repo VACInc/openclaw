@@ -5,6 +5,7 @@ import type {
   SessionCatalogProvider,
   SessionCatalogTranscriptItem,
 } from "openclaw/plugin-sdk/session-catalog";
+import type { ClaudeManagedSessionStore } from "./managed-session-store.js";
 import { adoptedSourceKey, CLAUDE_LOCAL_SESSION_HOST_ID } from "./session-catalog-adoption.js";
 import { continueClaudeSession } from "./session-catalog-continue.js";
 import { listClaudeSessions } from "./session-catalog-discovery.js";
@@ -15,11 +16,16 @@ import {
   resolveNodeClaudeRecord,
 } from "./session-catalog-listing.js";
 import { DEFAULT_TRANSCRIPT_LIMIT, MAX_TRANSCRIPT_LIMIT } from "./session-catalog-parsing.js";
-import { listBoundClaudeSessions } from "./session-catalog-runtime.js";
+import {
+  listAdoptedClaudeSessions,
+  listBoundClaudeSessions,
+  listManagedClaudeSessionCandidates,
+} from "./session-catalog-runtime.js";
 import {
   configuredClaudeConfigDir,
   currentHomeDir,
   gatewayClaudeScanOptions,
+  localClaudeCatalogSourceId,
 } from "./session-catalog-scan.js";
 import * as catalogTerminal from "./session-catalog-terminal.js";
 import type { ClaudeTranscriptItem } from "./session-catalog-transcript.js";
@@ -31,6 +37,14 @@ export {
   listLocalClaudeSessionPage,
   readLocalClaudeTranscriptPage,
 } from "./session-catalog-listing.js";
+
+async function listLegacyManagedClaudeSessionCandidates(): Promise<
+  Array<{ hostId: string; sessionId: string }>
+> {
+  return (await listClaudeSessions(currentHomeDir(), gatewayClaudeScanOptions(true)))
+    .filter((session) => session.openClawManaged === true)
+    .map((session) => ({ hostId: localClaudeCatalogSourceId(), sessionId: session.threadId }));
+}
 
 function toGenericClaudeItem(item: ClaudeTranscriptItem): SessionCatalogTranscriptItem {
   const allowed = new Set<SessionCatalogTranscriptItem["type"]>([
@@ -117,10 +131,17 @@ type ClaudeSessionCatalogRuntime = Required<
 
 export function createClaudeSessionCatalogRuntime(
   api: OpenClawPluginApi,
+  managedSessions?: ClaudeManagedSessionStore,
 ): ClaudeSessionCatalogRuntime {
   return {
     list: async (query) => {
-      const adopted = listBoundClaudeSessions(api, query.agentId, query.sessionEntries);
+      const adopted = managedSessions
+        ? listAdoptedClaudeSessions(api, query.agentId, query.sessionEntries)
+        : listBoundClaudeSessions(api, query.agentId, query.sessionEntries);
+      const managedSessionIds = await managedSessions?.snapshot(async () => [
+        ...listManagedClaudeSessionCandidates(api, query.sessionEntries),
+        ...(await listLegacyManagedClaudeSessionCandidates()),
+      ]);
       const localCliAvailable = catalogTerminal.isClaudeCliAvailable();
       const {
         allowProcessHomeFallback,
@@ -137,6 +158,7 @@ export function createClaudeSessionCatalogRuntime(
         query: gatewayQuery,
         allowProcessHomeFallback,
         listNodes,
+        managedSessionIds,
         ...(onHost ? { onHost: (host) => onHost(mapHost(host)) } : {}),
       });
       return result.hosts.map(mapHost);

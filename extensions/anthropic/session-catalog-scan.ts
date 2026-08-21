@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import type { Dirent, Stats } from "node:fs";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -87,8 +89,14 @@ async function safeSessionFile(
     if (!isPathInside(resolvedRoot, resolvedCandidate)) {
       return undefined;
     }
+    const linkStat = await fs.lstat(candidate);
+    if (linkStat.isSymbolicLink()) {
+      return undefined;
+    }
     const stat = await fs.stat(resolvedCandidate);
-    return stat.isFile() ? { filePath: resolvedCandidate, stat } : undefined;
+    return stat.isFile() && (typeof stat.nlink !== "number" || stat.nlink <= 1)
+      ? { filePath: resolvedCandidate, stat }
+      : undefined;
   } catch (error) {
     const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
     if (code === "ENOENT" || code === "ENOTDIR") {
@@ -174,6 +182,24 @@ export async function childDirectories(root: string): Promise<string[]> {
 
 export function projectsDir(homeDir: string, configDir?: string): string {
   return path.join(configDir ?? path.join(homeDir, ".claude"), "projects");
+}
+
+/** Stable durable identity for the local Claude catalog root, never native-reported metadata. */
+export function localClaudeCatalogSourceId(
+  homeDir = currentHomeDir(),
+  configDir = configuredClaudeConfigDir(),
+): string {
+  const root = path.resolve(projectsDir(homeDir, configDir));
+  let canonicalRoot = root;
+  try {
+    canonicalRoot = fsSync.realpathSync.native(root);
+  } catch {
+    // A not-yet-created configured root is still authoritative for future sessions.
+  }
+  return createHash("sha256")
+    .update("openclaw:claude-session-catalog-home:v1\0")
+    .update(canonicalRoot)
+    .digest("hex");
 }
 
 export async function readProjectsTreeSnapshot(root: string): Promise<ClaudeProjectsTreeSnapshot> {
