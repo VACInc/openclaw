@@ -364,4 +364,17 @@ describe("openai completions transport", () => {
     expect(request.headers.get("api-version")).toBe("proxy-header");
     expect(request.headers.get("x-tenant")).toBe("acme");
   });
+
+  it("omits authorization for explicitly anonymous OpenAI-compatible models", async () => {
+    const request = await captureTransportRequest(
+      makeCompletionsModel({
+        id: "anonymous-preview",
+        name: "Anonymous Preview",
+        provider: "public-preview",
+        requiresApiKey: false,
+      }),
+    );
+
+    expect(request.headers.get("authorization")).toBeNull();
+  });
 });

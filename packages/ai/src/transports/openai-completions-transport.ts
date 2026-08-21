@@ -129,10 +129,19 @@ function buildOpenAICompletionsClientConfig(
   optionHeaders?: Record<string, string>,
 ): {
   baseURL: string;
-  defaultHeaders: Record<string, string>;
+  defaultHeaders: Record<string, string | null>;
   defaultQuery?: Record<string, string>;
 } {
-  const headers = buildOpenAIClientHeaders(model, context, optionHeaders);
+  const headers: Record<string, string | null> = buildOpenAIClientHeaders(
+    model,
+    context,
+    optionHeaders,
+  );
+  if (model.requiresApiKey === false) {
+    // The SDK receives a non-empty sentinel for its constructor invariant, but
+    // anonymous model contracts must never turn that sentinel into a bearer token.
+    headers.Authorization = null;
+  }
   const defaultQuery: Record<string, string> = {};
   let baseURL = model.baseUrl;
   let isAzureHost = false;
