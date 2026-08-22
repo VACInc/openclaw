@@ -178,6 +178,7 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
         runtime: opts.runtime as RuntimeEnv,
         buildContext: (opts.channelRuntime as PluginRuntime["channel"] | undefined)?.inbound
           .buildContext,
+        dispatchReplyFromConfig: opts.channelRuntime?.reply.dispatchReplyFromConfig,
         fetch: proxyFetch,
         abortSignal: opts.abortSignal,
         publicUrl: opts.webhookUrl,
@@ -280,6 +281,7 @@ export async function monitorTelegramProvider(opts: MonitorTelegramOpts = {}) {
         runtime: opts.runtime,
         buildContext: (opts.channelRuntime as PluginRuntime["channel"] | undefined)?.inbound
           .buildContext,
+        dispatchReplyFromConfig: opts.channelRuntime?.reply.dispatchReplyFromConfig,
         proxyFetch,
         botInfo: opts.botInfo,
         abortSignal: opts.abortSignal,

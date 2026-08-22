@@ -523,6 +523,7 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
           accountId: route.accountId,
           route: { agentId: route.agentId, sessionKey: route.sessionKey },
           ctxPayload,
+          dispatchReplyFromConfig: deps.channelRuntime?.reply.dispatchReplyFromConfig,
           record: {
             updateLastRoute: !entry.isGroup
               ? {

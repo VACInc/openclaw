@@ -43,6 +43,7 @@ export function createWebOnMessageHandler(params: {
   baseMentionConfig: MentionConfig;
   account: { authDir?: string; accountId?: string; selfChatMode?: boolean };
   buildContext?: typeof import("openclaw/plugin-sdk/channel-inbound").buildChannelInboundEventContext;
+  dispatchReplyFromConfig?: typeof import("openclaw/plugin-sdk/reply-dispatch-runtime").dispatchReplyFromConfig;
 }) {
   const hasExplicitlyPassedInboundAccess = (msg: AdmittedWebInboundMessage): boolean =>
     msg.admission.ingress.decision === "allow";
@@ -103,6 +104,7 @@ export function createWebOnMessageHandler(params: {
       replyLogger: params.replyLogger,
       backgroundTasks: params.backgroundTasks,
       buildContext: params.buildContext,
+      dispatchReplyFromConfig: params.dispatchReplyFromConfig,
     };
     if (opts?.groupHistory !== undefined) {
       processParams.groupHistory = opts.groupHistory;

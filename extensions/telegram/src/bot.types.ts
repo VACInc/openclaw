@@ -12,6 +12,8 @@ export type TelegramBotOptions = {
   ownerAgentId?: string;
   runtime?: RuntimeEnv;
   buildContext?: typeof import("openclaw/plugin-sdk/channel-inbound").buildChannelInboundEventContext;
+  /** Instance-bound reply dispatcher prepared by the owning plugin runtime. */
+  dispatchReplyFromConfig?: typeof import("openclaw/plugin-sdk/reply-dispatch-runtime").dispatchReplyFromConfig;
   requireMention?: boolean;
   allowFrom?: Array<string | number>;
   groupAllowFrom?: Array<string | number>;

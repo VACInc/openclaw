@@ -282,6 +282,7 @@ export async function dispatchDiscordComponentEvent(params: {
         accountId,
         route: { agentId, sessionKey },
         ctxPayload,
+        dispatchReplyFromConfig: ctx.channelRuntime?.reply.dispatchReplyFromConfig,
         record: {
           updateLastRoute: interactionCtx.isDirectMessage
             ? {

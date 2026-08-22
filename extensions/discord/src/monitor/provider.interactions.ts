@@ -163,6 +163,7 @@ export function createDiscordProviderInteractionSurface(params: {
       allowFrom: params.allowFrom,
       dmPolicy: params.dmPolicy,
       runtime: params.runtime,
+      channelRuntime: params.channelRuntime,
       token: params.token,
     },
     params.applicationId,
