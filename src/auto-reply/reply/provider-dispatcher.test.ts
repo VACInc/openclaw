@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { DispatchReplyFromConfig } from "./dispatch-from-config.types.js";
 import type {
   ReplyDispatcherOptions,
   ReplyDispatcherWithTypingOptions,
@@ -54,6 +55,23 @@ describe("provider dispatcher wrappers", () => {
         dispatcherOptions,
         toolsAllow: ["message"],
       }),
+    );
+  });
+
+  it("forwards the bound dispatcher through the buffered wrapper", async () => {
+    const dispatchReplyFromConfig = vi.fn<DispatchReplyFromConfig>();
+
+    await dispatchReplyWithBufferedBlockDispatcherCore({
+      ctx: { Body: "hello" },
+      cfg: {} as OpenClawConfig,
+      dispatcherOptions: {
+        deliver: async () => ({ visibleReplySent: false }),
+      },
+      dispatchReplyFromConfig,
+    });
+
+    expect(hoisted.bufferedDispatchMock.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ dispatchReplyFromConfig }),
     );
   });
 

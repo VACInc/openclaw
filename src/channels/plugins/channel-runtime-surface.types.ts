@@ -3,8 +3,6 @@
  *
  * Defines the public plugin SDK surface for channel runtime context registration and watches.
  */
-import type { DispatchReplyFromConfig } from "../../auto-reply/reply/dispatch-from-config.types.js";
-
 export type ChannelRuntimeContextKey = {
   channelId: string;
   accountId?: string | null;
@@ -38,6 +36,17 @@ export type ChannelRuntimeContextRegistry = {
   }) => () => void;
 };
 
+/** Minimal result contract lets adapters carry the prepared dispatcher without importing reply runtime. */
+export type ChannelRuntimeReplyDispatchResult = {
+  queuedFinal: boolean;
+  counts: Record<"tool" | "block" | "final", number>;
+};
+
+/** Prepared dispatcher passed to the inbound-turn owner, never invoked by adapters. */
+export type ChannelRuntimeReplyDispatcher = {
+  dispatch(params: unknown): Promise<ChannelRuntimeReplyDispatchResult>;
+}["dispatch"];
+
 /**
  * Minimal channel-runtime surface exported through the public plugin SDK.
  *
@@ -48,7 +57,7 @@ export type ChannelRuntimeSurface = {
   runtimeContexts: ChannelRuntimeContextRegistry;
   // Direct adapters retain this closure-bound dispatcher across detached ingress work.
   reply?: {
-    dispatchReplyFromConfig: DispatchReplyFromConfig;
+    dispatchReplyFromConfig: ChannelRuntimeReplyDispatcher;
   };
   [key: string]: unknown;
 };

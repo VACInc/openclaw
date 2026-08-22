@@ -3,6 +3,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { PluginCommandReplyOptions } from "../../plugins/plugin-command-dispatch-contract.js";
 import type { GetReplyOptions } from "../get-reply-options.types.js";
 import type { FinalizedMsgContext, MsgContext } from "../templating.js";
+import type { DispatchReplyFromConfig } from "./dispatch-from-config.types.js";
 import type { DispatchFromConfigResult } from "./dispatch-from-config.types.js";
 import type { GetReplyFromConfig } from "./get-reply.types.js";
 import type {
@@ -21,6 +22,7 @@ export type DispatchReplyWithBufferedBlockDispatcher = (params: {
   toolsAllow?: string[];
   replyOptions?: DispatchReplyOptions;
   replyResolver?: GetReplyFromConfig;
+  dispatchReplyFromConfig?: DispatchReplyFromConfig;
 }) => Promise<DispatchFromConfigResult>;
 
 /** Plain dispatcher entry point used when block buffering is not needed. */
