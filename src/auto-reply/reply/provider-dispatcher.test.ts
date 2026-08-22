@@ -37,16 +37,18 @@ describe("provider dispatcher wrappers", () => {
     hoisted.plainDispatchMock.mockResolvedValue(dispatchResult);
   });
 
-  it("forwards runtime toolsAllow through the buffered wrapper", async () => {
+  it("forwards allowed tools and the owning dispatcher through the buffered wrapper", async () => {
     const dispatcherOptions = {
       deliver: async () => ({ visibleReplySent: false }),
     } satisfies ReplyDispatcherWithTypingOptions;
+    const dispatchReplyFromConfig = vi.fn<DispatchReplyFromConfig>();
 
     await dispatchReplyWithBufferedBlockDispatcherCore({
       ctx: { Body: "hello" },
       cfg: {} as OpenClawConfig,
       dispatcherOptions,
       toolsAllow: ["message"],
+      dispatchReplyFromConfig,
     });
 
     expect(hoisted.bufferedDispatchMock).toHaveBeenCalledTimes(1);
@@ -54,24 +56,8 @@ describe("provider dispatcher wrappers", () => {
       expect.objectContaining({
         dispatcherOptions,
         toolsAllow: ["message"],
+        dispatchReplyFromConfig,
       }),
-    );
-  });
-
-  it("forwards the bound dispatcher through the buffered wrapper", async () => {
-    const dispatchReplyFromConfig = vi.fn<DispatchReplyFromConfig>();
-
-    await dispatchReplyWithBufferedBlockDispatcherCore({
-      ctx: { Body: "hello" },
-      cfg: {} as OpenClawConfig,
-      dispatcherOptions: {
-        deliver: async () => ({ visibleReplySent: false }),
-      },
-      dispatchReplyFromConfig,
-    });
-
-    expect(hoisted.bufferedDispatchMock.mock.calls[0]?.[0]).toEqual(
-      expect.objectContaining({ dispatchReplyFromConfig }),
     );
   });
 
