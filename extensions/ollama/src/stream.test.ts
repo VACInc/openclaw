@@ -867,6 +867,54 @@ describe("createOllamaStreamFn thinking events", () => {
     });
   });
 
+  it("records the provider prompt/output timing split in milliseconds", async () => {
+    const events = await streamOllamaEvents(
+      [
+        {
+          model: "qwen3.5",
+          created_at: "2026-01-01T00:00:00Z",
+          message: { role: "assistant", content: "ok" },
+          done: true,
+          done_reason: "stop",
+          prompt_eval_count: 10,
+          eval_count: 1,
+          prompt_eval_duration: 1_234_567_890,
+          eval_duration: 98_765_432,
+        },
+      ],
+      {},
+      { messages: [{ role: "user", content: "hi" }] } as never,
+    );
+
+    const done = events.find((event) => event.type === "done") as {
+      message?: { usage?: { timing?: { promptMs: number; outputMs: number } } };
+    };
+    expect(done?.message?.usage?.timing).toEqual({ promptMs: 1235, outputMs: 99 });
+  });
+
+  it("omits usage timing when the provider reports no durations", async () => {
+    const events = await streamOllamaEvents(
+      [
+        {
+          model: "qwen3.5",
+          created_at: "2026-01-01T00:00:00Z",
+          message: { role: "assistant", content: "ok" },
+          done: true,
+          done_reason: "stop",
+          prompt_eval_count: 10,
+          eval_count: 1,
+        },
+      ],
+      {},
+      { messages: [{ role: "user", content: "hi" }] } as never,
+    );
+
+    const done = events.find((event) => event.type === "done") as {
+      message?: { usage?: { timing?: unknown } };
+    };
+    expect(done?.message?.usage).not.toHaveProperty("timing");
+  });
+
   it("keeps provider usage authoritative over the CJK fallback", async () => {
     const events = await streamOllamaEvents(
       [
