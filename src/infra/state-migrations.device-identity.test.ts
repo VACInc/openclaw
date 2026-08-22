@@ -735,6 +735,28 @@ describe("legacy device identity Doctor migration", () => {
     expect(retry.notices?.join("\n")).toContain("canonical SQLite identity remains authoritative");
     await expect(fsp.readFile(sourcePath, "utf8")).resolves.toBe(replacement);
     expect(identityRow(env)?.created_at_ms).toBe(CREATED_AT_MS);
+    expect(receipt(env)).toMatchObject({ removed_source: 1 });
+  });
+
+  it("does not mark a divergent preserved claim as removed", async () => {
+    const { env, stateDir } = useStateDir();
+    const sourcePath = await writeLegacy({ stateDir });
+    await migrate(stateDir, env, {
+      removeSource: () => {
+        throw new Error("simulated unlink failure");
+      },
+    });
+    const claimPath = `${sourcePath}.doctor-importing`;
+    const replacement = `${JSON.stringify({ version: 1, ...anotherIdentity() })}\n`;
+    await fsp.writeFile(claimPath, replacement, "utf8");
+
+    closeOpenClawStateDatabaseForTest();
+    const retry = await migrate(stateDir, env);
+
+    expect(retry.warnings).toEqual([]);
+    expect(retry.notices?.join("\n")).toContain("canonical SQLite identity remains authoritative");
+    await expect(fsp.readFile(claimPath, "utf8")).resolves.toBe(replacement);
+    expect(receipt(env)).toMatchObject({ removed_source: 0 });
   });
 
   it("keeps the divergent-file warning fatal when the canonical row is invalid", async () => {

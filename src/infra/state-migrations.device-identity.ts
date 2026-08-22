@@ -11,6 +11,7 @@ import {
   type NormalizedLegacyDeviceIdentity,
 } from "./device-identity-legacy.js";
 import {
+  readStoredDeviceIdentityReadOnly,
   resolveDeviceIdentityStore,
   validateStoredDeviceIdentity,
   type DeviceIdentity,
@@ -162,20 +163,6 @@ function verifyCanonicalIdentity(
   const row = readCanonicalIdentity(db);
   if (!row || classifyCanonicalRow(row, identity) !== "same") {
     throw new Error("canonical SQLite device identity no longer matches the legacy source");
-  }
-}
-
-/** A valid canonical row keeps runtime identity authoritative over retired JSON (#120610). */
-function canonicalRowIsValid(
-  identity: NormalizedLegacyDeviceIdentity,
-  env: NodeJS.ProcessEnv,
-): boolean {
-  try {
-    const { db } = openOpenClawStateDatabase({ env });
-    const row = readCanonicalIdentity(db);
-    return row !== undefined && classifyCanonicalRow(row, identity) !== "invalid";
-  } catch {
-    return false;
   }
 }
 
@@ -348,19 +335,21 @@ async function cleanupReceiptSources(params: {
       continue;
     }
     if (snapshot.sha256 !== params.receipt.sourceSha256) {
-      // #120610 made the canonical SQLite row authoritative over retired JSON, so a
-      // divergent preserved file is inert while that row is valid. A warning here trips
-      // the startup-migration readiness gate and crash-loops the gateway over a file
-      // runtime never reads; only a missing/invalid canonical row keeps this fatal.
-      if (canonicalRowIsValid(snapshot.identity, params.env)) {
-        notices.push(
-          `Preserved retired device identity ${candidate}: bytes differ from the migration receipt; the canonical SQLite identity remains authoritative. Archive or delete the file to clear this notice.`,
-        );
-      } else {
-        warnings.push(
-          `Retired device identity cleanup preserved ${candidate}: bytes differ from the migration receipt.`,
-        );
+      // SQLite owns runtime identity; warning about inert retired bytes would
+      // make startup refuse an otherwise healthy gateway.
+      try {
+        if (readStoredDeviceIdentityReadOnly({ env: params.env, identityKey: IDENTITY_KEY })) {
+          notices.push(
+            `Preserved retired device identity ${candidate}: bytes differ from the migration receipt; the canonical SQLite identity remains authoritative. Archive or delete the file to clear this notice.`,
+          );
+          continue;
+        }
+      } catch {
+        // Invalid canonical identity must retain its readiness-blocking warning.
       }
+      warnings.push(
+        `Retired device identity cleanup preserved ${candidate}: bytes differ from the migration receipt.`,
+      );
       continue;
     }
     try {
@@ -371,7 +360,13 @@ async function cleanupReceiptSources(params: {
       warnings.push(`Retired device identity cleanup failed for ${candidate}: ${String(error)}`);
     }
   }
-  if (warnings.length === 0 && (!params.receipt.removedSource || removed > 0)) {
+  // A divergent preserved claim cannot complete its interrupted receipt unless
+  // receipt-covered original bytes were actually removed during this pass.
+  if (
+    warnings.length === 0 &&
+    (!params.receipt.removedSource || removed > 0) &&
+    (notices.length === 0 || removed > 0)
+  ) {
     markLegacyMigrationSourceRemoved(params.receipt.sourceKey, params.env);
   }
   if (removed > 0) {
