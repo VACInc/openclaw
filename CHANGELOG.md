@@ -69,7 +69,6 @@ Docs: https://docs.openclaw.ai
 
 ### Fixes
 
-- **Channel runtime replacement:** keep active channel turns on their admitted Gateway runtime generation while detached follow-up turns adopt the current generation. (#127217) Thanks @VACInc.
 - **Control UI Codex compaction history:** preserve successful native context compactions as durable, model-excluded activity inside completed work traces after the composer status clears or the session reloads. Fixes #127206. Thanks @shakkernerd.
 - **Control UI Codex steering:** preserve pre-steer commentary and tool activity in durable transcript order, keep it visible while active, and collapse it before the steering message after completion. Fixes #126938. Thanks @shakkernerd.
 - **Onboarding migration menu:** group Claude, Codex, Hermes, and plugin-provided imports under a single **Import from another agent** setup choice while preserving detected source hints, manual paths, and Back navigation before import begins. Fixes #126440. Thanks @shakkernerd.
@@ -80,6 +79,7 @@ Docs: https://docs.openclaw.ai
 - **Control UI session companion:** load bounded visible session context before answering, keep unavailable questions retryable, and prevent private companion reference wrappers from appearing as answers. Fixes #120746. Thanks @shakkernerd.
 - **Telegram live locations:** expose initial, moving, and stopped live-location updates through the channel-neutral `message_received` hook without starting agent turns for edits.
 - **Workboard validation errors:** include the rejected normalized length in bounded-string limit errors so agents can trim and retry deterministically. Fixes #118845. Thanks @Kailigithub and @shakkernerd.
+- **Channel runtime replacement:** keep active channel turns on their admitted Gateway runtime generation while detached follow-up turns adopt the current generation. (#127217) Thanks @VACInc.
 - **Updater plugin convergence:** keep pre-plugin doctor passes from installing configured plugins before the updater's plugin sweep, while preserving the final post-plugin migration pass and preventing ambient update-phase state from leaking into fresh doctor processes.
 - **Control UI browser tab identity:** keep selected tab styling, accessibility, focus, address, and page snapshot aligned across in-place navigation and tab reordering. Fixes #120745. Thanks @shakkernerd.
 - **Control UI staged attachments:** preserve unsent images, files, pasted images, and large pasted text across same-tab route and narrow split-pane remounts while keeping pane close, mismatched pane/session/Gateway remounts, application shutdown, and hard reload as cleanup boundaries. Fixes #121519. Thanks @shakkernerd.
