@@ -20,6 +20,11 @@ export function withPreparedModelRuntimePluginGenerationScope<T>(
   return preparedModelRuntimePluginGenerationScope.run(generation, run);
 }
 
+/** Detached queue drains re-admit on the current generation, never a predecessor's scope. */
+export function runOutsidePreparedModelRuntimePluginGenerationScope<T>(run: () => T): T {
+  return preparedModelRuntimePluginGenerationScope.exit(run);
+}
+
 /** Exact admitted generation active for nested prepared model-runtime acquisition. */
 export function getPreparedModelRuntimePluginGeneration():
   | PreparedModelRuntimePluginGeneration
