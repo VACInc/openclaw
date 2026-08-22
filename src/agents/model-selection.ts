@@ -40,10 +40,12 @@ import {
   resolveBareModelDefaultProvider,
   resolveConfiguredModelRef,
   resolveHooksGmailModel,
+  resolveManifestPluginsForModelIdNormalization,
   resolveModelAliasFromPair,
   resolveModelRefFromString,
   type ModelAliasIndex,
 } from "./model-selection-shared.js";
+export { resolveManifestPluginsForModelIdNormalization };
 export {
   resolveThinkingDefault,
   resolveThinkingDefaultWithRuntimeCatalog,

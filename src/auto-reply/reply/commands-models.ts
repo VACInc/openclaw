@@ -26,6 +26,7 @@ import {
   normalizeProviderId,
   resolveBareModelDefaultProvider,
   resolveDefaultModelForAgent,
+  resolveManifestPluginsForModelIdNormalization,
   resolveModelRefFromString,
 } from "../../agents/model-selection.js";
 import {
@@ -181,13 +182,28 @@ export async function buildModelsProviderData(
       }),
   });
   const catalog = snapshot.entries;
+  // Manifest metadata rescans every installed plugin, so resolve it once here and
+  // thread it through every normalization-aware structure below. Otherwise the
+  // policy, the second policy inside the catalog resolver, the alias index, and
+  // each configured-ref resolution reload the same snapshot.
+  // No workspaceDir here on purpose: the callees below resolve it from active
+  // plugin-registry state, so passing the browse workspace would change which
+  // manifests are read.
+  const manifestPlugins = resolveManifestPluginsForModelIdNormalization({
+    cfg,
+    ...RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
+  });
+  const browseNormalization = {
+    ...RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
+    manifestPlugins,
+  };
   const visibilityPolicy = createModelVisibilityPolicy({
     cfg,
     catalog,
     defaultProvider: resolvedDefault.provider,
     defaultModel: resolvedDefault.model,
     agentId,
-    ...RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
+    ...browseNormalization,
   });
   const authChecker = createProviderAuthChecker({
     cfg,
@@ -206,6 +222,8 @@ export async function buildModelsProviderData(
   const visibleCatalog = await resolveLogicalVisibleModelCatalog({
     cfg,
     catalog,
+    // Reuse the policy built above; otherwise the callee rebuilds an identical one.
+    policy: visibilityPolicy,
     defaultProvider: resolvedDefault.provider,
     defaultModel: resolvedDefault.model,
     agentId,
@@ -238,6 +256,7 @@ export async function buildModelsProviderData(
     cfg,
     defaultProvider: resolvedDefault.provider,
     agentId,
+    ...browseNormalization,
   });
   const restrictToProviderWildcards =
     options.view !== "all" && visibilityPolicy.hasProviderWildcards;
@@ -280,6 +299,7 @@ export async function buildModelsProviderData(
       raw: trimmed,
       defaultProvider,
       aliasIndex,
+      ...browseNormalization,
     });
     if (!resolved) {
       return;

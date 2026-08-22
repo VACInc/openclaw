@@ -83,7 +83,15 @@ function hasSlashFormModelRef(raw: string): boolean {
   return slash > 0 && slash < trimmed.length - 1;
 }
 
-function resolveManifestPluginsForModelIdNormalization(params: {
+/**
+ * Resolves manifest plugin metadata for model-id normalization.
+ *
+ * Loading the manifest snapshot rescans every installed plugin, so callers that
+ * build several normalization-aware structures (policy, alias index, ref
+ * resolution) should resolve once and thread the result through
+ * `manifestPlugins` instead of letting each structure resolve it again.
+ */
+export function resolveManifestPluginsForModelIdNormalization(params: {
   cfg: OpenClawConfig;
   workspaceDir?: string;
   manifestPlugins?: ModelManifestPlugins;
