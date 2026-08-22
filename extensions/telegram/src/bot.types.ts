@@ -1,14 +1,12 @@
 // Telegram type declarations define plugin contracts.
-import type { ChannelRuntimeSurface } from "openclaw/plugin-sdk/channel-contract";
+import type { ChannelInboundTurnPlan } from "openclaw/plugin-sdk/channel-inbound";
 import type { OpenClawConfig, ReplyToMode } from "openclaw/plugin-sdk/config-contracts";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import type { TelegramBotDeps } from "./bot-deps.js";
 import type { TelegramBotInfo } from "./bot-info.js";
 import type { TelegramTransport } from "./fetch.js";
 
-type DispatchReplyFromConfig = NonNullable<
-  ChannelRuntimeSurface["reply"]
->["dispatchReplyFromConfig"];
+type DispatchReplyFromConfig = NonNullable<ChannelInboundTurnPlan["dispatchReplyFromConfig"]>;
 
 export type TelegramBotOptions = {
   token: string;

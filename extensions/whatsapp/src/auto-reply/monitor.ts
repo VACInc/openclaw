@@ -264,7 +264,10 @@ export async function monitorWebChannel(
               account,
               buildContext: (tuning.channelRuntime as PluginRuntime["channel"] | undefined)?.inbound
                 .buildContext,
-              dispatchReplyFromConfig: tuning.channelRuntime?.reply?.dispatchReplyFromConfig,
+              // Forward the owning runtime's bound dispatcher into the turn plan; never invoked here.
+              dispatchReplyFromConfig: (
+                tuning.channelRuntime as PluginRuntime["channel"] | undefined
+              )?.reply?.dispatchReplyFromConfig,
             });
             return (await (listenerFactory ?? attachWebInboxToSocket)({
               cfg,

@@ -36,17 +36,6 @@ export type ChannelRuntimeContextRegistry = {
   }) => () => void;
 };
 
-/** Minimal result contract lets adapters carry the prepared dispatcher without importing reply runtime. */
-type ChannelRuntimeReplyDispatchResult = {
-  queuedFinal: boolean;
-  counts: Record<"tool" | "block" | "final", number>;
-};
-
-/** Prepared dispatcher passed to the inbound-turn owner, never invoked by adapters. */
-type ChannelRuntimeReplyDispatcher = {
-  dispatch(params: unknown): Promise<ChannelRuntimeReplyDispatchResult>;
-}["dispatch"];
-
 /**
  * Minimal channel-runtime surface exported through the public plugin SDK.
  *
@@ -55,9 +44,5 @@ type ChannelRuntimeReplyDispatcher = {
  */
 export type ChannelRuntimeSurface = {
   runtimeContexts: ChannelRuntimeContextRegistry;
-  // Direct adapters retain this closure-bound dispatcher across detached ingress work.
-  reply?: {
-    dispatchReplyFromConfig: ChannelRuntimeReplyDispatcher;
-  };
   [key: string]: unknown;
 };

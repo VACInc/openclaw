@@ -1,5 +1,6 @@
 // Discord plugin module implements agent componentsispatch behavior.
 import { resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
+import type { PluginRuntime } from "openclaw/plugin-sdk/channel-core";
 import {
   formatInboundEnvelope,
   resolveEnvelopeFormatOptions,
@@ -282,7 +283,9 @@ export async function dispatchDiscordComponentEvent(params: {
         accountId,
         route: { agentId, sessionKey },
         ctxPayload,
-        dispatchReplyFromConfig: ctx.channelRuntime?.reply?.dispatchReplyFromConfig,
+        // Forward the owning runtime's bound dispatcher into the turn plan; never invoked here.
+        dispatchReplyFromConfig: (ctx.channelRuntime as PluginRuntime["channel"] | undefined)?.reply
+          ?.dispatchReplyFromConfig,
         record: {
           updateLastRoute: interactionCtx.isDirectMessage
             ? {

@@ -1269,7 +1269,9 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
             sessionKey: decision.route.sessionKey,
           },
           ctxPayload,
-          dispatchReplyFromConfig: opts.channelRuntime?.reply?.dispatchReplyFromConfig,
+          // Forward the owning runtime's bound dispatcher into the turn plan; never invoked here.
+          dispatchReplyFromConfig: (opts.channelRuntime as PluginRuntime["channel"] | undefined)
+            ?.reply?.dispatchReplyFromConfig,
           record: {
             updateLastRoute:
               !decision.isGroup && updateTarget
