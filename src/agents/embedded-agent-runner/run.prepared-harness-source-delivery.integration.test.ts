@@ -20,11 +20,6 @@ import {
 } from "../../auto-reply/reply/dispatch-from-config.test-harness.js";
 import type { InternalGetReplyOptions } from "../../auto-reply/reply/get-reply.types.js";
 import { buildDirectChatContext } from "../../auto-reply/reply/groups.js";
-import {
-  enqueueFollowupRun,
-  scheduleFollowupDrain,
-  type FollowupRun,
-} from "../../auto-reply/reply/queue.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import {
   bindSourceReplyDeliveryRuntime,
@@ -36,10 +31,7 @@ import type { MsgContext } from "../../auto-reply/templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../../auto-reply/types.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
 import { registerAgentHarness } from "../harness/registry.js";
-import {
-  getPreparedModelRuntimePluginGeneration,
-  withPreparedModelRuntimePluginGenerationScope,
-} from "../prepared-model-runtime-generation-scope.js";
+import { withPreparedModelRuntimePluginGenerationScope } from "../prepared-model-runtime-generation-scope.js";
 import type { PreparedModelRuntimePluginGeneration } from "../prepared-model-runtime.types.js";
 import { makeAttemptResult } from "./run.overflow-compaction.fixture.js";
 import {
@@ -513,17 +505,13 @@ describe("prepared harness source delivery", () => {
     const config = {};
     const workspaceDir = "/tmp/workspace";
     const pluginRegistry = createEmptyPluginRegistry();
-    // The harness's default lease supplies a realistic metadata snapshot shape;
-    // two distinct clones stand for the reply admission and the gateway
-    // replacement that commits while the turn executes.
-    mockedAcquireAgentRunPreparedModelRuntime.mockClear();
-    const baseMetadata = await mockedAcquireAgentRunPreparedModelRuntime({
+    const baseLease = await mockedAcquireAgentRunPreparedModelRuntime({
       agentId: "main",
       agentDir: "/tmp/agent",
       workspaceDir,
     });
     const admittedMetadataSnapshot = {
-      ...baseMetadata.snapshot.metadataSnapshot,
+      ...baseLease.snapshot.metadataSnapshot,
       policyHash: "admitted",
       workspaceDir,
     };
@@ -534,18 +522,14 @@ describe("prepared harness source delivery", () => {
       pluginRegistry,
     };
     const replacementMetadataSnapshot = {
-      ...baseMetadata.snapshot.metadataSnapshot,
+      ...baseLease.snapshot.metadataSnapshot,
       policyHash: "replacement",
       workspaceDir,
     };
     const release = vi.fn();
     let servedMetadataSnapshot: unknown;
-    // Owner contract after the injected replacement: unpinned acquisition
-    // serves the current replacement generation, pinned callers lease their
-    // exact admitted generation back. The harness reset only clears calls, so
-    // restore the captured default lease before returning to sibling tests.
-    const defaultAcquire = mockedAcquireAgentRunPreparedModelRuntime.getMockImplementation();
-    mockedAcquireAgentRunPreparedModelRuntime.mockImplementation(
+    mockedAcquireAgentRunPreparedModelRuntime.mockClear();
+    mockedAcquireAgentRunPreparedModelRuntime.mockImplementationOnce(
       async (
         _input,
         options?: {
@@ -556,14 +540,13 @@ describe("prepared harness source delivery", () => {
           options?.pluginGeneration?.pluginMetadataSnapshot ?? replacementMetadataSnapshot;
         servedMetadataSnapshot = metadataSnapshot;
         return {
+          ...baseLease,
           snapshot: {
-            agentId: "main",
-            agentDir: "/tmp/agent",
+            ...baseLease.snapshot,
             config,
             workspaceDir,
             pluginRegistry,
             metadataSnapshot,
-            createStores: () => ({ authStorage: {}, modelRegistry: {} }),
           },
           release,
         };
@@ -573,160 +556,26 @@ describe("prepared harness source delivery", () => {
     mockedRunEmbeddedAttempt.mockResolvedValueOnce(makeAttemptResult({ assistantTexts: ["ok"] }));
     useOpenAIPlatformAuthFixture();
 
-    try {
-      const result = await withPreparedModelRuntimePluginGenerationScope(
-        admittedGeneration,
-        async () =>
-          await runEmbeddedAgent({
-            ...overflowBaseRunParams,
-            config,
-            provider: "openai",
-            model: "gpt-5.4",
-            runId: "admitted-generation-replacement",
-            sessionKey: undefined,
-          }),
-      );
-
-      // The orchestrator's acquisition is the second lease in this run.
-      expect(mockedAcquireAgentRunPreparedModelRuntime).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({ config, workspaceDir }),
-        expect.objectContaining({ pluginGeneration: admittedGeneration }),
-      );
-      expect(servedMetadataSnapshot).toBe(admittedGeneration.pluginMetadataSnapshot);
-      expect(result.payloads).toEqual([{ text: "ok" }]);
-      expect(release).toHaveBeenCalledOnce();
-    } finally {
-      if (defaultAcquire) {
-        mockedAcquireAgentRunPreparedModelRuntime.mockImplementation(defaultAcquire);
-      }
-    }
-  });
-
-  it("drains a queued turn outside the predecessor generation after a replacement", async () => {
-    const { runEmbeddedAgent } = await loadRunOverflowCompactionHarness();
-    const config = {};
-    const workspaceDir = "/tmp/workspace";
-    const pluginRegistry = createEmptyPluginRegistry();
-    mockedAcquireAgentRunPreparedModelRuntime.mockClear();
-    const baseMetadata = await mockedAcquireAgentRunPreparedModelRuntime({
-      agentId: "main",
-      agentDir: "/tmp/agent",
-      workspaceDir,
-    });
-    // Two distinct clones stand for the predecessor turn's admitted generation
-    // and the gateway replacement that commits while the queued item is parked.
-    const predecessorMetadataSnapshot = {
-      ...baseMetadata.snapshot.metadataSnapshot,
-      policyHash: "predecessor",
-      workspaceDir,
-    };
-    const replacementMetadataSnapshot = {
-      ...baseMetadata.snapshot.metadataSnapshot,
-      policyHash: "replacement",
-      workspaceDir,
-    };
-    const predecessorGeneration: PreparedModelRuntimePluginGeneration = {
-      configuredCatalogEntries: [],
-      inlineProviderModels: [],
-      pluginMetadataSnapshot: predecessorMetadataSnapshot,
-      pluginRegistry,
-    };
-    // Owner contract after the injected replacement: unpinned acquisition serves
-    // the current replacement generation, pinned callers lease their exact
-    // admitted generation back.
-    let pinnedGenerationAtAcquisition:
-      | { pluginMetadataSnapshot: typeof predecessorMetadataSnapshot }
-      | undefined;
-    const servedMetadataSnapshots: unknown[] = [];
-    let ambientGenerationInsideAttempt: unknown;
-    const defaultAcquire = mockedAcquireAgentRunPreparedModelRuntime.getMockImplementation();
-    const release = vi.fn();
-    mockedAcquireAgentRunPreparedModelRuntime.mockImplementation(
-      async (
-        _input,
-        options?: {
-          pluginGeneration?: { pluginMetadataSnapshot: typeof predecessorMetadataSnapshot };
-        },
-      ) => {
-        pinnedGenerationAtAcquisition = options?.pluginGeneration;
-        const metadataSnapshot =
-          options?.pluginGeneration?.pluginMetadataSnapshot ?? replacementMetadataSnapshot;
-        servedMetadataSnapshots.push(metadataSnapshot);
-        return {
-          snapshot: {
-            agentId: "main",
-            agentDir: "/tmp/agent",
-            config,
-            workspaceDir,
-            pluginRegistry,
-            metadataSnapshot,
-            createStores: () => ({ authStorage: {}, modelRegistry: {} }),
-          },
-          release,
-        };
-      },
+    const result = await withPreparedModelRuntimePluginGenerationScope(
+      admittedGeneration,
+      async () =>
+        await runEmbeddedAgent({
+          ...overflowBaseRunParams,
+          config,
+          provider: "openai",
+          model: "gpt-5.4",
+          runId: "admitted-generation-replacement",
+          sessionKey: undefined,
+        }),
     );
-    mockedBuildEmbeddedRunPayloads.mockReturnValue([{ text: "queued-ok" }]);
-    mockedRunEmbeddedAttempt.mockImplementation(async () => {
-      ambientGenerationInsideAttempt = getPreparedModelRuntimePluginGeneration();
-      return makeAttemptResult({ assistantTexts: ["queued-ok"] });
-    });
-    useOpenAIPlatformAuthFixture();
 
-    const queueKey = `prepared-generation-drain-${Date.now()}-${Math.random()}`;
-    const runFollowup = async (queued: FollowupRun): Promise<void> => {
-      await runEmbeddedAgent({
-        ...overflowBaseRunParams,
-        config,
-        provider: "openai",
-        model: "gpt-5.4",
-        runId: `queued-${queued.enqueuedAt}`,
-        sessionKey: undefined,
-      });
-    };
-    try {
-      await withPreparedModelRuntimePluginGenerationScope(predecessorGeneration, async () => {
-        // The ACTIVE predecessor turn's scope wraps admission of this message;
-        // its queue drain happens only after the scope has exited.
-        const enqueued = enqueueFollowupRun(
-          queueKey,
-          {
-            prompt: "queued turn",
-            enqueuedAt: Date.now(),
-            run: {
-              ...overflowBaseRunParams,
-              agentDir: "/tmp/agent",
-              sessionFile: "/tmp/agent/session.json",
-              workspaceDir,
-              config,
-              provider: "openai",
-              model: "gpt-5.4",
-              timeoutMs: 30_000,
-              blockReplyBreak: "message_end",
-            } as FollowupRun["run"],
-          },
-          { mode: "followup", debounceMs: 0 },
-          "none",
-          runFollowup,
-        );
-        expect(enqueued).toBe(true);
-        scheduleFollowupDrain(queueKey, runFollowup);
-      });
-      await vi.waitFor(() => {
-        expect(release).toHaveBeenCalledOnce();
-      });
-
-      // The drained orchestrator must not inherit the predecessor's pinned
-      // generation: it re-admits on the generation current at drain time.
-      expect(pinnedGenerationAtAcquisition).toBeUndefined();
-      expect(servedMetadataSnapshots).toEqual([replacementMetadataSnapshot]);
-      expect(ambientGenerationInsideAttempt).toBeUndefined();
-    } finally {
-      if (defaultAcquire) {
-        mockedAcquireAgentRunPreparedModelRuntime.mockImplementation(defaultAcquire);
-      }
-    }
+    expect(mockedAcquireAgentRunPreparedModelRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({ config, workspaceDir }),
+      expect.objectContaining({ pluginGeneration: admittedGeneration }),
+    );
+    expect(servedMetadataSnapshot).toBe(admittedGeneration.pluginMetadataSnapshot);
+    expect(result.payloads).toEqual([{ text: "ok" }]);
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it.each([

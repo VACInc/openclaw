@@ -94,11 +94,14 @@ export function runEmbeddedAgent(
   const lifecycleGeneration =
     internalParamsInput.lifecycleGeneration ??
     captureAgentRunLifecycleGeneration(internalParamsInput.runId);
+  const pluginGeneration =
+    internalParamsInput.pluginGeneration ?? getPreparedModelRuntimePluginGeneration();
   return withAgentRunLifecycleGeneration(lifecycleGeneration, () =>
     runEmbeddedAgentInternal({
       ...internalParamsInput,
       config,
       lifecycleGeneration,
+      ...(pluginGeneration ? { pluginGeneration } : {}),
     }),
   );
 }
@@ -106,8 +109,6 @@ export function runEmbeddedAgent(
 async function runEmbeddedAgentInternal(
   paramsInput: RunEmbeddedAgentInternalParams,
 ): Promise<EmbeddedAgentRunResult> {
-  const pluginGeneration =
-    paramsInput.pluginGeneration ?? getPreparedModelRuntimePluginGeneration();
   const contextEngineAgentId =
     normalizeOptionalString(paramsInput.sessionTarget?.agentId) ??
     normalizeOptionalString(paramsInput.agentId);
@@ -239,7 +240,7 @@ async function runEmbeddedAgentInternal(
           sessionKey: params.sessionKey,
         });
       const pluginMetadataSnapshot =
-        pluginGeneration?.pluginMetadataSnapshot ??
+        params.pluginGeneration?.pluginMetadataSnapshot ??
         loadPluginMetadataSnapshot({
           config,
           workspaceDir: requestedWorkspaceResolution.workspaceDir,
@@ -299,16 +300,16 @@ async function runEmbeddedAgentInternal(
                 // Turns need only configured admission facts. Full live model inventory remains
                 // available through the snapshot's lazy control-plane loader.
                 catalogMode: "static",
-                ...(pluginGeneration ? { pluginGeneration } : {}),
+                ...(params.pluginGeneration ? { pluginGeneration: params.pluginGeneration } : {}),
               }),
       );
       startupStages.mark("prepared-runtime");
       const preparedModelRuntimeOwnerSnapshot = preparedModelRuntimeLease.snapshot;
       try {
         if (
-          pluginGeneration &&
+          params.pluginGeneration &&
           preparedModelRuntimeOwnerSnapshot.metadataSnapshot !==
-            pluginGeneration.pluginMetadataSnapshot
+            params.pluginGeneration.pluginMetadataSnapshot
         ) {
           throw new Error("prepared model runtime replaced the admitted plugin generation");
         }
@@ -462,9 +463,9 @@ async function runEmbeddedAgentInternal(
         };
         const runWithPreparedRuntime = () =>
           withPluginRuntimeGenerationScope(preparedModelRuntime, runPrepared);
-        return pluginGeneration
+        return params.pluginGeneration
           ? await withPreparedModelRuntimePluginGenerationScope(
-              pluginGeneration,
+              params.pluginGeneration,
               runWithPreparedRuntime,
             )
           : await runWithPreparedRuntime();
