@@ -502,8 +502,12 @@ describe("Codex paired-node exec-server", () => {
               },
             });
             expect(await readNodeResponse(frames, control.id + 1)).toEqual(control.result);
-            const notifications = await readNodeProcessNotifications(frames, control.processId, 2);
-            expect(notifications.map((message) => message.method)).toEqual([
+            const controlNotifications = await readNodeProcessNotifications(
+              frames,
+              control.processId,
+              2,
+            );
+            expect(controlNotifications.map((message) => message.method)).toEqual([
               "process/exited",
               "process/closed",
             ]);
