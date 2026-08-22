@@ -114,7 +114,9 @@ async function startHoldingAuthProxy(params: { targetBaseUrl: string; barrierPat
           break;
         }
         releaseWatchers += 1;
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 50);
+        });
         releaseWatchers -= 1;
       }
       await forwardAndReply({
@@ -123,7 +125,7 @@ async function startHoldingAuthProxy(params: { targetBaseUrl: string; barrierPat
         targetBaseUrl: params.targetBaseUrl,
         body,
       });
-    })().catch((error) => {
+    })().catch((error: unknown) => {
       response.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
       response.end(error instanceof Error ? error.message : String(error));
     });
@@ -223,6 +225,9 @@ function buildInitialConfigPatch(mockProviderBaseUrl: string) {
         model: { primary: MODEL_REF, fallbacks: [] },
       },
     },
+    // Default "steer" would merge the parked message into the active turn; the
+    // queued follow-up path only exists when the message becomes its own drained run.
+    messages: { ...config.messages, queue: { ...config.messages?.queue, mode: "followup" } },
   });
 }
 
@@ -252,14 +257,49 @@ async function waitForTurn(
   operator: Awaited<ReturnType<typeof connectWireClient>>,
   runId: string,
 ): Promise<void> {
-  const result = await operator.request<{ status?: string }>(
-    "agent.wait",
-    { runId, timeoutMs: PROOF_TIMEOUT_MS },
-    { timeoutMs: PROOF_TIMEOUT_MS + 5_000 },
-  );
-  if (result.status !== "ok") {
-    throw new Error(`turn failed: ${JSON.stringify(result)}`);
-  }
+  // agent.wait answers a queued follow-up immediately with pending/queue instead
+  // of blocking, so keep polling until the drained run reports a terminal status.
+  await waitFor(`turn ${runId} completed`, async () => {
+    const result = await operator.request<{ status?: string; timeoutPhase?: string }>(
+      "agent.wait",
+      { runId, timeoutMs: PROOF_TIMEOUT_MS },
+      { timeoutMs: PROOF_TIMEOUT_MS + 5_000 },
+    );
+    if (result.status === "pending" && result.timeoutPhase === "queue") {
+      return undefined;
+    }
+    if (result.status !== "ok") {
+      throw new Error(`turn failed: ${JSON.stringify(result)}`);
+    }
+    return result;
+  });
+}
+
+/**
+ * Gateway-observable queue-admission barrier: chat.send acks before detached
+ * dispatch, so only the gateway's own queued-run state proves the turn was
+ * admitted behind the active run before the replacement published. agent.wait
+ * answers immediately with status "pending" / timeoutPhase "queue" for a run
+ * parked in the reply queue.
+ */
+async function waitForTurnQueued(
+  operator: Awaited<ReturnType<typeof connectWireClient>>,
+  runId: string,
+): Promise<{ status?: string; timeoutPhase?: string }> {
+  return await waitFor(`turn ${runId} admitted to the reply queue`, async () => {
+    const wait = await operator.request<{ status?: string; timeoutPhase?: string; runId?: string }>(
+      "agent.wait",
+      { runId, timeoutMs: 250 },
+      { timeoutMs: 10_000 },
+    );
+    if (wait.status === "pending" && wait.timeoutPhase === "queue") {
+      return wait;
+    }
+    if (wait.status === "ok") {
+      throw new Error("parked turn completed before the replacement was published");
+    }
+    return undefined;
+  });
 }
 
 function historyMessageText(message: unknown): string {
@@ -366,7 +406,7 @@ async function runProof(options: ProducerOptions) {
   });
   let gateway: Awaited<ReturnType<typeof startQaGatewayChild>> | undefined;
   let operator: Awaited<ReturnType<typeof connectWireClient>> | undefined;
-  let proofError: unknown;
+  let proofError: Error | undefined;
   let verdict: Record<string, unknown> | undefined;
   try {
     await fs.mkdir(options.artifactBase, { recursive: true });
@@ -414,18 +454,20 @@ async function runProof(options: ProducerOptions) {
     });
     await recordTimeline({ event: "held-turn-admitted-and-gated", runId: heldRun });
 
-    // Parked turn T is admitted behind X: its reply lease pins generation A,
-    // but it cannot reach prepared-runtime acquisition until X releases.
+    // Parked turn T is admitted behind X and waits in the reply queue. The
+    // queued-state barrier proves admission before anything publishes B.
     const parkedRun = await startTurn(operator, SESSION_TURN, `Reply exactly: ${PARKED_REPLY}`);
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-    const parkedBeforeReplacement =
-      proxy.records.some((record) => record.promptHasParkedMarker) === false;
-    if (!parkedBeforeReplacement) {
+    const parkedQueuedState = await waitForTurnQueued(operator, parkedRun);
+    if (proxy.records.some((record) => record.promptHasParkedMarker)) {
       throw new Error("parked turn reached the provider before the replacement committed");
     }
     await recordTimeline({
       event: "parked-turn-admitted",
       runId: parkedRun,
+      queuedState: {
+        status: parkedQueuedState.status,
+        timeoutPhase: parkedQueuedState.timeoutPhase,
+      },
       beforeNestedAcquisition: true,
     });
 
@@ -448,7 +490,9 @@ async function runProof(options: ProducerOptions) {
       throw new Error("parked turn executed before the replacement was proven committed");
     }
 
-    // Release X; both turns finish, T acquires after the replacement.
+    // Release X; both turns finish. The in-flight held turn keeps its admitted
+    // generation A; the parked turn drains outside the predecessor scope and
+    // re-admits on the generation current at drain time (B).
     await fs.writeFile(barrierPath, "released\n", "utf8");
     await recordTimeline({ event: "held-completion-released" });
     await waitForTurn(operator, heldRun);
@@ -472,14 +516,19 @@ async function runProof(options: ProducerOptions) {
     const parkedGeneration = proxy.records.find(
       (record) => record.promptHasParkedMarker,
     )?.generation;
-    if (parkedGeneration !== "A") {
+    if (parkedGeneration !== "B") {
       throw new Error(
-        `parked turn executed on generation ${parkedGeneration} instead of the admitted A`,
+        `parked turn drained on generation ${parkedGeneration} instead of the drain-time B ` +
+          "(queued turns must re-admit outside the predecessor scope)",
       );
     }
     const heldGeneration = proxy.records.find((record) => record.promptHasHoldMarker)?.generation;
     if (heldGeneration !== "A") {
       throw new Error(`held turn switched to generation ${heldGeneration}`);
+    }
+    // A parked turn must never inherit the predecessor's replaced generation.
+    if (proxy.records.some((record) => record.promptHasParkedMarker && record.generation === "A")) {
+      throw new Error("parked turn executed a provider request on the predecessor generation A");
     }
     const counts = {
       [BASELINE_REPLY]: await historyReplyCount(operator, SESSION_BASELINE, BASELINE_REPLY),
@@ -495,6 +544,11 @@ async function runProof(options: ProducerOptions) {
         parkedTurnRunId: parkedRun,
         parkedAdmittedBeforeReplacement: true,
       },
+      generationHandoff: {
+        heldTurnExecutedOnAdmittedGeneration: heldGeneration === "A",
+        parkedTurnDrainedOnCurrentGeneration: parkedGeneration === "B",
+        queuedPath: "followup queue drains outside the predecessor generation scope",
+      },
       replacement: {
         path: "openclaw.json publish -> gateway hot reload -> refreshPreparedModelRuntimeSnapshots",
         committedGeneration: "B",
@@ -503,7 +557,8 @@ async function runProof(options: ProducerOptions) {
       },
       deliveredReplies: counts,
       providerCredentialGenerations: generations,
-      parkedTurnExecutedOnAdmittedGeneration: parkedGeneration === "A",
+      heldTurnExecutedOnAdmittedGeneration: heldGeneration === "A",
+      parkedTurnDrainedOnCurrentGeneration: parkedGeneration === "B",
       mismatchErrorPresent: mismatchInLogs,
     };
     await fs.writeFile(
@@ -511,12 +566,24 @@ async function runProof(options: ProducerOptions) {
       `${JSON.stringify(verdict, null, 2)}\n`,
       "utf8",
     );
-    const logExcerpt = redact(gateway!.logs(), [
-      gateway!.token,
-      gateway!.tempRoot,
+  } catch (error) {
+    proofError = error instanceof Error ? error : new Error(String(error));
+  }
+
+  // Always persist the redacted gateway log: a failed proof needs it most.
+  if (gateway) {
+    const redactedLog = redact(gateway.logs(), [
+      gateway.token,
+      gateway.tempRoot,
       options.repoRoot,
       root,
-    ])
+    ]);
+    await fs.writeFile(
+      path.join(options.artifactBase, `${SCENARIO_ID}-gateway.log`),
+      `${redactedLog}\n`,
+      "utf8",
+    );
+    const logExcerpt = redactedLog
       .split(/\r?\n/u)
       .filter((line) =>
         [RELOAD_SENTINEL, "prepared model runtime", "chat.send", "agent", MISMATCH_ERROR_TEXT].some(
@@ -530,8 +597,6 @@ async function runProof(options: ProducerOptions) {
       `${logExcerpt}\n`,
       "utf8",
     );
-  } catch (error) {
-    proofError = error;
   }
 
   const cleanup = await Promise.allSettled([
@@ -591,7 +656,7 @@ async function runProducer(options: ProducerOptions): Promise<QaEvidenceSummaryJ
         { filePath: `${SCENARIO_ID}-gateway-log-excerpt.log`, kind: "trace" },
       ],
       details:
-        "An ephemeral gateway with a mocked OpenAI transport admitted a second channel turn while the first completion was held, hot-published a new plugin-runtime generation through the real config-reload path, and delivered the admitted-generation reply after the replacement committed",
+        "An ephemeral gateway with a mocked OpenAI transport held one admitted turn through a real config-reload plugin-runtime replacement, proved the second turn was parked in the reply queue via the gateway's queued-run state before publication, and delivered the in-flight reply on its admitted generation while the queued turn re-admitted on the replacement generation at drain time",
       durationMs: Math.max(1, Date.now() - startedAt),
       status: "pass",
     });
