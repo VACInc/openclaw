@@ -214,7 +214,7 @@ export async function processMessage(params: {
    * - undefined (omitted) → caller did not attempt preflight; run internal STT as normal */
   preflightAudioTranscript?: string | null;
   buildContext?: typeof buildChannelInboundEventContext;
-  dispatchReplyFromConfig?: typeof import("openclaw/plugin-sdk/reply-dispatch-runtime").dispatchReplyFromConfig;
+  dispatchReplyFromConfig?: import("openclaw/plugin-sdk/reply-dispatch-runtime").DispatchReplyFromConfig;
 }) {
   const admission = requireWhatsAppInboundAdmission(params.msg);
   if (admission.ingress.admission !== "dispatch" && admission.ingress.admission !== "observe") {

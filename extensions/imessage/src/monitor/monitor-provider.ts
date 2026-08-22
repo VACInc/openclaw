@@ -1269,7 +1269,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
             sessionKey: decision.route.sessionKey,
           },
           ctxPayload,
-          dispatchReplyFromConfig: opts.channelRuntime?.reply.dispatchReplyFromConfig,
+          dispatchReplyFromConfig: opts.channelRuntime?.reply?.dispatchReplyFromConfig,
           record: {
             updateLastRoute:
               !decision.isGroup && updateTarget
