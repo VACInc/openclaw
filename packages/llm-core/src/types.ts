@@ -293,6 +293,12 @@ export interface Usage {
   cacheTelemetry?: { state: "available" | "unavailable" };
   /** Subset of `cacheWrite` written with 1-hour retention when reported. */
   cacheWrite1h?: number;
+  /**
+   * Provider-reported wall-clock split for the final iteration, when the API
+   * exposes it. Prefill time that stays flat while the prompt grows is the only
+   * cache-reuse signal for providers that report no cached-token counts.
+   */
+  timing?: { promptMs: number; outputMs: number };
   /** Exact context snapshot for the final provider iteration. */
   contextUsage?:
     | { state: "available"; promptTokens: number; totalTokens: number }

@@ -350,6 +350,7 @@ function buildUsageWithNoCost(params: {
   cacheWrite?: number;
   cacheTelemetry?: Usage["cacheTelemetry"];
   totalTokens?: number;
+  timing?: Usage["timing"];
 }): Usage {
   const input = params.input ?? 0;
   const output = params.output ?? 0;
@@ -366,8 +367,24 @@ function buildUsageWithNoCost(params: {
     cacheRead,
     cacheWrite,
     cacheTelemetry,
+    ...(params.timing ? { timing: params.timing } : {}),
     totalTokens: params.totalTokens ?? input + output,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
+const NANOSECONDS_PER_MILLISECOND = 1_000_000;
+
+/** Ollama reports durations in nanoseconds; both must be present for a usable split. */
+function resolveUsageTiming(response: OllamaChatResponse): Usage["timing"] {
+  const promptNs = response.prompt_eval_duration;
+  const outputNs = response.eval_duration;
+  if (typeof promptNs !== "number" || typeof outputNs !== "number") {
+    return undefined;
+  }
+  return {
+    promptMs: Math.round(promptNs / NANOSECONDS_PER_MILLISECOND),
+    outputMs: Math.round(outputNs / NANOSECONDS_PER_MILLISECOND),
   };
 }
 
@@ -864,6 +881,7 @@ export function buildAssistantMessage(
     usage: buildUsageWithNoCost({
       input: resolveUsageCount(response.prompt_eval_count, usageFallback?.input),
       output: resolveUsageCount(response.eval_count, usageFallback?.output),
+      timing: resolveUsageTiming(response),
     }),
   });
 }
