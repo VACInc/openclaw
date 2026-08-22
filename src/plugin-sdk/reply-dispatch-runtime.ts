@@ -15,7 +15,6 @@ export type {
   DispatchReplyWithBufferedBlockDispatcher,
   DispatchReplyWithDispatcher,
 } from "../auto-reply/reply/provider-dispatcher.types.js";
-export type { DispatchReplyFromConfig } from "../auto-reply/reply/dispatch-from-config.types.js";
 export type { ReplyPayload } from "./reply-payload.js";
 
 const loadProviderDispatcherRuntimeModule = createLazyPromise(

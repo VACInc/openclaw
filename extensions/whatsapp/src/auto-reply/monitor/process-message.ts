@@ -1,4 +1,5 @@
 // Whatsapp plugin module implements process message behavior.
+import type { ChannelRuntimeSurface } from "openclaw/plugin-sdk/channel-contract";
 import {
   logAckFailure,
   removeAckReactionHandleAfterReply,
@@ -214,7 +215,7 @@ export async function processMessage(params: {
    * - undefined (omitted) → caller did not attempt preflight; run internal STT as normal */
   preflightAudioTranscript?: string | null;
   buildContext?: typeof buildChannelInboundEventContext;
-  dispatchReplyFromConfig?: import("openclaw/plugin-sdk/reply-dispatch-runtime").DispatchReplyFromConfig;
+  dispatchReplyFromConfig?: NonNullable<ChannelRuntimeSurface["reply"]>["dispatchReplyFromConfig"];
 }) {
   const admission = requireWhatsAppInboundAdmission(params.msg);
   if (admission.ingress.admission !== "dispatch" && admission.ingress.admission !== "observe") {
