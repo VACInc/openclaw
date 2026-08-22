@@ -37,13 +37,13 @@ export type ChannelRuntimeContextRegistry = {
 };
 
 /** Minimal result contract lets adapters carry the prepared dispatcher without importing reply runtime. */
-export type ChannelRuntimeReplyDispatchResult = {
+type ChannelRuntimeReplyDispatchResult = {
   queuedFinal: boolean;
   counts: Record<"tool" | "block" | "final", number>;
 };
 
 /** Prepared dispatcher passed to the inbound-turn owner, never invoked by adapters. */
-export type ChannelRuntimeReplyDispatcher = {
+type ChannelRuntimeReplyDispatcher = {
   dispatch(params: unknown): Promise<ChannelRuntimeReplyDispatchResult>;
 }["dispatch"];
 
