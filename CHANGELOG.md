@@ -79,7 +79,6 @@ Docs: https://docs.openclaw.ai
 - **Codex subagent fan-out:** settle successful terminal yields immediately and preserve requester ownership so completed children reliably resume their parent.
 - **Control UI session companion:** load bounded visible session context before answering, keep unavailable questions retryable, and prevent private companion reference wrappers from appearing as answers. Fixes #120746. Thanks @shakkernerd.
 - **Telegram live locations:** expose initial, moving, and stopped live-location updates through the channel-neutral `message_received` hook without starting agent turns for edits.
-- **Channel Gateway tools:** preserve the owning Gateway dispatcher for Telegram, Discord, iMessage, Signal, and WhatsApp turns so terminal tools remain available. (#127962) Thanks @VACInc.
 - **Workboard validation errors:** include the rejected normalized length in bounded-string limit errors so agents can trim and retry deterministically. Fixes #118845. Thanks @Kailigithub and @shakkernerd.
 - **Updater plugin convergence:** keep pre-plugin doctor passes from installing configured plugins before the updater's plugin sweep, while preserving the final post-plugin migration pass and preventing ambient update-phase state from leaking into fresh doctor processes.
 - **Control UI browser tab identity:** keep selected tab styling, accessibility, focus, address, and page snapshot aligned across in-place navigation and tab reordering. Fixes #120745. Thanks @shakkernerd.
