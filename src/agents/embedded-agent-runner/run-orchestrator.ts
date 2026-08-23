@@ -94,6 +94,8 @@ export function runEmbeddedAgent(
   const lifecycleGeneration =
     internalParamsInput.lifecycleGeneration ??
     captureAgentRunLifecycleGeneration(internalParamsInput.runId);
+  // Isolated probes acquire their own read-only runtime snapshot. Carrying the caller's
+  // ambient generation makes the admission guard reject that independent snapshot.
   const pluginGeneration =
     internalParamsInput.pluginGeneration ??
     (internalParamsInput.preparedModelRuntimeMode === "isolated-read-only"
