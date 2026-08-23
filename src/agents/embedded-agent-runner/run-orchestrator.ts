@@ -95,7 +95,10 @@ export function runEmbeddedAgent(
     internalParamsInput.lifecycleGeneration ??
     captureAgentRunLifecycleGeneration(internalParamsInput.runId);
   const pluginGeneration =
-    internalParamsInput.pluginGeneration ?? getPreparedModelRuntimePluginGeneration();
+    internalParamsInput.pluginGeneration ??
+    (internalParamsInput.preparedModelRuntimeMode === "isolated-read-only"
+      ? undefined
+      : getPreparedModelRuntimePluginGeneration());
   return withAgentRunLifecycleGeneration(lifecycleGeneration, () =>
     runEmbeddedAgentInternal({
       ...internalParamsInput,
