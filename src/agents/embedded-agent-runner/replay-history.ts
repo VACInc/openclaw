@@ -494,9 +494,27 @@ function normalizeAssistantUsageSnapshot(usage: unknown) {
     cacheRead,
     cacheWrite,
     ...(normalized.contextUsage ? { contextUsage: { ...normalized.contextUsage } } : {}),
+    ...(normalized.timing ? { timing: { ...normalized.timing } } : {}),
     totalTokens,
     ...(cost ? { cost } : {}),
   };
+}
+
+function assistantUsageTimingMatches(
+  raw: unknown,
+  normalized: AssistantUsageSnapshot["timing"],
+): boolean {
+  if (!normalized) {
+    return raw === undefined;
+  }
+  return (
+    raw !== null &&
+    typeof raw === "object" &&
+    "promptMs" in raw &&
+    raw.promptMs === normalized.promptMs &&
+    "outputMs" in raw &&
+    raw.outputMs === normalized.outputMs
+  );
 }
 
 function normalizeAssistantUsageCost(usage: unknown): AssistantUsageSnapshot["cost"] | undefined {
@@ -570,6 +588,12 @@ function ensureAssistantUsageSnapshots(messages: AgentMessage[]): AgentMessage[]
               normalizedContextUsage.promptTokens &&
             (rawContextUsage as { totalTokens?: unknown }).totalTokens ===
               normalizedContextUsage.totalTokens;
+    const rawTiming =
+      message.usage && typeof message.usage === "object" && "timing" in message.usage
+        ? message.usage.timing
+        : undefined;
+    const normalizedTiming = normalizedUsage.timing;
+    const timingMatches = assistantUsageTimingMatches(rawTiming, normalizedTiming);
     const normalizedCost = normalizedUsage.cost;
     if (
       message.usage &&
@@ -580,6 +604,7 @@ function ensureAssistantUsageSnapshots(messages: AgentMessage[]): AgentMessage[]
       (message.usage as { cacheWrite?: unknown }).cacheWrite === normalizedUsage.cacheWrite &&
       (message.usage as { totalTokens?: unknown }).totalTokens === normalizedUsage.totalTokens &&
       contextUsageMatches &&
+      timingMatches &&
       ((normalizedCost &&
         usageCost &&
         typeof usageCost === "object" &&

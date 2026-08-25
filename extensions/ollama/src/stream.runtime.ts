@@ -379,7 +379,14 @@ const NANOSECONDS_PER_MILLISECOND = 1_000_000;
 function resolveUsageTiming(response: OllamaChatResponse): Usage["timing"] {
   const promptNs = response.prompt_eval_duration;
   const outputNs = response.eval_duration;
-  if (typeof promptNs !== "number" || typeof outputNs !== "number") {
+  if (
+    typeof promptNs !== "number" ||
+    !Number.isFinite(promptNs) ||
+    promptNs < 0 ||
+    typeof outputNs !== "number" ||
+    !Number.isFinite(outputNs) ||
+    outputNs < 0
+  ) {
     return undefined;
   }
   return {

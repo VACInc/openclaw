@@ -15,6 +15,7 @@ export type UsageLike = {
   cacheRead?: number;
   cacheWrite?: number;
   contextUsage?: ContextUsage;
+  timing?: Usage["timing"];
   total?: number;
   // Common alternates across providers/SDKs.
   inputTokens?: number;
@@ -68,6 +69,7 @@ export type NormalizedUsage = {
   cacheRead?: number;
   cacheWrite?: number;
   contextUsage?: ContextUsage;
+  timing?: Usage["timing"];
   reasoningTokens?: number;
   total?: number;
 };
@@ -143,6 +145,18 @@ const normalizeTokenCount = (value: unknown): number | undefined => {
     return 0;
   }
   return Math.min(Math.trunc(numeric), Number.MAX_SAFE_INTEGER);
+};
+
+const normalizeUsageTiming = (timing: UsageLike["timing"]): Usage["timing"] => {
+  if (!timing) {
+    return undefined;
+  }
+  const promptMs = asFiniteNumber(timing.promptMs);
+  const outputMs = asFiniteNumber(timing.outputMs);
+  if (promptMs === undefined || outputMs === undefined || promptMs < 0 || outputMs < 0) {
+    return undefined;
+  }
+  return { promptMs, outputMs };
 };
 
 /** Normalize provider-specific token usage fields into OpenClaw usage buckets. */
@@ -236,6 +250,7 @@ export function normalizeUsage(raw?: UsageLike | null): NormalizedUsage | undefi
             totalTokens: contextTotalTokens,
           } as const)
         : undefined;
+  const timing = normalizeUsageTiming(raw.timing);
   const reasoningTokens = normalizeTokenCount(
     raw.reasoningTokens ??
       raw.reasoning_tokens ??
@@ -251,6 +266,7 @@ export function normalizeUsage(raw?: UsageLike | null): NormalizedUsage | undefi
     cacheRead === undefined &&
     cacheWrite === undefined &&
     contextUsage === undefined &&
+    timing === undefined &&
     reasoningTokens === undefined &&
     total === undefined
   ) {
@@ -263,6 +279,7 @@ export function normalizeUsage(raw?: UsageLike | null): NormalizedUsage | undefi
     cacheRead,
     cacheWrite,
     ...(contextUsage ? { contextUsage } : {}),
+    ...(timing ? { timing } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     total,
   };
