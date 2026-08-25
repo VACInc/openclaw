@@ -915,6 +915,35 @@ describe("createOllamaStreamFn thinking events", () => {
     expect(done?.message?.usage).not.toHaveProperty("timing");
   });
 
+  it.each([
+    { prompt_eval_duration: -1, eval_duration: 10 },
+    { prompt_eval_duration: 10, eval_duration: -1 },
+    { prompt_eval_duration: Number.NaN, eval_duration: 10 },
+    { prompt_eval_duration: 10, eval_duration: Number.POSITIVE_INFINITY },
+  ])("omits invalid provider timing %#", async (durations) => {
+    const events = await streamOllamaEvents(
+      [
+        {
+          model: "qwen3.5",
+          created_at: "2026-01-01T00:00:00Z",
+          message: { role: "assistant", content: "ok" },
+          done: true,
+          done_reason: "stop",
+          prompt_eval_count: 10,
+          eval_count: 1,
+          ...durations,
+        },
+      ],
+      {},
+      { messages: [{ role: "user", content: "hi" }] } as never,
+    );
+
+    const done = events.find((event) => event.type === "done") as {
+      message?: { usage?: { timing?: unknown } };
+    };
+    expect(done?.message?.usage).not.toHaveProperty("timing");
+  });
+
   it("keeps provider usage authoritative over the CJK fallback", async () => {
     const events = await streamOllamaEvents(
       [

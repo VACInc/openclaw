@@ -283,7 +283,13 @@ export interface ToolCall {
   executionMode?: "sequential" | "parallel";
 }
 
-/** Normalized token and cost accounting for a provider response. */
+/** Provider-reported wall-clock split for the final response iteration. */
+export interface UsageTiming {
+  promptMs: number;
+  outputMs: number;
+}
+
+/** Normalized token, timing, and cost accounting for a provider response. */
 export interface Usage {
   input: number;
   output: number;
@@ -298,7 +304,7 @@ export interface Usage {
    * exposes it. Prefill time that stays flat while the prompt grows is the only
    * cache-reuse signal for providers that report no cached-token counts.
    */
-  timing?: { promptMs: number; outputMs: number };
+  timing?: UsageTiming;
   /** Exact context snapshot for the final provider iteration. */
   contextUsage?:
     | { state: "available"; promptTokens: number; totalTokens: number }

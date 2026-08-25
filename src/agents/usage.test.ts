@@ -197,6 +197,25 @@ describe("normalizeUsage", () => {
     });
   });
 
+  it("preserves finite non-negative provider timing", () => {
+    expect(
+      normalizeUsage({
+        input: 12,
+        output: 3,
+        timing: { promptMs: 123.45, outputMs: 67.89 },
+      }),
+    ).toMatchObject({ timing: { promptMs: 123.45, outputMs: 67.89 } });
+  });
+
+  it.each([
+    { promptMs: -1, outputMs: 2 },
+    { promptMs: 1, outputMs: -2 },
+    { promptMs: Number.NaN, outputMs: 2 },
+    { promptMs: 1, outputMs: Number.POSITIVE_INFINITY },
+  ])("drops invalid provider timing %#", (timing) => {
+    expect(normalizeUsage({ input: 12, timing })).not.toHaveProperty("timing");
+  });
+
   it.each([
     { provider: "Anthropic", details: { thinking_tokens: 17 }, expected: 17 },
     { provider: "Anthropic zero", details: { thinking_tokens: 0 }, expected: 0 },

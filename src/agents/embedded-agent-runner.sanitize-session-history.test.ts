@@ -616,6 +616,31 @@ describe("sanitizeSessionHistory", () => {
     });
   });
 
+  it("preserves provider timing while rebuilding assistant usage snapshots", async () => {
+    const assistant = await getSingleAssistantUsage(
+      castAgentMessages([
+        { role: "user", content: "question" },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "answer with timing" }],
+          usage: {
+            input: 4,
+            output: 2,
+            totalTokens: 6,
+            timing: { promptMs: 123.45, outputMs: 67.89 },
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+        },
+      ]),
+    );
+
+    expect((assistant?.usage as Usage | undefined)?.timing).toEqual({
+      promptMs: 123.45,
+      outputMs: 67.89,
+    });
+    expectAssistantUsageSnapshot(assistant);
+  });
+
   it("preserves existing usage cost while normalizing token fields", async () => {
     const assistant = await getSingleAssistantUsage(
       castAgentMessages([
