@@ -10,13 +10,17 @@ export const LANGUAGE_PACK_VIEWER_ASSET_PREFIX = "/plugins/diffs-language-pack/a
 const LANGUAGE_PACK_VIEWER_LOADER_PATH = `${LANGUAGE_PACK_VIEWER_ASSET_PREFIX}viewer.js`;
 const LANGUAGE_PACK_VIEWER_RUNTIME_PATH = `${LANGUAGE_PACK_VIEWER_ASSET_PREFIX}viewer-runtime.js`;
 const VIEWER_RUNTIME_RELATIVE_IMPORT_PATH = "./viewer-runtime.js";
+// Unified builds hoist this module to the dist root while plugin assets stay under dist/extensions.
+// Keep those candidates last so package and source layouts retain their first-hit paths.
 const VIEWER_RUNTIME_CANDIDATE_RELATIVE_PATHS = [
   "./assets/viewer-runtime.js",
   "../assets/viewer-runtime.js",
+  "./extensions/diffs/assets/viewer-runtime.js",
 ] as const;
 const LANGUAGE_PACK_RUNTIME_CANDIDATE_RELATIVE_PATHS = [
   "../../diffs-language-pack/assets/viewer-runtime.js",
   "../diffs-language-pack/assets/viewer-runtime.js",
+  "./extensions/diffs-language-pack/assets/viewer-runtime.js",
 ] as const;
 
 type ServedViewerAsset = {
