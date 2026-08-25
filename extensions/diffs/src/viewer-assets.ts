@@ -37,39 +37,8 @@ type RuntimeAssetCache = {
 let runtimeAssetCache: RuntimeAssetCache | null = null;
 let languagePackRuntimeAssetCache: RuntimeAssetCache | null = null;
 
-type ViewerRuntimeFileUrlParams = {
-  baseUrl?: string | URL;
-  stat?: (path: string) => Promise<unknown>;
-};
-
 function isMissingFileError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
-
-async function resolveViewerRuntimeFileUrl(params: ViewerRuntimeFileUrlParams = {}): Promise<URL> {
-  const baseUrl = params.baseUrl ?? import.meta.url;
-  const stat = params.stat ?? ((path: string) => fs.stat(path));
-  let missingFileError: NodeJS.ErrnoException | null = null;
-
-  for (const relativePath of VIEWER_RUNTIME_CANDIDATE_RELATIVE_PATHS) {
-    const candidateUrl = new URL(relativePath, baseUrl);
-    try {
-      await stat(fileURLToPath(candidateUrl));
-      return candidateUrl;
-    } catch (error) {
-      if (isMissingFileError(error)) {
-        missingFileError = error;
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  if (missingFileError) {
-    throw missingFileError;
-  }
-
-  throw new Error("viewer runtime asset candidates were not checked");
 }
 
 export async function getServedViewerAsset(pathname: string): Promise<ServedViewerAsset | null> {
@@ -135,7 +104,7 @@ export async function getServedLanguagePackViewerAsset(
 }
 
 async function loadViewerAssets(): Promise<RuntimeAssetCache> {
-  const runtimeUrl = await resolveViewerRuntimeFileUrl();
+  const runtimeUrl = await resolveRuntimeFileUrl(VIEWER_RUNTIME_CANDIDATE_RELATIVE_PATHS);
   return loadRuntimeAssets({
     runtimeUrl,
     cache: runtimeAssetCache,
