@@ -165,14 +165,19 @@ describe("Code Mode guest execution", () => {
       waitTool: expectDefined(codeModeTools[1], "codeModeTools[1] test invariant"),
       code: `
         const batches = await Promise.all([catalog.search("noop"), catalog.search("noop")]);
-        return { batches, byKey: { tool: batches[0][0] } };
+        const shared = { tool: batches[0][0] };
+        return { batches, byKey: shared, aliases: { first: shared, second: shared } };
       `,
     });
 
     const handle = { callableName: "fake_noop", toolName: "fake_noop", description: "Noop" };
     expect(details).toMatchObject({
       status: "completed",
-      value: { batches: [[handle], [handle]], byKey: { tool: handle } },
+      value: {
+        batches: [[handle], [handle]],
+        byKey: { tool: handle },
+        aliases: { first: { tool: handle }, second: { tool: handle } },
+      },
     });
     expect(JSON.stringify(details.value)).not.toContain("null");
   });

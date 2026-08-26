@@ -255,12 +255,16 @@ export const CODE_MODE_CONTROLLER_SOURCE = String.raw`
     const proto = Object.getPrototypeOf(value);
     if (!Array.isArray(value) && proto !== Object.prototype && proto !== null) return value;
     seen.add(value);
-    if (Array.isArray(value)) return value.map((entry) => serializeCatalogHandles(entry, seen));
-    const plain = {};
-    for (const [key, entry] of Object.entries(value)) {
-      plain[key] = serializeCatalogHandles(entry, seen);
+    try {
+      if (Array.isArray(value)) return value.map((entry) => serializeCatalogHandles(entry, seen));
+      const plain = {};
+      for (const [key, entry] of Object.entries(value)) {
+        plain[key] = serializeCatalogHandles(entry, seen);
+      }
+      return plain;
+    } finally {
+      seen.delete(value);
     }
-    return plain;
   }
   const catalog = Object.freeze({
     search: async (query, options) => {
