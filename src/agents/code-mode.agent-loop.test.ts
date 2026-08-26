@@ -140,6 +140,41 @@ describe("Code Mode agent-loop error recovery", () => {
     });
   });
 
+  it("returns a tool's own input rejection to the model without reconciliation", async () => {
+    const history = pluginToolWithExecute("sessions_history", "Read history", async () => {
+      throw new ToolInputError("sessionId requires messageId");
+    });
+    const recover = pluginToolWithExecute("recover_task", "Recover the task", async () =>
+      jsonResult({ recovered: true }),
+    );
+
+    const { agent, providerContexts, reconciliationCandidates } = await runCodeModeAgent({
+      hiddenTools: [history, recover],
+      programs: ["return await sessions_history({});", "return await recover_task({});"],
+    });
+
+    expect(providerContexts).toHaveLength(3);
+    expect(providerContexts[1]?.messages).toContainEqual(
+      expect.objectContaining({
+        role: "toolResult",
+        toolName: "exec",
+        isError: true,
+        details: expect.objectContaining({
+          status: "failed",
+          bridgeDispatchStarted: true,
+          error: expect.stringContaining("sessionId requires messageId"),
+        }),
+      }),
+    );
+    expect(history.execute).toHaveBeenCalledOnce();
+    expect(recover.execute).toHaveBeenCalledOnce();
+    expect(reconciliationCandidates).toBe(0);
+    expect(agent.state.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      content: [{ type: "text", text: "recovered" }],
+    });
+  });
+
   it("lets the model correct successive JavaScript syntax and runtime errors", async () => {
     const complete = pluginToolWithExecute("complete_task", "Complete the task", async () =>
       jsonResult({ completed: true }),

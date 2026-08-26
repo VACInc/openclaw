@@ -29,6 +29,7 @@ import { resolveSwarmConfig } from "./subagents/swarm/swarm-config.js";
 import { isToolExecutionAllowed, TOOL_EXECUTION_GATED_MESSAGE } from "./tool-policy-shared.js";
 import {
   consumeTrustedToolNoStartError,
+  isTrustedToolExecutionPreflightError,
   registerTrustedToolNoStartError,
 } from "./tool-result-error.js";
 import { ToolSearchRuntime, type ToolSearchToolContext } from "./tool-search.js";
@@ -595,7 +596,9 @@ export async function runBridgeRequest(params: {
       ok: false,
       error: redactCodeModeCatalogIds(formatErrorMessage(error), catalogProjection.bindings),
     };
-    if (consumeTrustedToolNoStartError(error)) {
+    // A host-minted input rejection (ToolInputError) means the tool never acted; without this
+    // every mistyped argument reads as a possible partial mutation and ends the run.
+    if (consumeTrustedToolNoStartError(error) || isTrustedToolExecutionPreflightError(error)) {
       registerTrustedToolNoStartError(settled);
     }
     return settled;
