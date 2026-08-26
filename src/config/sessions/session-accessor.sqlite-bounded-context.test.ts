@@ -4,6 +4,7 @@ import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import {
   appendTranscriptEvent,
+  appendTranscriptMessage,
   persistSessionTranscriptTurn,
   upsertSessionEntryCore,
 } from "./session-accessor.js";
@@ -11,6 +12,10 @@ import {
   readSessionTranscriptActiveStats,
   readSessionTranscriptBoundedActiveContextCore,
 } from "./session-accessor.sqlite-active-events.js";
+import {
+  startSessionTranscriptIndexReconcile,
+  waitForSessionTranscriptIndexReconcile,
+} from "./session-transcript-reconcile.js";
 
 async function withBoundedContextScope(
   run: (scope: {
@@ -86,6 +91,66 @@ it("reserves the transcript header inside the exact byte limit", async () => {
     expect(context.events[0]).toMatchObject({ id: scope.sessionId, type: "session" });
     expect(context.serializedBytes).toBe(headerBytes);
     expect(context.truncated).toBe(true);
+  });
+});
+
+it("selects the session header by type when a mirror row precedes it", async () => {
+  await withBoundedContextScope(async (scope) => {
+    const mirror = await appendTranscriptMessage(scope, {
+      message: { role: "assistant", content: [{ type: "text", text: "New session started." }] },
+    });
+    await persistSessionTranscriptTurn(scope, {
+      messages: [
+        { eventId: "new", parentId: mirror.messageId, message: { role: "user", content: "new" } },
+      ],
+      touchSessionEntry: false,
+    });
+    // Settle the projection first, then reproduce the file-era import row order (delivery
+    // mirror ahead of the header), which current writers never emit, directly in the store.
+    startSessionTranscriptIndexReconcile({
+      agentId: scope.agentId,
+      preferredSessionId: scope.sessionId,
+    });
+    await waitForSessionTranscriptIndexReconcile({ agentId: scope.agentId });
+    const database = openOpenClawAgentDatabase({ agentId: scope.agentId });
+    database.db.exec("BEGIN; PRAGMA defer_foreign_keys = ON;");
+    for (const [table, column] of [
+      ["transcript_events", "seq"],
+      ["transcript_event_identities", "seq"],
+      ["session_transcript_active_events", "event_seq"],
+    ]) {
+      // Swap seq 0 (header) and seq 1 (mirror) through a spare slot.
+      for (const [from, to] of [
+        [0, 99],
+        [1, 0],
+        [99, 1],
+      ]) {
+        database.db
+          .prepare(`UPDATE ${table} SET ${column} = ? WHERE session_id = ? AND ${column} = ?`)
+          .run(to, scope.sessionId, from);
+      }
+    }
+    database.db.exec("COMMIT;");
+    const order = database.db
+      .prepare("SELECT event_json FROM transcript_events WHERE session_id = ? ORDER BY seq ASC")
+      .all(scope.sessionId) as Array<{ event_json: string }>;
+    expect(order.map((row) => JSON.parse(row.event_json).type)).toEqual([
+      "message",
+      "session",
+      "message",
+    ]);
+
+    const context = readSessionTranscriptBoundedActiveContextCore(scope, {
+      maxBytes: 4096,
+      maxEvents: 10,
+    });
+
+    expect(context.events.map((event) => (event as { id?: string }).id)).toEqual([
+      scope.sessionId,
+      mirror.messageId,
+      "new",
+    ]);
+    expect(context.events[0]).toMatchObject({ type: "session" });
   });
 });
 

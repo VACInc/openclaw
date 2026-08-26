@@ -182,13 +182,21 @@ export function readSessionTranscriptBoundedActiveContextCore(
       database: projection.database,
       ...projection.resolved,
     });
+    // The header is not always seq 0: a delivery mirror can land before it. Select it by
+    // type, or bounded loads lose the version and runtime rejects the session as legacy.
     const header = executeSqliteQueryTakeFirstSync(
       projection.database.db,
       db
-        .selectFrom("transcript_events")
-        .select("event_json")
-        .where("session_id", "=", projection.resolved.sessionId)
-        .orderBy("seq", "asc")
+        .selectFrom("transcript_event_identities as identity")
+        .innerJoin("transcript_events as event", (join) =>
+          join
+            .onRef("event.session_id", "=", "identity.session_id")
+            .onRef("event.seq", "=", "identity.seq"),
+        )
+        .select("event.event_json")
+        .where("identity.session_id", "=", projection.resolved.sessionId)
+        .where("identity.event_type", "=", "session")
+        .orderBy("identity.seq", "asc")
         .limit(1),
     );
     const headerBytes = header ? Buffer.byteLength(header.event_json, "utf8") + 1 : 0;
