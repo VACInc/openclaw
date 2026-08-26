@@ -2754,10 +2754,9 @@ describe("createOpenClawCodingTools read behavior", () => {
     const result = await tool.execute("node-skill-read", { path: locator });
 
     expect(extractToolText(result)).toContain("remote-marker");
-    for (const window of [{ offset: 1 }, { limit: 1 }, { cursor: 0 }]) {
-      await expect(
-        tool.execute("whole-skill-window", { path: locator, ...window }),
-      ).rejects.toThrow(/whole|partial|window/i);
+    for (const window of [{ offset: 2 }, { limit: 1 }, { cursor: 0 }]) {
+      const windowed = await tool.execute("whole-skill-window", { path: locator, ...window });
+      expect(extractToolText(windowed)).toContain("# Pond\nremote-marker");
     }
     expect(execute).not.toHaveBeenCalled();
   });

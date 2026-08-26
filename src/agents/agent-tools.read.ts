@@ -1139,11 +1139,6 @@ export function wrapReadToolWithSkillContent(
       if (!normalizedPath || !instructionContent.has(resolveInstructionPath(normalizedPath))) {
         return tool.execute(toolCallId, args, signal, onUpdate);
       }
-      if (record && ["offset", "limit", "cursor"].some((key) => record[key] !== undefined)) {
-        throw new Error(
-          "Skill instructions must be read whole; offset, limit, and cursor windows are not allowed.",
-        );
-      }
       const instructionTool =
         typeof instructionContent.get(normalizedPath) === "string"
           ? (virtualRead ??= createOpenClawReadTool(
@@ -1160,8 +1155,12 @@ export function wrapReadToolWithSkillContent(
               options,
             ))
           : tool;
-      const instructionArgs =
-        normalizedPath === rawPath || !record ? args : { ...record, path: normalizedPath };
+      // Skill instructions are served whole. Strict tool schemas make some models send
+      // offset/limit/cursor on every read, so windows are dropped rather than rejected.
+      const instructionArgs: Record<string, unknown> = { ...record, path: normalizedPath };
+      for (const key of ["offset", "limit", "cursor"]) {
+        delete instructionArgs[key];
+      }
       const result = await instructionTool.execute(toolCallId, instructionArgs, signal, onUpdate);
       const details = result.details;
       if (
