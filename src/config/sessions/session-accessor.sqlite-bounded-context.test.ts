@@ -118,13 +118,13 @@ it("selects the session header by type when a mirror row precedes it", async () 
       ["transcript_events", "seq"],
       ["transcript_event_identities", "seq"],
       ["session_transcript_active_events", "event_seq"],
-    ]) {
+    ] as const) {
       // Swap seq 0 (header) and seq 1 (mirror) through a spare slot.
       for (const [from, to] of [
         [0, 99],
         [1, 0],
         [99, 1],
-      ]) {
+      ] as const) {
         database.db
           .prepare(`UPDATE ${table} SET ${column} = ? WHERE session_id = ? AND ${column} = ?`)
           .run(to, scope.sessionId, from);
