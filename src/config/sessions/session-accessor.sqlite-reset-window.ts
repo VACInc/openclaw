@@ -56,6 +56,15 @@ type ResetMessageWindowCacheEntry = {
   window: ResetMessageWindow | null;
 };
 
+// History readers span compactions (their window closes only at a reset). The preflight
+// fuse must measure the transcript the model will actually see, which a compaction rewrites
+// too; measuring it on the history scope keeps the fuse latched after the first compaction.
+type BoundaryWindowScope = "history" | "context";
+
+function isWindowBoundary(eventType: unknown, scope: BoundaryWindowScope): boolean {
+  return eventType === "reset" || (scope === "context" && eventType === "compaction");
+}
+
 const resetMessageWindowCache = new Map<string, ResetMessageWindowCacheEntry>();
 const MAX_RESET_MESSAGE_WINDOW_CACHE = 64;
 
@@ -159,7 +168,11 @@ function readLatestActiveBoundaryMetadata(projection: ResetWindowProjection) {
   return reset.seq > compaction.seq ? reset : compaction;
 }
 
-function readResetBoundary(projection: ResetWindowProjection, seq: number) {
+function readBoundaryPayload(
+  projection: ResetWindowProjection,
+  seq: number,
+  scope: BoundaryWindowScope,
+) {
   const row = executeSqliteQueryTakeFirstSync(
     projection.database.db,
     getResetWindowKysely(projection.database)
@@ -170,11 +183,11 @@ function readResetBoundary(projection: ResetWindowProjection, seq: number) {
       .limit(1),
   );
   if (!row) {
-    throw new Error("Active transcript reset boundary is missing");
+    throw new Error("Active transcript boundary is missing");
   }
   const parsed = JSON.parse(row.event_json) as { firstKeptEntryId?: unknown; type?: unknown };
-  if (parsed.type !== "reset") {
-    throw new Error("Active transcript reset boundary has invalid payload");
+  if (!isWindowBoundary(parsed.type, scope)) {
+    throw new Error("Active transcript boundary has invalid payload");
   }
   return parsed;
 }
@@ -182,13 +195,14 @@ function readResetBoundary(projection: ResetWindowProjection, seq: number) {
 function findLatestResetMessageWindow(
   projection: ResetWindowProjection,
   generation: string | undefined,
+  scope: BoundaryWindowScope,
 ): ResetMessageWindow | null {
   const db = getResetWindowKysely(projection.database);
   const latestBoundary = readLatestActiveBoundaryMetadata(projection);
-  if (!latestBoundary || latestBoundary.event_type !== "reset") {
+  if (!latestBoundary || !isWindowBoundary(latestBoundary.event_type, scope)) {
     return null;
   }
-  const reset = readResetBoundary(projection, latestBoundary.seq);
+  const boundary = readBoundaryPayload(projection, latestBoundary.seq, scope);
   const postBoundaryMessagePosition =
     executeSqliteQueryTakeFirstSync(
       projection.database.db,
@@ -204,7 +218,7 @@ function findLatestResetMessageWindow(
   let keptMessagePositions: number[] = [];
   let keptContextEventCount = 0;
   let keptContextSizeBytes = 0;
-  if (typeof reset.firstKeptEntryId === "string") {
+  if (typeof boundary.firstKeptEntryId === "string") {
     const firstKept = executeSqliteQueryTakeFirstSync(
       projection.database.db,
       db
@@ -216,7 +230,7 @@ function findLatestResetMessageWindow(
         )
         .select("active.active_position")
         .where("identity.session_id", "=", projection.resolved.sessionId)
-        .where("identity.event_id", "=", reset.firstKeptEntryId),
+        .where("identity.event_id", "=", boundary.firstKeptEntryId),
     );
     if (firstKept && firstKept.active_position < latestBoundary.active_position) {
       const candidates = executeSqliteQuerySync(
@@ -241,7 +255,13 @@ function findLatestResetMessageWindow(
           return [];
         }
       });
-      const keptEntries = new Set(selectResetKeptEntries(candidates.map((row) => row.event)));
+      const candidateEntries = candidates.map((row) => row.event);
+      // A compaction keeps its whole tail; a reset replays only the paired subset.
+      const keptEntries = new Set(
+        latestBoundary.event_type === "reset"
+          ? selectResetKeptEntries(candidateEntries)
+          : candidateEntries,
+      );
       const keptRows = candidates.filter((row) => keptEntries.has(row.event));
       keptContextEventCount = keptRows.length;
       keptContextSizeBytes = keptRows.reduce(
@@ -271,8 +291,11 @@ function findLatestResetMessageWindow(
   };
 }
 
-function resolveResetMessageWindow(projection: ResetWindowProjection): ResetMessageWindow | null {
-  const key = resetMessageWindowCacheKey(projection);
+function resolveResetMessageWindow(
+  projection: ResetWindowProjection,
+  scope: BoundaryWindowScope = "history",
+): ResetMessageWindow | null {
+  const key = `${resetMessageWindowCacheKey(projection)}\0${scope}`;
   const cached = resetMessageWindowCache.get(key);
   const generation = readTranscriptProjectionGeneration(projection);
   if (cached) {
@@ -282,7 +305,8 @@ function resolveResetMessageWindow(projection: ResetWindowProjection): ResetMess
     if (cached.generation === generation && cached.window) {
       const latestBoundary = readLatestActiveBoundaryMetadata(projection);
       if (
-        latestBoundary?.event_type === "reset" &&
+        latestBoundary &&
+        isWindowBoundary(latestBoundary.event_type, scope) &&
         latestBoundary.seq === cached.window.boundarySeq
       ) {
         const window = { ...cached.window, indexedSeq: projection.state.indexedSeq };
@@ -291,7 +315,7 @@ function resolveResetMessageWindow(projection: ResetWindowProjection): ResetMess
       }
     }
   }
-  const window = findLatestResetMessageWindow(projection, generation);
+  const window = findLatestResetMessageWindow(projection, generation, scope);
   cacheResetMessageWindow(key, {
     generation,
     indexedSeq: projection.state.indexedSeq,
@@ -371,7 +395,7 @@ export function readVisibleTranscriptStats(projection: ResetWindowProjection): {
   eventCount: number;
   sizeBytes: number;
 } {
-  const window = resolveResetMessageWindow(projection);
+  const window = resolveResetMessageWindow(projection, "context");
   const db = getResetWindowKysely(projection.database);
   const base = db
     .selectFrom("session_transcript_active_events as active")
