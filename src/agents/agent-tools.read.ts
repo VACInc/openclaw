@@ -1155,8 +1155,8 @@ export function wrapReadToolWithSkillContent(
               options,
             ))
           : tool;
-      // Skill instructions are served whole. Strict tool schemas make some models send
-      // offset/limit/cursor on every read, so windows are dropped rather than rejected.
+      // Skill instructions are served whole. Some models still send paging arguments,
+      // so windows are dropped rather than rejected.
       const instructionArgs: Record<string, unknown> = { ...record, path: normalizedPath };
       for (const key of ["offset", "limit", "cursor"]) {
         delete instructionArgs[key];

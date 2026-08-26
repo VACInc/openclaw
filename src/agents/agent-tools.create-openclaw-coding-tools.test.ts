@@ -49,7 +49,10 @@ import { createOpenClawTools } from "./openclaw-tools.js";
 import { expectReadWriteEditTools } from "./test-helpers/agent-tools-fs-helpers.js";
 import { createAgentToolsSandboxContext } from "./test-helpers/agent-tools-sandbox-context.js";
 import { stubTool } from "./test-helpers/fast-tool-stubs.js";
-import { createHostSandboxFsBridge } from "./test-helpers/host-sandbox-fs-bridge.js";
+import {
+  createContainerWorkspaceSandboxFsBridge,
+  createHostSandboxFsBridge,
+} from "./test-helpers/host-sandbox-fs-bridge.js";
 import { buildEmptyExplicitToolAllowlistError } from "./tool-allowlist-guard.js";
 import { DEFAULT_PLUGIN_TOOLS_ALLOWLIST_ENTRY, normalizeToolPolicyName } from "./tool-policy.js";
 import { replaceWithEffectiveCronCreatorToolAllowlist } from "./tools/cron-tool.js";
@@ -2712,7 +2715,7 @@ describe("createOpenClawCodingTools read behavior", () => {
     await fs.writeFile(filePath, "# Demo\ncomplete instructions", "utf8");
     const sandbox = createAgentToolsSandboxContext({
       workspaceDir: root,
-      fsBridge: createHostSandboxFsBridge(root),
+      fsBridge: createContainerWorkspaceSandboxFsBridge(root),
     });
     const tools = createOpenClawCodingTools({
       sandbox,
@@ -2730,9 +2733,13 @@ describe("createOpenClawCodingTools read behavior", () => {
     expect(extractToolText(await read.execute("sandbox-skill", { path: relativePath }))).toBe(
       "# Demo\ncomplete instructions",
     );
-    await expect(
-      read.execute("sandbox-skill-window", { path: `/workspace/${relativePath}`, cursor: 0 }),
-    ).rejects.toThrow(/whole|partial|window/i);
+    for (const window of [{ offset: 2 }, { limit: 1 }, { cursor: 0 }]) {
+      const windowed = await read.execute("sandbox-skill-window", {
+        path: `/workspace/${relativePath}`,
+        ...window,
+      });
+      expect(extractToolText(windowed)).toBe("# Demo\ncomplete instructions");
+    }
   });
 
   it("reads exact node skill locators without sending them to the filesystem backend", async () => {
