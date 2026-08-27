@@ -1256,7 +1256,22 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       // incorporates context from pruned messages instead of losing it entirely.
       const effectivePreviousSummary = droppedSummary ?? preparation.previousSummary;
 
-      let currentInstructions = structuredInstructions;
+      // The audited latest ask is read from the pre-partition window, but the
+      // summarizer only receives the partitioned messages; when the ask sits in
+      // the preserved recent turns the producer never sees it, so every attempt
+      // fails `latest_user_ask_not_reflected` and compaction cancels. Hand the
+      // bounded ask over as untrusted data so the guard only demands what the
+      // producer was shown.
+      const askInstructionBlock = latestUserAsk
+        ? wrapUntrustedInstructionBlock(
+            "Latest user request; reflect it under ## Pending user asks unless it is already completed",
+            formatRequiredAskContext(latestUserAsk),
+          )
+        : "";
+      const attemptInstructions = askInstructionBlock
+        ? `${structuredInstructions}\n\n${askInstructionBlock}`
+        : structuredInstructions;
+      let currentInstructions = attemptInstructions;
       const totalAttempts = qualityGuardEnabled ? qualityGuardMaxRetries + 1 : 1;
 
       for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
@@ -1385,8 +1400,8 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           `Previous summary failed quality checks (${reasons}).`,
         );
         currentInstructions = qualityFeedbackReasons
-          ? `${structuredInstructions}\n\n${qualityFeedbackInstruction}\n${budgetInstruction}\n\n${qualityFeedbackReasons}`
-          : `${structuredInstructions}\n\n${qualityFeedbackInstruction}\n${budgetInstruction}`;
+          ? `${attemptInstructions}\n\n${qualityFeedbackInstruction}\n${budgetInstruction}\n\n${qualityFeedbackReasons}`
+          : `${attemptInstructions}\n\n${qualityFeedbackInstruction}\n${budgetInstruction}`;
       }
 
       throw new Error("Compaction safeguard exhausted summary attempts without a decision.");

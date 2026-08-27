@@ -2551,6 +2551,78 @@ describe("compaction-safeguard recent-turn preservation", () => {
     expect(retry.customInstructions).toContain("complete summary body within 16000 UTF-16");
   });
 
+  it("hands the summarizer the latest ask hidden inside preserved turns", async () => {
+    mockSummarizeInStages.mockReset();
+    const latestAsk = "combine the bars into one box per provider";
+    const structuredSummary = (pendingAsk: string) =>
+      [
+        "## Decisions",
+        "Keep the dashboard flow.",
+        "## Open TODOs",
+        "None.",
+        "## Constraints/Rules",
+        "Validate in the browser.",
+        "## Pending user asks",
+        pendingAsk,
+        "## Exact identifiers",
+        "None captured.",
+      ].join("\n");
+    // The producer can only echo an ask it was shown.
+    mockSummarizeInStages.mockImplementation(async (params) =>
+      summaryResult(
+        structuredSummary(params.customInstructions?.includes(latestAsk) ? latestAsk : "None."),
+      ),
+    );
+    const sessionManager = stubSessionManager();
+    setCompactionSafeguardRuntime(sessionManager, {
+      model: createAnthropicModelFixture(),
+      recentTurnsPreserve: 12,
+      qualityGuardEnabled: true,
+      qualityGuardMaxRetries: 1,
+    });
+    // One user turn followed by a long tool chain: preservation keeps the ask
+    // plus the trailing conversation messages, whose bulky results push the ask
+    // past the preserved-turns cap, so neither the summarizer input nor the
+    // finalized suffix carries it.
+    const toolChain = Array.from({ length: 40 }, (_, index) => {
+      const id = `call_${index}`;
+      return [
+        castAgentMessage({
+          role: "assistant",
+          content: [{ type: "toolCall", id, name: "exec", arguments: {} }],
+          timestamp: 2 + index * 2,
+        }),
+        castAgentMessage({
+          role: "toolResult",
+          toolCallId: id,
+          toolName: "exec",
+          content: [{ type: "text", text: "output ".repeat(200) }],
+          timestamp: 3 + index * 2,
+        }),
+      ];
+    }).flat();
+    const event = createCompactionEvent({ messageText: latestAsk, tokensBefore: 90_000 });
+    event.preparation.messagesToSummarize = [
+      { role: "user", content: latestAsk, timestamp: 1 },
+      ...toolChain,
+    ];
+    (event.preparation as { settings?: { reserveTokens: number } }).settings = {
+      reserveTokens: 4_000,
+    };
+    (event.preparation as { isSplitTurn?: boolean }).isSplitTurn = false;
+
+    const { result } = await runCompactionScenario({ sessionManager, event, apiKey: "test-key" });
+
+    expect(expectCompactionResult(result).summary).toContain(latestAsk);
+    expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
+    const call = requireRecord(mockCallArg(mockSummarizeInStages, 0));
+    expect(call.customInstructions).toContain(latestAsk);
+    const summarizedRoles = requireArray(call.messages).map(
+      (message) => requireRecord(message).role,
+    );
+    expect(summarizedRoles).not.toContain("user");
+  });
+
   it("propagates caller abort during corrective generation", async () => {
     mockSummarizeInStages.mockReset();
     const controller = new AbortController();
