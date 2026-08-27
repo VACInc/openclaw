@@ -119,7 +119,6 @@ export function handleCompactionEnd(
   const completed = outcome.status === "completed";
   const willRetry = completed && outcome.willRetry;
   if (completed) {
-    ctx.params.onModelContextCompacting?.();
     ctx.incrementCompactionCount();
     ctx.noteCompactionTokensAfter(outcome.tokensAfter);
     const observedCompactionCount = ctx.getCompactionCount();

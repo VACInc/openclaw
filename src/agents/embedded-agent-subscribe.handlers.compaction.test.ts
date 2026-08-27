@@ -26,7 +26,6 @@ function createCompactionContext(params: {
   info?: (message: string, meta?: Record<string, unknown>) => void;
   warn?: (message: string, meta?: Record<string, unknown>) => void;
   messages?: AgentMessage[];
-  onModelContextCompacting?: () => void;
 }): EmbeddedAgentSubscribeContext {
   // Minimal context preserves only the compaction counters and callbacks the
   // handlers mutate, making store reconciliation assertions direct.
@@ -40,7 +39,6 @@ function createCompactionContext(params: {
       sessionId: "session-1",
       agentId: params.agentId ?? "test-agent",
       onAgentEvent: undefined,
-      onModelContextCompacting: params.onModelContextCompacting,
     },
     state: {
       compactionInFlight: true,
@@ -182,41 +180,6 @@ describe("reconcileSessionStoreCompactionCountAfterSuccess", () => {
 });
 
 describe("compaction lifecycle logging", () => {
-  it.each([
-    { name: "completed", outcome: completedCompactionEnd().outcome, expectedCalls: 1 },
-    {
-      name: "skipped",
-      outcome: { status: "skipped", reason: "Nothing to compact" } as const,
-      expectedCalls: 0,
-    },
-    {
-      name: "failed",
-      outcome: { status: "failed", reason: "Summary failed" } as const,
-      expectedCalls: 0,
-    },
-    { name: "aborted", outcome: { status: "aborted" } as const, expectedCalls: 0 },
-  ])("invalidates model-context caches after $name compaction", ({ outcome, expectedCalls }) => {
-    const onModelContextCompacting = vi.fn();
-    const ctx = createCompactionContext({
-      storePath: "/unused/sessions.json",
-      sessionKey: "main",
-      initialCount: 0,
-      onModelContextCompacting,
-    });
-
-    handleCompactionStart(ctx, {
-      type: "compaction_start",
-      reason: "threshold",
-    });
-    handleCompactionEnd(ctx, {
-      type: "compaction_end",
-      reason: "threshold",
-      outcome,
-    });
-
-    expect(onModelContextCompacting).toHaveBeenCalledTimes(expectedCalls);
-  });
-
   it("logs lifecycle events at info level for gateway watch visibility", async () => {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-compaction-log-"));
     const storePath = path.join(tmp, "sessions.json");

@@ -94,7 +94,6 @@ export function prepareEmbeddedAttemptStream(input: {
   markSourceReplyDelivered: () => void;
   onBlockReply: EmbeddedRunAttemptParams["onBlockReply"];
   onBlockReplyFlush: EmbeddedRunAttemptParams["onBlockReplyFlush"];
-  onModelContextCompacting?: () => void;
   sandboxSessionKey: string;
   builtinToolNames: ReadonlySet<string>;
   coreBuiltinToolNames?: ReadonlySet<string>;
@@ -288,9 +287,6 @@ export function prepareEmbeddedAttemptStream(input: {
     onAssistantMessageStart: attempt.onAssistantMessageStart,
     onExecutionPhase: attempt.onExecutionPhase,
     onAgentEvent: attempt.onAgentEvent,
-    ...(input.onModelContextCompacting
-      ? { onModelContextCompacting: input.onModelContextCompacting }
-      : {}),
     terminalLifecyclePhase: attempt.deferTerminalLifecycle ? "finishing" : "end",
     onToolStreamBoundary: attempt.onToolStreamBoundary,
     isTerminalAborted: () => input.getRunState().aborted,
