@@ -669,10 +669,8 @@ describe("compaction-safeguard summary budgets", () => {
     const suffix = `\n\n**Turn Context (split turn):**\n${latestAsk}\n${identifier}\n${"z".repeat(
       MAX_COMPACTION_SUMMARY_CHARS,
     )}`;
-    const auditSummary = `${body}${suffix}`;
     const finalized = requireRecord(
       budgetCompactionSummary(body, suffix, MAX_COMPACTION_SUMMARY_CHARS, {
-        auditSummary,
         identifiers: [identifier],
         latestAsk,
         requiredAskContext: latestAsk,
@@ -710,7 +708,6 @@ describe("compaction-safeguard summary budgets", () => {
     ].join("\n");
     const finalized = requireRecord(
       budgetCompactionSummary(body, "", MAX_COMPACTION_SUMMARY_CHARS, {
-        auditSummary: body,
         identifiers: [identifier],
         latestAsk,
         requiredAskContext: latestAsk,
@@ -748,7 +745,6 @@ describe("compaction-safeguard summary budgets", () => {
     ].join("\n");
     const finalized = requireRecord(
       budgetCompactionSummary(body, "", MAX_COMPACTION_SUMMARY_CHARS, {
-        auditSummary: body,
         identifiers: [],
         latestAsk,
         requiredAskContext: latestAsk,
@@ -2481,6 +2477,50 @@ describe("compaction-safeguard recent-turn preservation", () => {
     expect(summary).not.toContain(SUMMARY_TRUNCATED_MARKER.trim());
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
     expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
+  });
+
+  it("restores a source latest ask omitted by a generated summary that fits the budget", async () => {
+    mockSummarizeInStages.mockReset();
+    const latestAsk = "report whether the deployment is ready";
+    const generatedSummary = [
+      "## Decisions",
+      "The deployment remains paused.",
+      "## Open TODOs",
+      "Check the deployment status.",
+      "## Constraints/Rules",
+      "Preserve exact context.",
+      "## Pending user asks",
+      "None.",
+      "## Exact identifiers",
+      "None.",
+    ].join("\n");
+    mockSummarizeInStages.mockResolvedValue(summaryResult(generatedSummary));
+
+    const sessionManager = stubSessionManager();
+    setCompactionSafeguardRuntime(sessionManager, {
+      model: createAnthropicModelFixture(),
+      recentTurnsPreserve: 0,
+      qualityGuardEnabled: true,
+      qualityGuardMaxRetries: 1,
+    });
+    const event = createCompactionEvent({
+      messageText: latestAsk,
+      tokensBefore: 1_500,
+    });
+    (event.preparation as { settings?: { reserveTokens: number } }).settings = {
+      reserveTokens: 4_000,
+    };
+
+    const { result } = await runCompactionScenario({ sessionManager, event, apiKey: "test-key" });
+
+    const summary = expectCompactionResult(result).summary;
+    expect(summary).toContain(`Latest user request context:\n${latestAsk}`);
+    expect(auditSummaryQuality({ summary, identifiers: [], latestAsk })).toEqual({
+      ok: true,
+      reasons: [],
+    });
+    expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
+    expect(consumeCompactionSafeguardCancelReason(sessionManager)).toBeNull();
   });
 
   it("fails closed when audit-required tail sections cannot fit the artifact cap", async () => {
