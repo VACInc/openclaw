@@ -43,9 +43,9 @@ type ResetMessageWindow = {
   boundarySeq: number;
   generation: string | undefined;
   indexedSeq: number;
-  keptContextEventCount: number;
+  contextPrefixEventCount: number;
   keptMessagePositions: number[];
-  keptContextSizeBytes: number;
+  contextPrefixSizeBytes: number;
   postBoundaryMessagePosition: number;
   boundaryActivePosition: number;
 };
@@ -189,7 +189,10 @@ function readBoundaryPayload(
   if (!isWindowBoundary(parsed.type, scope)) {
     throw new Error("Active transcript boundary has invalid payload");
   }
-  return parsed;
+  return {
+    event: parsed,
+    sizeBytes: Buffer.byteLength(row.event_json, "utf8") + 1,
+  };
 }
 
 function findLatestResetMessageWindow(
@@ -202,7 +205,8 @@ function findLatestResetMessageWindow(
   if (!latestBoundary || !isWindowBoundary(latestBoundary.event_type, scope)) {
     return null;
   }
-  const boundary = readBoundaryPayload(projection, latestBoundary.seq, scope);
+  const boundaryPayload = readBoundaryPayload(projection, latestBoundary.seq, scope);
+  const boundary = boundaryPayload.event;
   const postBoundaryMessagePosition =
     executeSqliteQueryTakeFirstSync(
       projection.database.db,
@@ -216,8 +220,9 @@ function findLatestResetMessageWindow(
         .limit(1),
     )?.message_position ?? projection.state.activeMessageCount;
   let keptMessagePositions: number[] = [];
-  let keptContextEventCount = 0;
-  let keptContextSizeBytes = 0;
+  const includesBoundary = latestBoundary.event_type === "compaction";
+  let contextPrefixEventCount = includesBoundary ? 1 : 0;
+  let contextPrefixSizeBytes = includesBoundary ? boundaryPayload.sizeBytes : 0;
   if (typeof boundary.firstKeptEntryId === "string") {
     const firstKept = executeSqliteQueryTakeFirstSync(
       projection.database.db,
@@ -263,8 +268,8 @@ function findLatestResetMessageWindow(
           : candidateEntries,
       );
       const keptRows = candidates.filter((row) => keptEntries.has(row.event));
-      keptContextEventCount = keptRows.length;
-      keptContextSizeBytes = keptRows.reduce(
+      contextPrefixEventCount += keptRows.length;
+      contextPrefixSizeBytes += keptRows.reduce(
         (total, row) => total + Buffer.byteLength(row.event_json, "utf8") + 1,
         0,
       );
@@ -283,9 +288,9 @@ function findLatestResetMessageWindow(
     boundarySeq: latestBoundary.seq,
     generation,
     indexedSeq: projection.state.indexedSeq,
-    keptContextEventCount,
+    contextPrefixEventCount,
     keptMessagePositions,
-    keptContextSizeBytes,
+    contextPrefixSizeBytes,
     postBoundaryMessagePosition,
     boundaryActivePosition: latestBoundary.active_position,
   };
@@ -416,7 +421,7 @@ export function readVisibleTranscriptStats(projection: ResetWindowProjection): {
     window ? base.where("active.active_position", ">", window.boundaryActivePosition) : base,
   );
   return {
-    eventCount: (row?.event_count ?? 0) + (window?.keptContextEventCount ?? 0),
-    sizeBytes: (row?.size_bytes ?? 0) + (window?.keptContextSizeBytes ?? 0),
+    eventCount: (row?.event_count ?? 0) + (window?.contextPrefixEventCount ?? 0),
+    sizeBytes: (row?.size_bytes ?? 0) + (window?.contextPrefixSizeBytes ?? 0),
   };
 }
