@@ -197,6 +197,7 @@ export async function runEmbeddedAttemptExecutionPhase(
     },
     onBlockReply,
     onBlockReplyFlush,
+    onModelContextCompacting: () => input.prepared.toolBase.skillInstructionDeliveryCache.clear(),
     runtimeChannel,
     hookRunner,
     hookAgentId,

@@ -91,6 +91,7 @@ export function handleCompactionStart(
 ) {
   const reason = normalizeCompactionReason(evt.reason);
   const kind = reason === "manual" ? "manual compaction" : "auto-compaction";
+  ctx.params.onModelContextCompacting?.();
   ctx.state.compactionInFlight = true;
   ctx.state.livenessState = "paused";
   ctx.ensureCompactionPromise();

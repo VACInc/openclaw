@@ -85,6 +85,12 @@ type SkillReadContent = {
   readContent?: string;
 };
 
+export type SkillInstructionDeliveryCache = Map<string, Promise<boolean>>;
+
+export function createSkillInstructionDeliveryCache(): SkillInstructionDeliveryCache {
+  return new Map();
+}
+
 /** Erase a schema-specific session tool only after its input passes that owned schema. */
 function eraseSessionFileTool<TParameters extends TSchema, TDetails>(
   tool: AgentTool<TParameters, TDetails>,
@@ -1090,6 +1096,7 @@ export function wrapReadToolWithSkillContent(
     cwd?: string;
     containerWorkdir?: string;
     instructionPaths?: readonly string[];
+    instructionDeliveryCache?: SkillInstructionDeliveryCache;
   },
 ): AnyAgentTool {
   const cwd = options?.cwd ?? process.cwd();
@@ -1119,6 +1126,15 @@ export function wrapReadToolWithSkillContent(
   if (instructionContent.size === 0) {
     return tool;
   }
+  const instructionDeliveryCache = options?.instructionDeliveryCache;
+  const alreadyDeliveredResult = (): AgentToolResult<unknown> => {
+    const text =
+      "Skill instructions were already served whole earlier in the current model context. Reuse that content; the full document will be served again if compaction removes it.";
+    return {
+      content: [{ type: "text", text }],
+      details: { kind: "text", content: text },
+    };
+  };
   const readContent = (filePath: string): string => {
     const content = instructionContent.get(filePath);
     if (content === undefined) {
@@ -1136,11 +1152,36 @@ export function wrapReadToolWithSkillContent(
       const rawPath = record?.path;
       const normalizedPath =
         typeof rawPath === "string" ? normalizeFileToolPathParam(rawPath) : undefined;
-      if (!normalizedPath || !instructionContent.has(resolveInstructionPath(normalizedPath))) {
+      const instructionPath = normalizedPath ? resolveInstructionPath(normalizedPath) : undefined;
+      if (!normalizedPath || !instructionPath || !instructionContent.has(instructionPath)) {
         return tool.execute(toolCallId, args, signal, onUpdate);
       }
+      while (instructionDeliveryCache?.has(instructionPath)) {
+        const priorDelivery = instructionDeliveryCache.get(instructionPath);
+        if (!priorDelivery) {
+          break;
+        }
+        const delivered = await priorDelivery;
+        if (instructionDeliveryCache.get(instructionPath) !== priorDelivery) {
+          continue;
+        }
+        if (delivered) {
+          return alreadyDeliveredResult();
+        }
+        instructionDeliveryCache.delete(instructionPath);
+      }
+      let settleDelivery = (_delivered: boolean): void => undefined;
+      let delivery: Promise<boolean> | undefined;
+      if (instructionDeliveryCache) {
+        delivery = new Promise<boolean>((resolve) => {
+          settleDelivery = resolve;
+        });
+        // The resolved promise covers sequential and concurrent reads without
+        // changing prior transcript bytes. The compaction owner clears it.
+        instructionDeliveryCache.set(instructionPath, delivery);
+      }
       const instructionTool =
-        typeof instructionContent.get(normalizedPath) === "string"
+        typeof instructionContent.get(instructionPath) === "string"
           ? (virtualRead ??= createOpenClawReadTool(
               eraseSessionFileTool(
                 createReadTool("/", {
@@ -1161,21 +1202,39 @@ export function wrapReadToolWithSkillContent(
       for (const key of ["offset", "limit", "cursor"]) {
         delete instructionArgs[key];
       }
-      const result = await instructionTool.execute(toolCallId, instructionArgs, signal, onUpdate);
-      const details = result.details;
-      if (
-        details &&
-        typeof details === "object" &&
-        "kind" in details &&
-        details.kind === "truncated"
-      ) {
-        const text = `Skill instructions cannot be partially served: the whole document exceeds the ${formatBytes(resolveAdaptiveReadMaxBytes(options))} read budget. Ask the operator to reduce the document or increase the model context.`;
-        return {
-          content: [{ type: "text", text }],
-          details: { kind: "text", content: text },
-        };
+      try {
+        const result = await instructionTool.execute(
+          toolCallId,
+          instructionArgs,
+          signal,
+          onUpdate,
+        );
+        const details = result.details;
+        if (
+          details &&
+          typeof details === "object" &&
+          "kind" in details &&
+          details.kind === "truncated"
+        ) {
+          settleDelivery(false);
+          if (delivery && instructionDeliveryCache?.get(instructionPath) === delivery) {
+            instructionDeliveryCache.delete(instructionPath);
+          }
+          const text = `Skill instructions cannot be partially served: the whole document exceeds the ${formatBytes(resolveAdaptiveReadMaxBytes(options))} read budget. Ask the operator to reduce the document or increase the model context.`;
+          return {
+            content: [{ type: "text", text }],
+            details: { kind: "text", content: text },
+          };
+        }
+        settleDelivery(true);
+        return result;
+      } catch (error) {
+        settleDelivery(false);
+        if (delivery && instructionDeliveryCache?.get(instructionPath) === delivery) {
+          instructionDeliveryCache.delete(instructionPath);
+        }
+        throw error;
       }
-      return result;
     },
   };
 }

@@ -76,6 +76,8 @@ export type SubscribeEmbeddedAgentSessionParams = {
     source?: string;
   }) => void;
   onAgentEvent?: (evt: EmbeddedAgentEvent) => void | Promise<void>;
+  /** Invalidates attempt-local state whose source result may be removed by compaction. */
+  onModelContextCompacting?: () => void;
   onToolStreamBoundary?: () => void | Promise<void>;
   onHeartbeatToolResponse?: (response: HeartbeatToolResponse) => void | Promise<void>;
   /** "finishing" defers both success and error terminal ownership to the caller. */
