@@ -12,6 +12,7 @@ import {
   readSessionTranscriptActiveStats,
   readSessionTranscriptBoundedActiveContextCore,
 } from "./session-accessor.sqlite-active-events.js";
+import { importSqliteSessionRows } from "./session-accessor.sqlite-import.js";
 import {
   startSessionTranscriptIndexReconcile,
   waitForSessionTranscriptIndexReconcile,
@@ -151,6 +152,54 @@ it("selects the session header by type when a mirror row precedes it", async () 
       "new",
     ]);
     expect(context.events[0]).toMatchObject({ type: "session" });
+  });
+});
+
+it("selects the session header when an exact migrated transcript has no identity rows", async () => {
+  await withOpenClawTestState({ label: "bounded-transcript-exact-import" }, async (state) => {
+    const scope = {
+      agentId: "ops",
+      env: state.env,
+      sessionId: "exact-import-session",
+      sessionKey: "agent:ops:main",
+      storePath: path.join(state.sessionsDir("ops"), "sessions.json"),
+    };
+    await importSqliteSessionRows({
+      ...scope,
+      entry: { sessionId: scope.sessionId, updatedAt: 1 },
+      readExactTranscriptRows: (append) => {
+        append({
+          createdAt: 1,
+          eventJson: JSON.stringify({ type: "session", version: 3, id: scope.sessionId }),
+        });
+        append({
+          createdAt: 2,
+          eventJson: JSON.stringify({
+            type: "message",
+            id: "message-1",
+            parentId: null,
+            message: { role: "user", content: "hello" },
+          }),
+        });
+      },
+    });
+
+    const database = openOpenClawAgentDatabase({ agentId: scope.agentId, env: scope.env });
+    const identityCount = database.db
+      .prepare("SELECT COUNT(*) AS count FROM transcript_event_identities WHERE session_id = ?")
+      .get(scope.sessionId) as { count: number };
+    expect(identityCount.count).toBe(0);
+
+    const context = readSessionTranscriptBoundedActiveContextCore(scope, {
+      maxBytes: 4096,
+      maxEvents: 10,
+    });
+
+    expect(context.events.map((event) => (event as { id?: string }).id)).toEqual([
+      scope.sessionId,
+      "message-1",
+    ]);
+    expect(context.events[0]).toMatchObject({ type: "session", version: 3 });
   });
 });
 
