@@ -52,6 +52,7 @@ import { stubTool } from "./test-helpers/fast-tool-stubs.js";
 import {
   createContainerWorkspaceSandboxFsBridge,
   createHostSandboxFsBridge,
+  createSandboxFsBridgeFromResolver,
 } from "./test-helpers/host-sandbox-fs-bridge.js";
 import { buildEmptyExplicitToolAllowlistError } from "./tool-allowlist-guard.js";
 import { DEFAULT_PLUGIN_TOOLS_ALLOWLIST_ENTRY, normalizeToolPolicyName } from "./tool-policy.js";
@@ -1083,6 +1084,54 @@ describe("createOpenClawCodingTools", () => {
     });
 
     expect(latestCreateOpenClawToolsOptions().fsPolicy).toEqual({ workspaceOnly: true });
+  });
+
+  it("allows workspace-only reads from declared sandbox bind mounts", async () => {
+    const workspaceDir = tempDirs.make("openclaw-sandbox-workspace-");
+    const bindRoot = tempDirs.make("openclaw-sandbox-bind-");
+    const boundFile = path.join(bindRoot, "example", "tree-index.json");
+    await fs.mkdir(path.dirname(boundFile), { recursive: true });
+    await fs.writeFile(boundFile, '{"ready":true}\n', "utf8");
+
+    const sandbox = createAgentToolsSandboxContext({
+      workspaceDir,
+      workspaceAccess: "none",
+      dockerOverrides: { binds: [`${bindRoot}:/cache/repos:ro`] },
+    });
+    sandbox.fsBridge = createSandboxFsBridgeFromResolver((filePath) => {
+      const relativePath = path.posix.relative("/cache/repos", filePath);
+      return {
+        hostPath: path.join(bindRoot, relativePath),
+        relativePath,
+        containerPath: filePath,
+      };
+    });
+
+    const tools = createOpenClawCodingTools({
+      workspaceDir,
+      config: { tools: { fs: { workspaceOnly: true } } },
+      sandbox,
+    });
+
+    const { readTool, writeTool, editTool } = expectReadWriteEditTools(tools);
+    const result = await readTool.execute("read-declared-bind", {
+      path: "/cache/repos/example/tree-index.json",
+    });
+    expect(extractToolText(result)).toContain('{"ready":true}');
+    await expect(
+      writeTool.execute("write-declared-bind", {
+        path: "/cache/repos/example/tree-index.json",
+        content: "overwritten",
+      }),
+    ).rejects.toThrow(/Path escapes sandbox root/i);
+    await expect(
+      editTool.execute("edit-declared-bind", {
+        path: "/cache/repos/example/tree-index.json",
+        oldText: "true",
+        newText: "false",
+      }),
+    ).rejects.toThrow(/Path escapes sandbox root/i);
+    await expect(fs.readFile(boundFile, "utf8")).resolves.toBe('{"ready":true}\n');
   });
 
   it("uses the canonical spawn workspace for follow-up task suggestions", () => {
