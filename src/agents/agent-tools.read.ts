@@ -1156,19 +1156,19 @@ export function wrapReadToolWithSkillContent(
       if (!normalizedPath || !instructionPath || !instructionContent.has(instructionPath)) {
         return tool.execute(toolCallId, args, signal, onUpdate);
       }
-      while (instructionDeliveryCache?.has(instructionPath)) {
-        const priorDelivery = instructionDeliveryCache.get(instructionPath);
+      for (;;) {
+        const priorDelivery = instructionDeliveryCache?.get(instructionPath);
         if (!priorDelivery) {
           break;
         }
         const delivered = await priorDelivery;
-        if (instructionDeliveryCache.get(instructionPath) !== priorDelivery) {
+        if (instructionDeliveryCache?.get(instructionPath) !== priorDelivery) {
           continue;
         }
         if (delivered) {
           return alreadyDeliveredResult();
         }
-        instructionDeliveryCache.delete(instructionPath);
+        instructionDeliveryCache?.delete(instructionPath);
       }
       let settleDelivery = (_delivered: boolean): void => undefined;
       let delivery: Promise<boolean> | undefined;
@@ -1180,6 +1180,12 @@ export function wrapReadToolWithSkillContent(
         // changing prior transcript bytes. The compaction owner clears it.
         instructionDeliveryCache.set(instructionPath, delivery);
       }
+      const resetDelivery = () => {
+        settleDelivery(false);
+        if (delivery && instructionDeliveryCache?.get(instructionPath) === delivery) {
+          instructionDeliveryCache.delete(instructionPath);
+        }
+      };
       const instructionTool =
         typeof instructionContent.get(instructionPath) === "string"
           ? (virtualRead ??= createOpenClawReadTool(
@@ -1203,36 +1209,31 @@ export function wrapReadToolWithSkillContent(
         delete instructionArgs[key];
       }
       try {
-        const result = await instructionTool.execute(
-          toolCallId,
-          instructionArgs,
-          signal,
-          onUpdate,
-        );
+        const result = await instructionTool.execute(toolCallId, instructionArgs, signal, onUpdate);
         const details = result.details;
-        if (
+        const detailsKind =
           details &&
           typeof details === "object" &&
           "kind" in details &&
-          details.kind === "truncated"
-        ) {
-          settleDelivery(false);
-          if (delivery && instructionDeliveryCache?.get(instructionPath) === delivery) {
-            instructionDeliveryCache.delete(instructionPath);
-          }
+          typeof details.kind === "string"
+            ? details.kind
+            : undefined;
+        if (detailsKind === "truncated") {
+          resetDelivery();
           const text = `Skill instructions cannot be partially served: the whole document exceeds the ${formatBytes(resolveAdaptiveReadMaxBytes(options))} read budget. Ask the operator to reduce the document or increase the model context.`;
           return {
             content: [{ type: "text", text }],
             details: { kind: "text", content: text },
           };
         }
+        if (detailsKind !== "text") {
+          resetDelivery();
+          return result;
+        }
         settleDelivery(true);
         return result;
       } catch (error) {
-        settleDelivery(false);
-        if (delivery && instructionDeliveryCache?.get(instructionPath) === delivery) {
-          instructionDeliveryCache.delete(instructionPath);
-        }
+        resetDelivery();
         throw error;
       }
     },

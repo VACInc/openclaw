@@ -2768,6 +2768,125 @@ describe("createOpenClawCodingTools read behavior", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it("deduplicates sequential and concurrent successful skill reads within one attempt", async () => {
+    const locator = "/skills/pond/SKILL.md";
+    const instructionDeliveryCache = new Map<string, Promise<boolean>>();
+    const instructionDeliveryOptions = { instructionDeliveryCache };
+    const fullResult = {
+      content: [{ type: "text", text: "# Pond\ncomplete instructions" }],
+      details: { kind: "text", content: "# Pond\ncomplete instructions" },
+    } as AgentToolResult<unknown>;
+    let releaseRead = (): void => undefined;
+    const pendingRead = new Promise<AgentToolResult<unknown>>((resolve) => {
+      releaseRead = () => resolve(fullResult);
+    });
+    const execute = vi.fn(() => pendingRead);
+    const tool = wrapReadToolWithSkillContent(
+      {
+        name: "read",
+        label: "read",
+        description: "read a file",
+        parameters: {},
+        execute,
+      } as never,
+      [{ filePath: locator }],
+      instructionDeliveryOptions,
+    );
+
+    const first = tool.execute("first-skill-read", { path: locator });
+    const concurrent = tool.execute("concurrent-skill-read", { path: locator });
+    expect(execute).toHaveBeenCalledTimes(1);
+    releaseRead();
+
+    expect(extractToolText(await first)).toBe("# Pond\ncomplete instructions");
+    expect(extractToolText(await concurrent)).toContain("already served whole");
+    expect(
+      extractToolText(await tool.execute("sequential-skill-read", { path: locator })),
+    ).toContain("already served whole");
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries skill reads after failures, whole-read refusals, and optional misses", async () => {
+    const locator = "/skills/pond/SKILL.md";
+    const instructionDeliveryCache = new Map<string, Promise<boolean>>();
+    const instructionDeliveryOptions = { instructionDeliveryCache };
+    const fullResult = {
+      content: [{ type: "text", text: "# Pond\ncomplete instructions" }],
+      details: { kind: "text", content: "# Pond\ncomplete instructions" },
+    } as AgentToolResult<unknown>;
+    const truncatedResult = {
+      content: [{ type: "text", text: "partial" }],
+      details: { kind: "truncated" },
+    } as AgentToolResult<unknown>;
+    const notFoundResult = {
+      content: [{ type: "text", text: `Optional file not found: ${locator}.` }],
+      details: { kind: "not_found", status: "not_found", path: locator, optional: true },
+    } as AgentToolResult<unknown>;
+    const execute = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("transient read failure"))
+      .mockResolvedValueOnce(truncatedResult)
+      .mockResolvedValueOnce(notFoundResult)
+      .mockResolvedValueOnce(fullResult);
+    const tool = wrapReadToolWithSkillContent(
+      {
+        name: "read",
+        label: "read",
+        description: "read a file",
+        parameters: {},
+        execute,
+      } as never,
+      [{ filePath: locator }],
+      instructionDeliveryOptions,
+    );
+
+    await expect(tool.execute("failed-skill-read", { path: locator })).rejects.toThrow(
+      "transient read failure",
+    );
+    expect(
+      extractToolText(await tool.execute("oversized-skill-read", { path: locator })),
+    ).toContain("cannot be partially served");
+    expect(
+      extractToolText(
+        await tool.execute("optional-missing-skill-read", { path: locator, optional: true }),
+      ),
+    ).toContain("Optional file not found");
+    expect(extractToolText(await tool.execute("retried-skill-read", { path: locator }))).toBe(
+      "# Pond\ncomplete instructions",
+    );
+    expect(execute).toHaveBeenCalledTimes(4);
+  });
+
+  it("serves skill instructions again after model-context compaction invalidates the cache", async () => {
+    const locator = "node://node-1/skills/pond/SKILL.md";
+    const instructionDeliveryCache = new Map<string, Promise<boolean>>();
+    const instructionDeliveryOptions = { instructionDeliveryCache };
+    const tool = wrapReadToolWithSkillContent(
+      {
+        name: "read",
+        label: "read",
+        description: "read a file",
+        parameters: {},
+        execute: vi.fn(),
+      } as never,
+      [{ filePath: locator, readContent: "# Pond\ncomplete instructions" }],
+      instructionDeliveryOptions,
+    );
+
+    expect(extractToolText(await tool.execute("first-skill-read", { path: locator }))).toBe(
+      "# Pond\ncomplete instructions",
+    );
+    expect(extractToolText(await tool.execute("deduped-skill-read", { path: locator }))).toContain(
+      "already served whole",
+    );
+
+    instructionDeliveryCache.clear();
+
+    expect(
+      extractToolText(await tool.execute("post-compaction-skill-read", { path: locator })),
+    ).toBe("# Pond\ncomplete instructions");
+  });
+
   it("uses host decoding only for host-backed sandbox paths", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sbx-encoding-"));
     await fs.writeFile(path.join(tmpDir, "notes.txt"), "hello", "utf8");

@@ -26,6 +26,7 @@ function createCompactionContext(params: {
   info?: (message: string, meta?: Record<string, unknown>) => void;
   warn?: (message: string, meta?: Record<string, unknown>) => void;
   messages?: AgentMessage[];
+  onModelContextCompacting?: () => void;
 }): EmbeddedAgentSubscribeContext {
   // Minimal context preserves only the compaction counters and callbacks the
   // handlers mutate, making store reconciliation assertions direct.
@@ -39,6 +40,7 @@ function createCompactionContext(params: {
       sessionId: "session-1",
       agentId: params.agentId ?? "test-agent",
       onAgentEvent: undefined,
+      onModelContextCompacting: params.onModelContextCompacting,
     },
     state: {
       compactionInFlight: true,
@@ -180,6 +182,23 @@ describe("reconcileSessionStoreCompactionCountAfterSuccess", () => {
 });
 
 describe("compaction lifecycle logging", () => {
+  it("invalidates model-context caches when compaction starts", () => {
+    const onModelContextCompacting = vi.fn();
+    const ctx = createCompactionContext({
+      storePath: "/unused/sessions.json",
+      sessionKey: "main",
+      initialCount: 0,
+      onModelContextCompacting,
+    });
+
+    handleCompactionStart(ctx, {
+      type: "compaction_start",
+      reason: "threshold",
+    });
+
+    expect(onModelContextCompacting).toHaveBeenCalledOnce();
+  });
+
   it("logs lifecycle events at info level for gateway watch visibility", async () => {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-compaction-log-"));
     const storePath = path.join(tmp, "sessions.json");
