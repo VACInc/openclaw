@@ -182,7 +182,20 @@ describe("reconcileSessionStoreCompactionCountAfterSuccess", () => {
 });
 
 describe("compaction lifecycle logging", () => {
-  it("invalidates model-context caches when compaction starts", () => {
+  it.each([
+    { name: "completed", outcome: completedCompactionEnd().outcome, expectedCalls: 1 },
+    {
+      name: "skipped",
+      outcome: { status: "skipped", reason: "Nothing to compact" } as const,
+      expectedCalls: 0,
+    },
+    {
+      name: "failed",
+      outcome: { status: "failed", reason: "Summary failed" } as const,
+      expectedCalls: 0,
+    },
+    { name: "aborted", outcome: { status: "aborted" } as const, expectedCalls: 0 },
+  ])("invalidates model-context caches after $name compaction", ({ outcome, expectedCalls }) => {
     const onModelContextCompacting = vi.fn();
     const ctx = createCompactionContext({
       storePath: "/unused/sessions.json",
@@ -195,8 +208,13 @@ describe("compaction lifecycle logging", () => {
       type: "compaction_start",
       reason: "threshold",
     });
+    handleCompactionEnd(ctx, {
+      type: "compaction_end",
+      reason: "threshold",
+      outcome,
+    });
 
-    expect(onModelContextCompacting).toHaveBeenCalledOnce();
+    expect(onModelContextCompacting).toHaveBeenCalledTimes(expectedCalls);
   });
 
   it("logs lifecycle events at info level for gateway watch visibility", async () => {
