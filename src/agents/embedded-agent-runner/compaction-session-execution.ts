@@ -250,6 +250,7 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
         const systemPromptText = buildSystemPromptText(thinkLevel);
         let session: AgentSession | undefined;
         let diagnosticOwner: DiagnosticEmbeddedRunOwner | undefined;
+        let resetCompactionTimeout: (() => void) | undefined;
         try {
           const createdSession = await createAgentSessionForEmbeddedRunner(
             {
@@ -335,6 +336,9 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
               contentCapture: resolveDiagnosticModelContentCapturePolicy(params.config),
               nextCallId: nextDiagnosticModelCallId,
               ownerGeneration: diagnosticOwner.generation,
+              // Multi-stage compaction intentionally serializes provider calls. Each new
+              // request is progress, so it gets the configured request-sized safety window.
+              onStarted: () => resetCompactionTimeout?.(),
             },
           );
 
@@ -471,12 +475,15 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
             },
           });
           const activeSession = session;
-          const clientResult = serverResult
-            ? undefined
-            : await compactWithSafetyTimeout(
-                () =>
-                  resolveEffectiveCompactionMode(params.config) === "default" &&
-                  trigger !== "manual"
+          let clientResult: Awaited<ReturnType<typeof activeSession.compact>> | undefined;
+          if (!serverResult) {
+            try {
+              clientResult = await compactWithSafetyTimeout(
+                (_signal, resetTimeout) => {
+                  resetCompactionTimeout = resetTimeout;
+                  setCompactionSafeguardCancellation(compactionSessionManager, undefined);
+                  return resolveEffectiveCompactionMode(params.config) === "default" &&
+                    trigger !== "manual"
                     ? activeSession[agentSessionAutomaticCompaction](params.customInstructions)
                     : activeSession.compact(params.customInstructions),
                 compactionTimeoutMs,
@@ -487,6 +494,10 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
                   },
                 },
               );
+            } finally {
+              resetCompactionTimeout = undefined;
+            }
+          }
           const effectiveFirstKeptEntryId = clientResult?.firstKeptEntryId;
           const tokensBefore = serverResult?.usage.input_tokens ?? clientResult!.tokensBefore;
           // Endpoint output_tokens excludes retained inputs. Count the actual
