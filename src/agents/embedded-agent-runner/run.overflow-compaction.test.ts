@@ -18,6 +18,8 @@ import type { PreparedEmbeddedRunInput } from "./run/execution-context.js";
 import type { EmbeddedRunAttemptResult } from "./run/types.js";
 import { createUsageAccumulator } from "./usage-accumulator.js";
 
+type CompactionResult = Awaited<ReturnType<ContextEngine["compact"]>>;
+
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const completionMocks = vi.hoisted(() => ({
   prepareSimpleCompletionModelForAgent: vi.fn(),
@@ -60,9 +62,9 @@ function makeAttempt(overrides: Partial<EmbeddedRunAttemptResult> = {}): Embedde
   };
 }
 
-function makeContextEngine(compact = vi.fn()): ContextEngine {
+function makeContextEngine(compact = vi.fn(), ownsCompaction = true): ContextEngine {
   return {
-    info: { id: "test", name: "Test", ownsCompaction: true },
+    info: { id: "test", name: "Test", ownsCompaction },
     ingest: vi.fn(),
     assemble: vi.fn(),
     compact,
@@ -213,6 +215,47 @@ describe("compactEmbeddedRunForRecovery", () => {
       },
     });
   });
+
+  it.each(["overflow", "timeout_recovery"] as const)(
+    "lets delegated native %s compaction use its progress-aware watchdog",
+    async (trigger) => {
+      vi.useFakeTimers();
+      try {
+        const compact = vi.fn(
+          () =>
+            new Promise<CompactionResult>((resolve) => {
+              setTimeout(() => resolve({ ok: true, compacted: false }), 1_100);
+            }),
+        );
+        const contextEngine = makeContextEngine(compact, false);
+        const pending = compactEmbeddedRunForRecovery(
+          makeRecoveryInput({
+            runParams: {
+              ...baseRunParams,
+              config: { agents: { defaults: { compaction: { timeoutSeconds: 1 } } } },
+            },
+            contextEngine,
+          }),
+          {
+            tokenBudget: 200_000,
+            trigger,
+            diagId: `diag-${trigger}`,
+            attempt: 1,
+            maxAttempts: 3,
+          },
+        );
+        const assertion = expect(pending).resolves.toMatchObject({
+          result: { ok: true, compacted: false },
+        });
+
+        await vi.advanceTimersByTimeAsync(1_100);
+        await assertion;
+        expect(compact).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("does not trust the active run fallback during recovery compaction", async () => {
     const compact = vi.fn(async (params: { runtimeContext?: ContextEngineRuntimeContext }) => {
