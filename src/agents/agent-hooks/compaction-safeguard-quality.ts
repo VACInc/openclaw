@@ -111,7 +111,7 @@ type SummaryQualityRetentionPlan = {
   minimumChars: number;
   /**
    * True when render() must rebuild even a body that fits: a strict source
-   * identifier is missing, or an audit-bearing section exceeds its share cap.
+   * fact is missing, or an audit-bearing section exceeds its share cap.
    */
   needsRebuild: (maxChars: number) => boolean;
   /** Null when even the protected facts cannot fit `maxChars`. */
@@ -150,7 +150,6 @@ export function createSummaryQualityRetentionPlan(
   summary: string,
   truncatedMarker: string,
   params: {
-    auditSummary?: string;
     identifiers: string[];
     latestAsk: string | null;
     requiredAskContext?: string;
@@ -162,10 +161,6 @@ export function createSummaryQualityRetentionPlan(
     return null;
   }
   const enforceIdentifiers = (params.identifierPolicy ?? "strict") === "strict";
-  const auditSummary = params.auditSummary ?? summary;
-  if (!hasAskOverlap(auditSummary, params.latestAsk)) {
-    return null;
-  }
   const requiredAskContext = params.requiredAskContext?.trim() ?? "";
   const auditedIdentifiers = enforceIdentifiers ? params.identifiers : [];
   const marker = truncatedMarker.trim();
@@ -192,6 +187,8 @@ export function createSummaryQualityRetentionPlan(
   const bodyHasIdentifiers = auditedIdentifiers.every((identifier) =>
     summaryIncludesIdentifier(summary, identifier),
   );
+  const bodyHasLatestAsk = hasAskOverlap(summary, params.latestAsk);
+  const bodyHasRequiredAskContext = !requiredAskContext || summary.includes(requiredAskContext);
   const renderSections = (sectionContents: string[]) =>
     REQUIRED_SUMMARY_SECTIONS.map((heading, index) => {
       const content = sectionContents[index];
@@ -236,9 +233,9 @@ export function createSummaryQualityRetentionPlan(
 
   return {
     minimumChars: minimumSummary.length,
-    needsRebuild: (maxChars) => !bodyHasIdentifiers || !protectedWithinCap(maxChars),
+    needsRebuild: (maxChars) =>
+      !bodyHasLatestAsk || !bodyHasIdentifiers || !protectedWithinCap(maxChars),
     render(maxChars) {
-      const bodyHasRequiredAskContext = !requiredAskContext || summary.includes(requiredAskContext);
       if (
         summary.length <= maxChars &&
         bodyHasRequiredAskContext &&
