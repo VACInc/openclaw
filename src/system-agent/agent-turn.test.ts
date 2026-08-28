@@ -262,9 +262,20 @@ describe("runSystemAgentTurn", () => {
       mocks.runEmbeddedAgent.mock.calls[1]?.[0]?.sessionFile,
       "missing second embedded transcript path",
     );
+    const firstSessionKey = requireValue(
+      mocks.runEmbeddedAgent.mock.calls[0]?.[0]?.sessionKey,
+      "missing first embedded session key",
+    );
+    const secondSessionKey = requireValue(
+      mocks.runEmbeddedAgent.mock.calls[1]?.[0]?.sessionKey,
+      "missing second embedded session key",
+    );
     expect(firstPath).toBe(`in-memory:${first.sessionId}`);
     expect(secondPath).toBe(`in-memory:${second.sessionId}`);
     expect(firstPath).not.toBe(secondPath);
+    expect(firstSessionKey).toBe(`agent:openclaw:${first.sessionId}`);
+    expect(secondSessionKey).toBe(`agent:openclaw:${second.sessionId}`);
+    expect(firstSessionKey).not.toBe(secondSessionKey);
     expect(first.sessionManager).not.toBe(second.sessionManager);
     await cleanupSystemAgentSession(first);
     expect(first.sessionManager).toBeUndefined();
@@ -321,7 +332,7 @@ describe("runSystemAgentTurn", () => {
       agentDir,
       authProfileId: "claude-cli:ops",
       agentId: "openclaw",
-      sessionKey: "agent:openclaw:main",
+      sessionKey: `agent:openclaw:${session.sessionId}`,
       sessionId: session.sessionId,
       workspaceDir: path.join(stateDir, "openclaw", "workspace"),
       sessionFile: `in-memory:${session.sessionId}`,
@@ -812,7 +823,7 @@ describe("runSystemAgentTurn", () => {
       authProfileIdSource: "user",
       agentHarnessRuntimeOverride: "codex",
       agentId: "openclaw",
-      sessionKey: "agent:openclaw:main",
+      sessionKey: `agent:openclaw:${session.sessionId}`,
       sessionId: session.sessionId,
       workspaceDir: path.join(stateDir, "openclaw", "workspace"),
       sessionFile: `in-memory:${session.sessionId}`,

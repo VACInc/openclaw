@@ -9,7 +9,7 @@ import { normalizeCliModel } from "../agents/cli-runner/helpers.js";
 import { SessionManager } from "../agents/sessions/index.js";
 import { resolveStateDir } from "../config/paths.js";
 import type { CliSessionBinding } from "../config/sessions.js";
-import { buildAgentMainSessionKey } from "../routing/session-key.js";
+import { toAgentStoreSessionKey } from "../routing/session-key.js";
 import { SYSTEM_AGENT_ID } from "./agent-id.js";
 import { SYSTEM_AGENT_SYSTEM_PROMPT } from "./assistant-prompts.js";
 import { SystemAgentInferenceUnavailableError } from "./inference-error.js";
@@ -304,8 +304,8 @@ async function runSystemAgentTurnWithDeps(
   }
 
   const runId = `openclaw-turn-${randomUUID()}`;
-  const sessionManager = params.session.sessionManager ?? SessionManager.inMemory(workspaceDir);
-  params.session.sessionManager = sessionManager;
+  const sessionId = params.session.sessionId;
+  const sessionManager = (params.session.sessionManager ??= SessionManager.inMemory(workspaceDir));
   const preparedRunAdmission = prepareSystemAgentRunAdmission(
     plan.runConfig,
     runId,
@@ -313,11 +313,11 @@ async function runSystemAgentTurnWithDeps(
     "system-agent.turn",
   );
   const shared = {
-    sessionId: params.session.sessionId,
-    sessionKey: buildAgentMainSessionKey({ agentId: SYSTEM_AGENT_ID }),
+    sessionId,
+    sessionKey: toAgentStoreSessionKey({ agentId: SYSTEM_AGENT_ID, requestKey: sessionId }),
     agentId: SYSTEM_AGENT_ID,
     trigger: "manual" as const,
-    sessionFile: `in-memory:${params.session.sessionId}`,
+    sessionFile: `in-memory:${sessionId}`,
     sessionManager,
     workspaceDir,
     config: plan.runConfig,
