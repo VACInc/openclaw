@@ -825,7 +825,8 @@ function formatGeneratedSplitTurnSection(summary: string, onTruncated?: () => vo
   return `${heading}${cappedSummary}`;
 }
 
-function capRequiredAskContext(source: string): string {
+function formatRequiredAskContext(rawAsk: string): string {
+  const source = rawAsk.trim();
   if (source.length <= MAX_REQUIRED_ASK_CONTEXT_CHARS) {
     return source;
   }
@@ -1242,7 +1243,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       });
       const preservedTurnsSectionLocal = buildPreservedTurnsSection(preservedRecentMessages);
       const latestPreparedAsk = extractLatestUserAsk(messagesToSummarize);
-      const requiredAskContext = capRequiredAskContext(latestUserAsk ?? "");
+      const requiredAskContext = formatRequiredAskContext(latestUserAsk ?? "");
       // The producer needs the preserved completion context whenever it runs; handing over the
       // ask alone can resurrect completed work. All-preserved windows stay model-free unless
       // verbatim capping would hide the audited ask.
