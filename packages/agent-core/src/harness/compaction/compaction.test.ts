@@ -368,6 +368,7 @@ describe("session-entry compaction budgeting", () => {
       tokensBefore: 10,
       turnPrefixMessages: [{ role: "user" }, { role: "assistant" }],
     });
+    expect(preparation.value).not.toHaveProperty("splitTurnCompleted");
     expect(JSON.stringify(preparation.value)).not.toContain("private output");
     expect(JSON.stringify(entries)).toContain("private output");
   });
