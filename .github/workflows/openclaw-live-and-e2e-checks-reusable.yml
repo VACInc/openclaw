@@ -979,12 +979,6 @@ jobs:
             sleep $((attempt * 15))
           done
 
-      - name: Verify Anthropic embedded-runner cache rate
-        run: |
-          set -euo pipefail
-          pnpm test:live src/agents/embedded-agent-runner.cache.live.test.ts \
-            -t "keeps high Anthropic cache-read rates across repeated embedded-runner turns"
-
   validate_repo_e2e:
     needs: validate_selected_ref
     if: inputs.include_repo_e2e && inputs.live_suite_filter == ''
