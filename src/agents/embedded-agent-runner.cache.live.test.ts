@@ -977,7 +977,7 @@ describeCacheLive("embedded agent runner prompt caching (live)", () => {
         );
 
         expect(bestHit.usage.cacheRead ?? 0).toBeGreaterThan(1_024);
-        expect(bestHit.hitRate).toBeGreaterThanOrEqual(0.9);
+        expect(bestHit.hitRate).toBeGreaterThanOrEqual(0.4);
         await expectCacheTraceStages(sessionId, ["cache:state", "cache:result"]);
       },
       8 * 60_000,
@@ -1296,7 +1296,7 @@ describeCacheLive("embedded agent runner prompt caching (live)", () => {
         );
 
         expect(bestHit.usage.cacheRead ?? 0).toBeGreaterThan(1_024);
-        expect(bestHit.hitRate).toBeGreaterThanOrEqual(0.4);
+        expect(bestHit.hitRate).toBeGreaterThanOrEqual(0.9);
         await expectCacheTraceStages(sessionId, ["cache:state", "cache:result"]);
       },
       8 * 60_000,
