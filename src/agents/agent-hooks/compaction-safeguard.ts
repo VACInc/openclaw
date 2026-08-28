@@ -231,6 +231,7 @@ type CompactionSuffix = {
 };
 
 type SummaryQualityRetention = {
+  auditSummary?: string;
   identifiers: string[];
   latestAsk: string | null;
   requiredAskContext: string;
@@ -1275,6 +1276,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
 
       for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
         let splitTurnSectionLocal = "";
+        let splitTurnSummaryLocal = "";
         let historySummary = "";
         const producerLosses = new Set<CompactionLoss>();
         try {
@@ -1307,6 +1309,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                 .join("\n\n"),
               previousSummary: undefined,
             });
+            splitTurnSummaryLocal = prefixSummary;
             splitTurnSectionLocal = formatGeneratedSplitTurnSection(prefixSummary, () => {
               producerLosses.add("split-turn-tail");
             });
@@ -1345,6 +1348,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           producerLosses,
           qualityGuardEnabled
             ? {
+                auditSummary: unbudgetedSummary,
                 identifiers,
                 latestAsk: latestUserAsk,
                 requiredAskContext,
@@ -1373,6 +1377,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
         const quality = auditSummaryQuality({
           summary: finalized.summary,
           structuralSummary: finalized.structuralSummary,
+          sourceSummaries: [historySummary, splitTurnSummaryLocal].filter(Boolean),
           identifiers,
           latestAsk: latestUserAsk,
           identifierPolicy,
