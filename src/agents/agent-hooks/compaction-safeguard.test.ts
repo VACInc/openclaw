@@ -2736,7 +2736,9 @@ describe("compaction-safeguard recent-turn preservation", () => {
 
     const summary = expectCompactionResult(result).summary;
     expect(summary).toContain(`## Latest user request context\n${JSON.stringify(latestAsk)}`);
-    expect(summary).toContain("## Pending user asks\nDelete the backup.");
+    expect(summary).toContain(
+      `## Pending user asks\nDelete the backup.\nLatest user request context:\n${JSON.stringify(latestAsk)}`,
+    );
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
     expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
   });
