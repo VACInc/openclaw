@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   logWarn: vi.fn(),
   listChannelPlugins: vi.fn((): Array<{ id: "telegram" | "discord" }> => []),
   disposeAllCodeModeRuns: vi.fn(),
+  disposeSystemAgentSessions: vi.fn(async () => undefined),
   disposeAgentHarnesses: vi.fn(async () => undefined),
   closeProviderTransportDispatcherPool: vi.fn(async () => undefined),
   disposeAllSessionMcpRuntimes: vi.fn(async () => undefined),
@@ -157,6 +158,7 @@ function createGatewayCloseTestDeps(
     drainRetainedOpenAiEmbeddingProviders: mocks.drainRetainedEmbeddingProviders,
     stopGmailWatcher: mocks.stopGmailWatcher,
     disposeAllCodeModeRuns: mocks.disposeAllCodeModeRuns,
+    disposeSystemAgentSessions: mocks.disposeSystemAgentSessions,
     closeProviderTransportDispatcherPool: mocks.closeProviderTransportDispatcherPool,
     cron: { stop: vi.fn() },
     heartbeatRunner: { stop: vi.fn() } as never,
@@ -210,6 +212,8 @@ describe("createGatewayCloseHandler", () => {
     mocks.listChannelPlugins.mockReset();
     mocks.listChannelPlugins.mockReturnValue([]);
     mocks.disposeAllCodeModeRuns.mockReset();
+    mocks.disposeSystemAgentSessions.mockReset();
+    mocks.disposeSystemAgentSessions.mockResolvedValue(undefined);
     mocks.disposeAgentHarnesses.mockClear();
     mocks.disposeAgentHarnesses.mockResolvedValue(undefined);
     mocks.disposeAllSessionMcpRuntimes.mockClear();
@@ -1654,6 +1658,9 @@ describe("createGatewayCloseHandler", () => {
     mocks.disposeAllCodeModeRuns.mockImplementation(() => {
       closeOrder.push("code-mode-runs");
     });
+    mocks.disposeSystemAgentSessions.mockImplementation(async () => {
+      closeOrder.push("system-agent-sessions");
+    });
     mocks.disposeAgentHarnesses.mockImplementation(async () => {
       closeOrder.push("agent-harnesses");
     });
@@ -1700,12 +1707,14 @@ describe("createGatewayCloseHandler", () => {
     expect(transcriptUnsub).toHaveBeenCalledTimes(1);
     expect(stopTaskRegistryMaintenance).toHaveBeenCalledTimes(1);
     expect(mocks.disposeAllCodeModeRuns).toHaveBeenCalledTimes(1);
+    expect(mocks.disposeSystemAgentSessions).toHaveBeenCalledTimes(1);
     expect(mocks.disposeAgentHarnesses).toHaveBeenCalledTimes(1);
     expect(mocks.disposeAllSessionMcpRuntimes).toHaveBeenCalledTimes(1);
     expect(mocks.disposeAllBundleLspRuntimes).toHaveBeenCalledTimes(1);
     expect(mocks.drainRetainedEmbeddingProviders).toHaveBeenCalledTimes(1);
     expect(closeOrder).toEqual([
       "code-mode-runs",
+      "system-agent-sessions",
       "agent-harnesses",
       "provider-transport-dispatchers",
       "bundle-mcp",

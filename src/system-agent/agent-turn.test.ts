@@ -276,6 +276,14 @@ describe("runSystemAgentTurn", () => {
     expect(firstSessionKey).toBe(`agent:openclaw:${first.sessionId}`);
     expect(secondSessionKey).toBe(`agent:openclaw:${second.sessionId}`);
     expect(firstSessionKey).not.toBe(secondSessionKey);
+    expect(mocks.runEmbeddedAgent.mock.calls[0]?.[0]?.sandboxSessionKey).toBe(
+      "agent:openclaw:main",
+    );
+    expect(mocks.runEmbeddedAgent.mock.calls[1]?.[0]?.sandboxSessionKey).toBe(
+      "agent:openclaw:main",
+    );
+    expect(first.bindingSessionKey).toBeNull();
+    expect(second.bindingSessionKey).toBeNull();
     expect(first.sessionManager).not.toBe(second.sessionManager);
     await cleanupSystemAgentSession(first);
     expect(first.sessionManager).toBeUndefined();
@@ -333,6 +341,7 @@ describe("runSystemAgentTurn", () => {
       authProfileId: "claude-cli:ops",
       agentId: "openclaw",
       sessionKey: `agent:openclaw:${session.sessionId}`,
+      runtimePolicySessionKey: "agent:openclaw:main",
       sessionId: session.sessionId,
       workspaceDir: path.join(stateDir, "openclaw", "workspace"),
       sessionFile: `in-memory:${session.sessionId}`,
@@ -824,6 +833,7 @@ describe("runSystemAgentTurn", () => {
       agentHarnessRuntimeOverride: "codex",
       agentId: "openclaw",
       sessionKey: `agent:openclaw:${session.sessionId}`,
+      sandboxSessionKey: "agent:openclaw:main",
       sessionId: session.sessionId,
       workspaceDir: path.join(stateDir, "openclaw", "workspace"),
       sessionFile: `in-memory:${session.sessionId}`,

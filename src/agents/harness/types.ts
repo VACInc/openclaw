@@ -431,6 +431,8 @@ type AgentHarnessCompactionCapability = {
 export type AgentHarnessSessionDeletionParams = {
   agentId: string;
   sessionKey: string;
+  /** Null when a nondurable caller's native binding is keyed only by physical session id. */
+  bindingSessionKey?: string | null;
   sessionId: string;
   lifecycleRevision?: string;
   /** Revalidate the captured registry, harness, and operation before each side effect. */

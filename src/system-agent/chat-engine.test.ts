@@ -13,6 +13,57 @@ import {
 } from "./chat-engine.test-support.js";
 
 describe("SystemAgentChatEngine facade", () => {
+  it("drains an accepted turn and rejects new work before disposal", async () => {
+    const config = {
+      agents: { defaults: { model: "openai/gpt-5.5" } },
+      models: {
+        providers: {
+          openai: {
+            baseUrl: "https://api.openai.com/v1",
+            apiKey: "test-key",
+            auth: "api-key",
+            models: [],
+          },
+        },
+      },
+    } satisfies OpenClawConfig;
+    const verifiedInference = await createAmbientVerifiedBinding(config);
+    let finishTurn: (reply: { text: string }) => void = () => {};
+    const turnResult = new Promise<{ text: string }>((resolve) => {
+      finishTurn = resolve;
+    });
+    const runAgentTurn = vi.fn(async () => await turnResult);
+    const engine = new SystemAgentChatEngine({
+      verifiedInference,
+      runAgentTurn,
+      planWithAssistant: async () => null,
+      deps: {
+        readConfigFileSnapshot: vi.fn(async () => configSnapshot(config)) as never,
+        loadOverview: fakeOverviewLoader(),
+      },
+    });
+    const wizardDispose = vi.spyOn(
+      (engine as unknown as { wizard: { dispose: () => void } }).wizard,
+      "dispose",
+    );
+    const activeTurn = engine.handle("keep working");
+    await vi.waitFor(() => expect(runAgentTurn).toHaveBeenCalledOnce());
+
+    let disposed = false;
+    const disposal = engine.dispose().then(() => {
+      disposed = true;
+    });
+    await expect(engine.handle("late work")).rejects.toThrow("chat engine is disposed");
+    expect(disposed).toBe(false);
+    expect(wizardDispose).not.toHaveBeenCalled();
+
+    finishTurn({ text: "done" });
+    await expect(activeTurn).resolves.toMatchObject({ text: "done" });
+    await disposal;
+    expect(disposed).toBe(true);
+    expect(wizardDispose).toHaveBeenCalledOnce();
+  });
+
   it("rejects a seeded approval when its binding changes during classification", async () => {
     const baseConfig = {
       agents: { defaults: { model: "openai/gpt-5.5" } },

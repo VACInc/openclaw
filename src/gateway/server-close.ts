@@ -679,6 +679,7 @@ export function createGatewayCloseHandler(
     drainRetainedOpenAiEmbeddingProviders: () => Promise<void>;
     stopGmailWatcher: () => Promise<void>;
     disposeAllCodeModeRuns: () => Promise<void> | void;
+    disposeSystemAgentSessions: () => Promise<void>;
     closeProviderTransportDispatcherPool: () => Promise<void>;
     cron: { stop: () => void; stopAndDrain?: () => Promise<void> };
     heartbeatRunner: HeartbeatRunner;
@@ -864,6 +865,7 @@ export function createGatewayCloseHandler(
         }
       });
       await shutdownStep("code-mode-runs", () => params.disposeAllCodeModeRuns(), warnings);
+      await shutdownStep("system-agent-sessions", params.disposeSystemAgentSessions, warnings);
       await disposeRuntimeWithShutdownGrace({
         label: "agent-harnesses",
         dispose: disposeRegisteredAgentHarnesses,

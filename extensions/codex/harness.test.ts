@@ -609,6 +609,32 @@ describe("Codex agent harness reset()", () => {
     expect(state.lookup(bindingStoreKey(identity))).toBeUndefined();
   });
 
+  it("removes a nondurable session binding keyed only by physical session id", async () => {
+    const state = createCodexTestBindingStateStore();
+    const bindingStore = createCodexAppServerBindingStore(state);
+    const identity = sessionBindingIdentity({ agentId: "openclaw", sessionId: "ephemeral-1" });
+    await bindingStore.mutate(identity, {
+      kind: "set",
+      binding: { threadId: "thread-ephemeral", cwd: "/repo" },
+    });
+    const harness = createCodexAppServerAgentHarness({ bindingStore });
+
+    await harness.withSessionDeletion?.(
+      {
+        agentId: "openclaw",
+        sessionId: "ephemeral-1",
+        sessionKey: "agent:openclaw:ephemeral-1",
+        bindingSessionKey: null,
+        assertCurrent() {},
+      },
+      async (mutation) => {
+        mutation.commit();
+      },
+    );
+
+    expect(state.lookup(bindingStoreKey(identity))).toBeUndefined();
+  });
+
   it("rejects supervised deletion before invoking the session transaction", async () => {
     const bindingStore = createCodexTestBindingStore();
     const identity = sessionBindingIdentity({

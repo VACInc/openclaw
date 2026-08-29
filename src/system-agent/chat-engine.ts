@@ -72,6 +72,8 @@ export class SystemAgentChatEngine {
   private readonly router: ChatTurnRouter;
   private verifiedInference: SystemAgentVerifiedInferenceBinding;
   private turnQueue: Promise<unknown> = Promise.resolve();
+  private disposal: Promise<void> | undefined;
+  private disposed = false;
 
   constructor(
     private readonly options: SystemAgentChatEngineOptions,
@@ -120,15 +122,13 @@ export class SystemAgentChatEngine {
     decision: "allow-once" | "allow-always" | "deny" | null,
     proposalHash: string,
   ): Promise<SystemAgentChatReply | null> {
-    const turn = this.turnQueue.then(async () => {
+    return await this.enqueueTurn(async () => {
       const reply = await this.router.resolveOperatorApproval(decision, proposalHash);
       if (reply?.text) {
         this.history.push({ role: "assistant", text: reply.text });
       }
       return reply;
     });
-    this.turnQueue = turn.catch(() => undefined);
-    return await turn;
   }
 
   noteAssistantMessage(text: string): void {
@@ -153,8 +153,16 @@ export class SystemAgentChatEngine {
   }
 
   async dispose(): Promise<void> {
-    this.wizard.dispose();
-    await cleanupSystemAgentSession(this.agentSession);
+    if (!this.disposal) {
+      this.disposed = true;
+      // The turn owns the native thread until it settles; cleanup must not race
+      // binding creation or an active-thread deletion refusal.
+      this.disposal = this.turnQueue.then(async () => {
+        this.wizard.dispose();
+        await cleanupSystemAgentSession(this.agentSession);
+      });
+    }
+    await this.disposal;
   }
 
   /**
@@ -167,7 +175,7 @@ export class SystemAgentChatEngine {
   }
 
   async handle(text: string, options?: SystemAgentChatTurnOptions): Promise<SystemAgentChatReply> {
-    const turn = this.turnQueue.then(async () => {
+    return await this.enqueueTurn(async () => {
       await this.requireVerifiedInference();
       const sensitiveTurn = this.wizard.sensitiveInputPending;
       const reply = await this.router.resolveTurn(text, options);
@@ -176,25 +184,28 @@ export class SystemAgentChatEngine {
         sensitiveTurn ? "<redacted secret>" : redactSensitiveCommandText(text),
       );
     });
-    this.turnQueue = turn.catch(() => undefined);
-    return await turn;
   }
 
   async answerWizard(answer: WizardAnswer): Promise<SystemAgentChatReply> {
-    const turn = this.turnQueue.then(async () => {
+    return await this.enqueueTurn(async () => {
       await this.requireVerifiedInference();
       const result = await this.router.answerWizard(this.wizard.answer(answer));
       return this.completeTurn({ text: result.text, action: "none" }, result.userHistoryText);
     });
-    this.turnQueue = turn.catch(() => undefined);
-    return await turn;
   }
 
   async cancelWizard(cancel: SystemAgentWizardCancel): Promise<SystemAgentChatReply> {
-    const turn = this.turnQueue.then(async () => {
+    return await this.enqueueTurn(async () => {
       const result = await this.router.answerWizard(this.wizard.cancel(cancel));
       return this.completeTurn({ text: result.text, action: "none" }, result.userHistoryText);
     });
+  }
+
+  private async enqueueTurn<T>(run: () => Promise<T>): Promise<T> {
+    if (this.disposed) {
+      throw new Error("System-agent chat engine is disposed");
+    }
+    const turn = this.turnQueue.then(run);
     this.turnQueue = turn.catch(() => undefined);
     return await turn;
   }

@@ -59,11 +59,13 @@ export async function withCodexAppServerSessionDeletion<T>(
   run: (mutation: AgentHarnessSessionDeletionMutation) => Promise<T>,
 ): Promise<T> {
   const { assertCurrent } = params;
+  const bindingSessionKey =
+    params.bindingSessionKey === null ? undefined : (params.bindingSessionKey ?? params.sessionKey);
   const identity = {
     kind: "session" as const,
     agentId: params.agentId,
-    sessionKey: params.sessionKey,
     sessionId: params.sessionId,
+    ...(bindingSessionKey ? { sessionKey: bindingSessionKey } : {}),
   };
   return await bindingStore.withSessionDeletion(
     identity,
