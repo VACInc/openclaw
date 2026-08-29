@@ -177,10 +177,14 @@ export function createSummaryQualityRetentionPlan(
   const enforceIdentifiers = (params.identifierPolicy ?? "strict") === "strict";
   const auditedIdentifiers = enforceIdentifiers ? params.identifiers : [];
   const marker = truncatedMarker.trim();
+  const pendingAsk = contents[PENDING_ASK_SECTION_INDEX] ?? "";
   // A split ask remains paired with its retained turn suffix, which owns continuation state.
   // Other asks keep the model's classification and fail safe to Pending when omitted.
   const protectedAskContext =
-    !bodyHasLatestAsk && !params.latestAskInRetainedTurn && requiredAskContext
+    !params.latestAskInRetainedTurn &&
+    requiredAskContext &&
+    (!bodyHasLatestAsk ||
+      (hasAskOverlap(pendingAsk, params.latestAsk) && !pendingAsk.includes(requiredAskContext)))
       ? `${LATEST_USER_REQUEST_CONTEXT_LABEL}\n${JSON.stringify(requiredAskContext)}`
       : "";
   const protectedTails = REQUIRED_SUMMARY_SECTIONS.map((_, index) =>
