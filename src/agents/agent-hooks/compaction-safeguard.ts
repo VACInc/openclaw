@@ -1307,10 +1307,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
               ...llmSummaryParams,
               messages: turnPrefixMessages,
               maxChunkTokens,
-              customInstructions: [
-                TURN_PREFIX_SUMMARIZATION_PROMPT,
-                splitTurnFocus,
-              ]
+              customInstructions: [TURN_PREFIX_SUMMARIZATION_PROMPT, splitTurnFocus]
                 .filter(Boolean)
                 .join("\n\n"),
               previousSummary: undefined,

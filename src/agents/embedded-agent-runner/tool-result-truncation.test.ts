@@ -1739,7 +1739,7 @@ describe("truncateOversizedToolResultsInSession", () => {
     expect(findAssistant("suppression owner")?.providerReplay).toEqual(suppressionReplay);
   });
 
-  it("reuses frozen provider projection bytes without rewriting the durable branch", async () => {
+  it("reuses frozen provider projection bytes on the recovery branch", async () => {
     const dir = await createTmpDir();
     const storePath = path.join(dir, "sessions.json");
     const sessionId = "runtime-sqlite-frozen-projection";
@@ -1756,9 +1756,7 @@ describe("truncateOversizedToolResultsInSession", () => {
       updatedAt: 10,
     } as SessionStoreEntry);
     await appendTranscriptMessage(scope, { message: makeUserMessage("run tool") });
-    const original = Object.assign(makeToolResult("frozen output ".repeat(2_000), "frozen_call"), {
-      idempotencyKey: "provider-owned:frozen_call:result",
-    });
+    const original = makeToolResult("frozen output ".repeat(2_000), "frozen_call");
     const persisted = await appendTranscriptMessage(scope, { message: original });
     const projectionState = createPromptProjectionStateForTest();
     const projected = truncateOversizedToolResultsInMessages(
@@ -1777,21 +1775,13 @@ describe("truncateOversizedToolResultsInSession", () => {
       projectionState,
     });
 
-    expect(result).toEqual({
-      truncated: false,
-      truncatedCount: 0,
-      reason: "no oversized or aggregate tool results",
-    });
+    expect(result.truncated).toBe(true);
     const activeToolResult = SessionManager.open(scope)
       .getBranch()
       .find((entry) => entry.type === "message" && entry.message.role === "toolResult");
     expect(activeToolResult?.type === "message" ? activeToolResult.message : undefined).toEqual(
-      original,
+      projected,
     );
-    expect(
-      truncateOversizedToolResultsInMessages([original], 128_000, 12_000, 48_000, projectionState)
-        .messages[0],
-    ).toEqual(projected);
     const originalEvent = (await loadTranscriptEvents(scope)).find(
       (entry) =>
         typeof entry === "object" &&

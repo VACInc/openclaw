@@ -1,12 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  prepareCompaction,
-  type AgentMessage,
-  type SessionTreeEntry,
-  type StreamFn,
-} from "openclaw/plugin-sdk/agent-core";
+import type { AgentMessage, StreamFn } from "openclaw/plugin-sdk/agent-core";
 import type { ExtensionAPI, ExtensionContext } from "openclaw/plugin-sdk/agent-sessions";
 import { createAssistantMessageEventStream, type Model } from "openclaw/plugin-sdk/llm";
 /** Tests compaction safeguard summaries, quality audit, providers, and runtime settings. */
@@ -2672,7 +2667,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
       reasons: [],
     });
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
-    expect(consumeCompactionSafeguardCancelReason(sessionManager)).toBeNull();
+    expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
   });
 
   it("restores exact source qualifiers when a fitting pending ask only overlaps", async () => {
@@ -2710,7 +2705,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     expect(summary).toContain(`## Latest user request context\n${JSON.stringify(latestAsk)}`);
     expect(summary).toContain("## Pending user asks\nDelete the backup.");
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(1);
-    expect(consumeCompactionSafeguardCancelReason(sessionManager)).toBeNull();
+    expect(consumeCompactionSafeguardCancellation(sessionManager)).toBeNull();
   });
 
   it("fails closed when audit-required tail sections cannot fit the artifact cap", async () => {
