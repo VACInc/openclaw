@@ -92,6 +92,35 @@ describe("SystemAgentChatEngine facade", () => {
     expect(wizardCancel).not.toHaveBeenCalled();
   });
 
+  it("does not finalize cleanup while a runner still ignores abort", async () => {
+    const config = abortTestConfig;
+    const verifiedInference = await createAmbientVerifiedBinding(config);
+    const neverSettles = new Promise<null>(() => {});
+    const runAgentTurn = vi.fn(async () => await neverSettles);
+    const engine = new SystemAgentChatEngine({
+      verifiedInference,
+      runAgentTurn,
+      deps: {
+        readConfigFileSnapshot: vi.fn(async () => configSnapshot(config)) as never,
+        loadOverview: fakeOverviewLoader(),
+      },
+    });
+    const wizard = (
+      engine as unknown as {
+        wizard: { dispose: () => void };
+      }
+    ).wizard;
+    const wizardDispose = vi.spyOn(wizard, "dispose");
+    void engine.handle("keep working");
+    await vi.waitFor(() => expect(runAgentTurn).toHaveBeenCalledOnce());
+
+    void engine.beginDisposalForGatewayShutdown();
+    void engine.finishDisposalForGatewayShutdown();
+    await Promise.resolve();
+
+    expect(wizardDispose).not.toHaveBeenCalled();
+  });
+
   it("cancels planner fallback without executing its late command", async () => {
     const config = abortTestConfig;
     const verifiedInference = await createAmbientVerifiedBinding(config);

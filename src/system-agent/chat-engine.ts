@@ -73,7 +73,9 @@ export class SystemAgentChatEngine {
   private readonly router: ChatTurnRouter;
   private verifiedInference: SystemAgentVerifiedInferenceBinding;
   private turnQueue: Promise<unknown> = Promise.resolve();
+  private turnDrain: Promise<void> | undefined;
   private disposal: Promise<void> | undefined;
+  private sessionCleanup: Promise<void> | undefined;
   private disposed = false;
   private readonly turnAbort = new AbortController();
 
@@ -156,18 +158,21 @@ export class SystemAgentChatEngine {
   }
 
   async dispose(): Promise<void> {
-    if (!this.disposal) {
-      this.disposed = true;
-      this.turnAbort.abort(createAgentRunDirectAbortError());
-      // The turn owns the native thread until it settles; cleanup must not race
-      // binding creation or an active-thread deletion refusal. Embedded abort
-      // settlement is bounded by the runner before this queue resolves.
-      this.disposal = this.turnQueue.then(async () => {
-        this.wizard.dispose();
-        await cleanupSystemAgentSession(this.agentSession);
-      });
-    }
+    this.disposal ??= this.beginDisposal().then(async () => await this.finalizeDisposal());
     await this.disposal;
+  }
+
+  /** Abort accepted work without starting binding cleanup during Gateway harness teardown. */
+  beginDisposalForGatewayShutdown(): Promise<void> {
+    return this.beginDisposal();
+  }
+
+  /** Finish binding cleanup at the shutdown phase selected by the Gateway owner. */
+  async finishDisposalForGatewayShutdown(): Promise<void> {
+    // Never let binding cleanup overtake work that ignored cancellation. The
+    // Gateway bounds this drain and skips finalization when it does not settle.
+    await this.beginDisposal();
+    await this.finalizeDisposal();
   }
 
   /**
@@ -218,6 +223,23 @@ export class SystemAgentChatEngine {
     });
     this.turnQueue = turn.catch(() => undefined);
     return await turn;
+  }
+
+  private beginDisposal(): Promise<void> {
+    if (!this.turnDrain) {
+      this.disposed = true;
+      this.turnAbort.abort(createAgentRunDirectAbortError());
+      this.turnDrain = this.turnQueue.then(() => undefined);
+    }
+    return this.turnDrain;
+  }
+
+  private async finalizeDisposal(): Promise<void> {
+    this.sessionCleanup ??= (async () => {
+      this.wizard.dispose();
+      await cleanupSystemAgentSession(this.agentSession);
+    })();
+    await this.sessionCleanup;
   }
 
   private completeTurn(reply: SystemAgentChatReply, userHistoryText: string): SystemAgentChatReply {
