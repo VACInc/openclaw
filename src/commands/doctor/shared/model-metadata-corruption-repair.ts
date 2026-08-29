@@ -75,40 +75,34 @@ function isHistoricalMaterializingWriter(record: ConfigWriteRecord): boolean {
   return updateFinalize || repairDoctor;
 }
 
-function modelMetadataPath(changedPath: string): { providerId: string; field: string } | null {
-  const match =
-    /^models\.providers\.([^.]+)\.models(?:\[\d+\]|\.\d+)\.(reasoning|input|maxTokens|cost(?:\.|$))/.exec(
-      changedPath,
-    );
-  if (!match?.[1] || !match[2]) {
-    return null;
-  }
-  return {
-    providerId: match[1],
-    field: match[2].startsWith("cost") ? "cost" : match[2],
-  };
-}
-
-function hasBroadMetadataFanout(record: ConfigWriteRecord): boolean {
-  if (!record.changedPaths || (record.changedPathCount ?? 0) < 8) {
+function hasCandidateMetadataPaths(params: {
+  record: ConfigWriteRecord;
+  providerId: string;
+  modelIndex: number;
+}): boolean {
+  if (!params.record.changedPaths) {
     return false;
   }
-  const providers = new Set<string>();
   const fields = new Set<string>();
-  for (const changedPath of record.changedPaths) {
-    const metadata = modelMetadataPath(changedPath);
-    if (metadata) {
-      providers.add(metadata.providerId);
-      fields.add(metadata.field);
+  const prefix = `models.providers.${params.providerId}.models[${params.modelIndex}].`;
+  for (const changedPath of params.record.changedPaths) {
+    if (!changedPath.startsWith(prefix)) {
+      continue;
+    }
+    const field = changedPath.slice(prefix.length).split(".", 1)[0];
+    if (field && GENERATED_MODEL_FIELDS.some((candidate) => candidate === field)) {
+      fields.add(field);
     }
   }
-  return providers.size >= 2 && fields.size >= 3;
+  return fields.size === GENERATED_MODEL_FIELDS.length;
 }
 
 function hasAuditProvenance(params: {
   auditRecords: readonly ConfigAuditRecord[];
   configPath: string;
   currentHash: string | null;
+  providerId: string;
+  modelIndex: number;
 }): boolean {
   if (!params.currentHash) {
     return false;
@@ -121,7 +115,11 @@ function hasAuditProvenance(params: {
       path.resolve(record.configPath) === configPath &&
       record.nextHash === params.currentHash &&
       isHistoricalMaterializingWriter(record) &&
-      hasBroadMetadataFanout(record),
+      hasCandidateMetadataPaths({
+        record,
+        providerId: params.providerId,
+        modelIndex: params.modelIndex,
+      }),
   );
 }
 
@@ -138,7 +136,6 @@ export function repairGeneratedModelMetadataCorruption(params: {
   if (!providers) {
     return { config: params.config, changes: [], warnings: [] };
   }
-  const auditProven = hasAuditProvenance(params);
   const changes: string[] = [];
   const warnings: string[] = [];
   for (const [providerId, providerValue] of Object.entries(providers)) {
@@ -164,6 +161,13 @@ export function repairGeneratedModelMetadataCorruption(params: {
         continue;
       }
       const modelPath = `models.providers.${providerId}.models[${modelIndex}]`;
+      const auditProven = hasAuditProvenance({
+        auditRecords: params.auditRecords,
+        configPath: params.configPath,
+        currentHash: params.currentHash,
+        providerId,
+        modelIndex,
+      });
       if (!authoredModel || !hasGeneratedFallbackFingerprint(authoredModel) || !auditProven) {
         warnings.push(
           `${modelPath} matches the historical generated model-metadata fingerprint, but Doctor could not prove the responsible config write. It was left unchanged. If the provider catalog should own these capabilities, remove cost, input, maxTokens, and reasoning from this model entry.`,

@@ -68,10 +68,10 @@ function writeRecord(
     nextGid: null,
     changedPathCount: 96,
     changedPaths: [
-      "models.providers.anthropic.models[0].reasoning",
-      "models.providers.anthropic.models[0].input",
-      "models.providers.ollama.models[0].cost",
-      "models.providers.ollama.models[0].maxTokens",
+      "models.providers.openai.models[0].reasoning",
+      "models.providers.openai.models[0].input",
+      "models.providers.openai.models[0].cost",
+      "models.providers.openai.models[0].maxTokens",
       "…+92 more",
     ],
     hasMetaBefore: true,
@@ -118,8 +118,22 @@ describe("repairGeneratedModelMetadataCorruption", () => {
       auditRecords: [writeRecord({ configPath: `${configPath}.x` })],
     },
     {
-      name: "no broad metadata fanout",
+      name: "no candidate metadata paths",
       auditRecords: [writeRecord({ changedPathCount: 1, changedPaths: ["update.channel"] })],
+    },
+    {
+      name: "only unrelated model metadata paths",
+      auditRecords: [
+        writeRecord({
+          changedPaths: [
+            "models.providers.anthropic.models[0].reasoning",
+            "models.providers.anthropic.models[0].input",
+            "models.providers.ollama.models[0].cost",
+            "models.providers.ollama.models[0].maxTokens",
+            "…+92 more",
+          ],
+        }),
+      ],
     },
   ])("warns without changing an exact fingerprint with $name", ({ auditRecords }) => {
     const config = corruptedConfig();
