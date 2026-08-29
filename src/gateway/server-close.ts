@@ -543,6 +543,7 @@ async function triggerGatewayLifecycleHookWithTimeout(params: {
 async function disposeRuntimeWithShutdownGrace(params: {
   label:
     | "plugin-services"
+    | "system-agent-tasks"
     | "system-agent-sessions"
     | "agent-harnesses"
     | "bundle-mcp"
@@ -686,6 +687,7 @@ export function createGatewayCloseHandler(
     drainRetainedOpenAiEmbeddingProviders: () => Promise<void>;
     stopGmailWatcher: () => Promise<void>;
     disposeAllCodeModeRuns: () => Promise<void> | void;
+    beginSystemAgentTaskShutdown: () => Promise<void>;
     beginSystemAgentSessionDisposal: () => GatewaySystemAgentSessionDisposal;
     closeProviderTransportDispatcherPool: () => Promise<void>;
     cron: { stop: () => void; stopAndDrain?: () => Promise<void> };
@@ -872,20 +874,36 @@ export function createGatewayCloseHandler(
         }
       });
       await shutdownStep("code-mode-runs", () => params.disposeAllCodeModeRuns(), warnings);
+      const systemAgentTaskDrain = params.beginSystemAgentTaskShutdown();
       const systemAgentDisposal = params.beginSystemAgentSessionDisposal();
-      const systemAgentDisposalResult = await disposeRuntimeWithShutdownGrace({
-        label: "system-agent-sessions",
-        dispose: async () => await systemAgentDisposal.drain,
-        graceMs: SYSTEM_AGENT_SESSION_CLOSE_GRACE_MS,
-        warnings,
-      });
-      const agentHarnessDisposalResult = await disposeRuntimeWithShutdownGrace({
-        label: "agent-harnesses",
-        dispose: disposeRegisteredAgentHarnesses,
-        graceMs: AGENT_HARNESS_CLOSE_GRACE_MS,
-        warnings,
-      });
-      if (systemAgentDisposalResult === "completed" && agentHarnessDisposalResult === "completed") {
+      const [systemAgentTaskDrainResult, systemAgentDisposalResult] = await Promise.all([
+        disposeRuntimeWithShutdownGrace({
+          label: "system-agent-tasks",
+          dispose: async () => await systemAgentTaskDrain,
+          graceMs: SYSTEM_AGENT_SESSION_CLOSE_GRACE_MS,
+          warnings,
+        }),
+        disposeRuntimeWithShutdownGrace({
+          label: "system-agent-sessions",
+          dispose: async () => await systemAgentDisposal.drain,
+          graceMs: SYSTEM_AGENT_SESSION_CLOSE_GRACE_MS,
+          warnings,
+        }),
+      ]);
+      const agentHarnessDisposalResult =
+        systemAgentTaskDrainResult === "completed"
+          ? await disposeRuntimeWithShutdownGrace({
+              label: "agent-harnesses",
+              dispose: disposeRegisteredAgentHarnesses,
+              graceMs: AGENT_HARNESS_CLOSE_GRACE_MS,
+              warnings,
+            })
+          : "timed-out";
+      if (
+        systemAgentTaskDrainResult === "completed" &&
+        systemAgentDisposalResult === "completed" &&
+        agentHarnessDisposalResult === "completed"
+      ) {
         // Harness disposal closes native clients first. Binding deletion remains
         // valid without them and can therefore be bounded without racing teardown.
         await disposeRuntimeWithShutdownGrace({

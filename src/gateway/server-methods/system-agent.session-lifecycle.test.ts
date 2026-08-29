@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildSystemAgentSessionInvalidatedErrorDetails } from "../../../packages/gateway-protocol/src/index.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { resetCommandQueueStateForTest } from "../../process/command-queue.test-support.js";
+import { beginGatewaySystemAgentSessionDisposal } from "../system-agent-session-disposal.js";
+import { beginGatewaySystemAgentTaskShutdown } from "../system-agent-task-lifecycle.js";
 import { systemAgentHandlers, type SystemAgentChatSession } from "./system-agent.js";
 import type { GatewayClient, GatewayRequestContext, RespondFn } from "./types.js";
 
@@ -144,6 +146,34 @@ afterEach(() => {
 });
 
 describe("openclaw.chat session lifecycle", () => {
+  it("fences held and queued chat requests before the shutdown session snapshot", async () => {
+    const heldInference = createDeferred<{
+      ok: true;
+      binding: Record<string, never>;
+    }>();
+    inferenceFallbackMocks.verifySystemAgentInferenceWithFallback.mockReturnValueOnce(
+      heldInference.promise,
+    );
+    const sessions = new Map<string, SystemAgentChatSession>();
+    const context = makeContext(sessions);
+    const held = callChat(context, { sessionId: "held", message: "Hello" });
+    await vi.waitFor(() =>
+      expect(inferenceFallbackMocks.verifySystemAgentInferenceWithFallback).toHaveBeenCalledOnce(),
+    );
+    const queued = callChat(context, { sessionId: "queued", message: "Hello" });
+
+    const taskDrain = beginGatewaySystemAgentTaskShutdown(sessions);
+    const sessionDisposal = beginGatewaySystemAgentSessionDisposal(sessions);
+    heldInference.resolve({ ok: true, binding: {} });
+
+    await expect(held).rejects.toThrow("Gateway is draining");
+    await expect(queued).rejects.toThrow("Gateway is draining");
+    await taskDrain;
+    await sessionDisposal.drain;
+    expect(createdEngines).toHaveLength(0);
+    expect(sessions.size).toBe(0);
+  });
+
   it("rejects a foreign-owner session with structured invalidation details", async () => {
     const sessions = new Map<string, SystemAgentChatSession>([
       ["s1", seededSession({ ownerKey: "device:someone-else" })],

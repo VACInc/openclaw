@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { beginGatewaySystemAgentSessionDisposal } from "./system-agent-session-disposal.js";
+import {
+  beginGatewaySystemAgentSessionDisposal,
+  registerPendingGatewaySystemAgentEngine,
+} from "./system-agent-session-disposal.js";
 
 describe("beginGatewaySystemAgentSessionDisposal", () => {
   it("waits for every engine before reporting cleanup failures", async () => {
@@ -73,6 +76,21 @@ describe("beginGatewaySystemAgentSessionDisposal", () => {
 
     await disposal.finish();
 
+    expect(finishDisposalForGatewayShutdown).toHaveBeenCalledOnce();
+  });
+
+  it("drains an engine that is still initializing outside the live session map", async () => {
+    const beginDisposalForGatewayShutdown = vi.fn(async () => undefined);
+    const finishDisposalForGatewayShutdown = vi.fn(async () => undefined);
+    const engine = { beginDisposalForGatewayShutdown, finishDisposalForGatewayShutdown };
+    const sessions = new Map();
+    registerPendingGatewaySystemAgentEngine(sessions, engine);
+
+    const disposal = beginGatewaySystemAgentSessionDisposal(sessions);
+    await disposal.drain;
+    await disposal.finish();
+
+    expect(beginDisposalForGatewayShutdown).toHaveBeenCalledOnce();
     expect(finishDisposalForGatewayShutdown).toHaveBeenCalledOnce();
   });
 });

@@ -111,6 +111,7 @@ function makeWizardContext() {
     wizardSessions,
     context: {
       wizardSessions,
+      systemAgentSessions: new Map<string, SystemAgentChatSession>(),
       findRunningWizard: () => undefined,
       purgeWizardSession: (id: string) => wizardSessions.delete(id),
     } as unknown as GatewayRequestContext,
@@ -297,6 +298,7 @@ describe("openclaw.setup", () => {
       await systemAgentHandler("openclaw.setup.activate")({
         params: { kind: "claude-cli" },
         respond,
+        context: makeContext(new Map()),
       } as never);
 
       expect(calls).toEqual([
@@ -459,7 +461,11 @@ describe("openclaw.chat", () => {
     const { calls, respond } = makeRespond();
 
     const verify = systemAgentHandler("openclaw.setup.verify");
-    await verify({ params: { agentId: "research" }, respond } as never);
+    await verify({
+      params: { agentId: "research" },
+      respond,
+      context: makeContext(new Map()),
+    } as never);
 
     expect(setupInferenceMocks.verifySetupInference).toHaveBeenCalledWith({
       agentId: "research",
@@ -474,6 +480,7 @@ describe("openclaw.chat", () => {
     await systemAgentHandler("openclaw.setup.verify")({
       params: { modelRef: "openai/gpt-5.5" },
       respond,
+      context: makeContext(new Map()),
     } as never);
 
     expect(setupInferenceMocks.verifySetupInference).not.toHaveBeenCalled();
@@ -519,6 +526,7 @@ describe("openclaw.chat", () => {
           }
           respond(ok, payload, error);
         },
+        context: makeContext(new Map()),
       } as never);
 
       await started.promise;

@@ -19,9 +19,7 @@ import {
   type SystemAgentApprovalRequestPayload,
 } from "../../infra/system-agent-approvals.js";
 import { KeyedAsyncQueue } from "../../plugin-sdk/keyed-async-queue.js";
-import { enqueueCommandInLane, setCommandLaneConcurrency } from "../../process/command-queue.js";
 import { runWithGatewayIndependentRootWorkContinuation } from "../../process/gateway-work-admission.js";
-import { CommandLane } from "../../process/lanes.js";
 import { defaultRuntime } from "../../runtime.js";
 import {
   SystemAgentChatEngine,
@@ -44,6 +42,8 @@ import {
 } from "../../system-agent/transcript-store.js";
 import { resolveUserPath } from "../../utils.js";
 import { WizardSession } from "../../wizard/session.js";
+import { registerPendingGatewaySystemAgentEngine } from "../system-agent-session-disposal.js";
+import { assertSystemAgentTaskOpen, runSystemAgentTask } from "../system-agent-task-lifecycle.js";
 import {
   buildRequestedApprovalEvent,
   handlePendingApprovalRequest,
@@ -88,8 +88,6 @@ const SYSTEM_AGENT_SEED_HISTORY_LIMIT = 30;
 const DEFAULT_SYSTEM_AGENT_HISTORY_LIMIT = 100;
 const PROVIDER_AUTH_SESSION_TIMEOUT_MS = 25 * 60 * 1000;
 const PROVIDER_PREPARE_SESSION_TIMEOUT_MS = 2 * 60 * 60 * 1000;
-const SYSTEM_AGENT_GATEWAY_EXECUTION_KEY = "gateway";
-const systemAgentGatewayExecutionQueue = new KeyedAsyncQueue();
 const systemAgentSessionQueues = new WeakMap<
   Map<string, SystemAgentChatSession>,
   KeyedAsyncQueue
@@ -113,18 +111,6 @@ function acknowledgeDeliveredSystemAgentWelcome(session: SystemAgentChatSession)
   }
   acknowledgeSystemAgentGreetingDelivery({ auditSequence });
   delete session.welcomeAuditSequence;
-}
-
-async function runSystemAgentGatewayTask<T>(task: () => Promise<T>): Promise<T> {
-  // Track every accepted RPC as active, never queued: restart draining snapshots
-  // active ids, so a queued OpenClaw request could otherwise outlive its socket.
-  setCommandLaneConcurrency(CommandLane.SystemAgent, Number.MAX_SAFE_INTEGER);
-  return await enqueueCommandInLane(CommandLane.SystemAgent, () =>
-    // Bound expensive detection, activation, and agent turns without hiding
-    // accepted work from restart draining. This also makes session eviction and
-    // setup writes atomic with respect to other OpenClaw gateway requests.
-    systemAgentGatewayExecutionQueue.enqueue(SYSTEM_AGENT_GATEWAY_EXECUTION_KEY, task),
-  );
 }
 
 async function evictOldestSession(
@@ -214,7 +200,7 @@ function queueDelegatedApproval(params: {
     requireDeliveryRoute: false,
     afterDecision: async (decision) =>
       await runWithGatewayIndependentRootWorkContinuation(() =>
-        runSystemAgentGatewayTask(async () => {
+        runSystemAgentTask(params.sessions, async () => {
           // The original request has returned; keep approval, audit, and restart drain-visible.
           if (params.sessions.get(params.sessionId) !== params.session) {
             return;
@@ -281,7 +267,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
     respond(true, await detectSetupInferenceIsolated(params), undefined);
   },
   /** Re-run the exact current default-agent inference route without mutating setup. */
-  "openclaw.setup.verify": async ({ params, respond }) => {
+  "openclaw.setup.verify": async ({ params, respond, context }) => {
     if (
       !assertValidParams(
         params,
@@ -292,7 +278,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
     ) {
       return;
     }
-    await runSystemAgentGatewayTask(async () => {
+    await runSystemAgentTask(context.systemAgentSessions, async () => {
       const { verifySetupInference } = await import("../../system-agent/setup-inference.js");
       respond(true, await verifySetupInference({ runtime: defaultRuntime, ...params }), undefined);
     });
@@ -314,7 +300,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
       () =>
         new WizardSession(
           async (prompter, signal, runnerSession) => {
-            const result = await runSystemAgentGatewayTask(async () => {
+            const result = await runSystemAgentTask(context.systemAgentSessions, async () => {
               const { activateSetupInference } =
                 await import("../../system-agent/setup-inference.js");
               return await activateSetupInference({
@@ -371,7 +357,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
       () =>
         new WizardSession(
           async (prompter, signal, runnerSession) => {
-            await runSystemAgentGatewayTask(async () => {
+            await runSystemAgentTask(context.systemAgentSessions, async () => {
               const [{ applyAuthChoiceLoadedPluginProvider }, setupShared] = await Promise.all([
                 import("../../plugins/provider-auth-choice.js"),
                 import("../../wizard/setup.shared.js"),
@@ -443,7 +429,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
    * queueing work that could outlive their RPC timeout. A failed attempt never
    * commits a broken model, managed plugin install, or setup state.
    */
-  "openclaw.setup.activate": async ({ params, respond }) => {
+  "openclaw.setup.activate": async ({ params, respond, context }) => {
     if (
       !assertValidParams(
         params,
@@ -456,7 +442,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
     }
     try {
       await runExclusiveSystemAgentSetupActivation(async () => {
-        await runSystemAgentGatewayTask(async () => {
+        await runSystemAgentTask(context.systemAgentSessions, async () => {
           const { activateSetupInference } = await import("../../system-agent/setup-inference.js");
           const runtime = {
             ...defaultRuntime,
@@ -496,7 +482,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
       respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, inputError));
       return;
     }
-    await runSystemAgentGatewayTask(async () => {
+    await runSystemAgentTask(context.systemAgentSessions, async () => {
       const sessions = context.systemAgentSessions;
       const sessionId = params.sessionId;
       // Initialization, resets, and turns share one per-session queue. Without
@@ -586,6 +572,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
             );
             return;
           }
+          assertSystemAgentTaskOpen(sessions);
           // The gateway surface must never install/restart its own daemon; the
           // engine's setup path honors this via surface: "gateway".
           const engine = new SystemAgentChatEngine({
@@ -594,80 +581,87 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
             operatorApprovalOnly: params.delegation !== undefined,
             ...(params.delegation?.agentId ? { requesterAgentId: params.delegation.agentId } : {}),
           });
-          // `reset: true` keeps the durable logbook but deliberately starts
-          // model context clean; only ordinary fresh sessions receive its tail.
-          if (!params.reset) {
-            engine.seedHistory(
-              readTranscriptTail(SYSTEM_AGENT_SEED_HISTORY_LIMIT, { afterLastReset: true }).map(
-                ({ role, text }) => ({ role, text }),
-              ),
-            );
-          }
-          const welcomeHistoryStart = engine.historyLength();
-          let persistWelcome = !welcomeOnly;
-          let welcome: string;
-          let welcomeQuestion: SystemAgentChatQuestion | undefined;
+          const releasePendingEngine = registerPendingGatewaySystemAgentEngine(sessions, engine);
           try {
-            if (params.welcomeVariant === "onboarding") {
-              const onboardingWelcome = await buildOnboardingWelcome({ engine });
-              welcome = onboardingWelcome.text;
-              welcomeQuestion = onboardingWelcome.question;
-            } else if (params.welcomeVariant === "new-agent") {
-              welcome = buildNewAgentWelcome({ engine });
-            } else {
-              const overview = await engine.loadOverview();
-              const facts = loadSystemAgentGreetingFacts();
-              greetingAuditSequence = facts.auditSequence;
-              persistWelcome ||= facts.recentExternalEdit;
-              welcome = (
-                await resolveSystemAgentGreeting({
-                  overview,
-                  facts,
-                  planner: (plannerParams) => engine.planGreeting(plannerParams),
-                  allowInference: welcomeOnly,
-                })
-              ).text;
-              welcomeQuestion = buildSystemAgentGreetingQuestion(overview, facts);
-              engine.noteAssistantMessage(welcome);
+            // `reset: true` keeps the durable logbook but deliberately starts
+            // model context clean; only ordinary fresh sessions receive its tail.
+            if (!params.reset) {
+              engine.seedHistory(
+                readTranscriptTail(SYSTEM_AGENT_SEED_HISTORY_LIMIT, { afterLastReset: true }).map(
+                  ({ role, text }) => ({ role, text }),
+                ),
+              );
             }
-          } catch (error) {
-            await engine.dispose().catch(() => undefined);
-            if (!isSystemAgentInferenceUnavailableError(error)) {
-              throw error;
+            const welcomeHistoryStart = engine.historyLength();
+            let persistWelcome = !welcomeOnly;
+            let welcome: string;
+            let welcomeQuestion: SystemAgentChatQuestion | undefined;
+            try {
+              if (params.welcomeVariant === "onboarding") {
+                const onboardingWelcome = await buildOnboardingWelcome({ engine });
+                welcome = onboardingWelcome.text;
+                welcomeQuestion = onboardingWelcome.question;
+              } else if (params.welcomeVariant === "new-agent") {
+                welcome = buildNewAgentWelcome({ engine });
+              } else {
+                const overview = await engine.loadOverview();
+                const facts = loadSystemAgentGreetingFacts();
+                greetingAuditSequence = facts.auditSequence;
+                persistWelcome ||= facts.recentExternalEdit;
+                welcome = (
+                  await resolveSystemAgentGreeting({
+                    overview,
+                    facts,
+                    planner: (plannerParams) => engine.planGreeting(plannerParams),
+                    allowInference: welcomeOnly,
+                  })
+                ).text;
+                welcomeQuestion = buildSystemAgentGreetingQuestion(overview, facts);
+                engine.noteAssistantMessage(welcome);
+              }
+            } catch (error) {
+              await engine.dispose().catch(() => undefined);
+              if (!isSystemAgentInferenceUnavailableError(error)) {
+                throw error;
+              }
+              respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, error.message));
+              return;
             }
-            respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, error.message));
-            return;
-          }
-          // Passive welcomes are ephemeral; an external-edit alert must survive
-          // before delivery acknowledges the audit cursor that would hide it.
-          if (persistWelcome) {
-            persistEngineHistory(engine, welcomeHistoryStart);
-          }
-          await evictOldestSession(sessions, context);
-          session = {
-            engine,
-            welcome,
-            ...(welcomeQuestion ? { welcomeQuestion } : {}),
-            ...(greetingAuditSequence !== undefined
-              ? { welcomeAuditSequence: greetingAuditSequence }
-              : {}),
-            lastUsedAt: Date.now(),
-            ownerKey,
-          };
-          sessions.set(sessionId, session);
-          if (welcomeOnly) {
-            respond(
-              true,
-              {
-                sessionId,
-                reply: session.welcome,
-                action: "none",
-                ...(session.welcomeQuestion ? { question: session.welcomeQuestion } : {}),
-              },
-              undefined,
-            );
-            acknowledgeDeliveredSystemAgentWelcome(session);
-            return;
+            assertSystemAgentTaskOpen(sessions);
+            // Passive welcomes are ephemeral; an external-edit alert must survive
+            // before delivery acknowledges the audit cursor that would hide it.
+            if (persistWelcome) {
+              persistEngineHistory(engine, welcomeHistoryStart);
+            }
+            await evictOldestSession(sessions, context);
+            assertSystemAgentTaskOpen(sessions);
+            session = {
+              engine,
+              welcome,
+              ...(welcomeQuestion ? { welcomeQuestion } : {}),
+              ...(greetingAuditSequence !== undefined
+                ? { welcomeAuditSequence: greetingAuditSequence }
+                : {}),
+              lastUsedAt: Date.now(),
+              ownerKey,
+            };
+            sessions.set(sessionId, session);
+            if (welcomeOnly) {
+              respond(
+                true,
+                {
+                  sessionId,
+                  reply: session.welcome,
+                  action: "none",
+                  ...(session.welcomeQuestion ? { question: session.welcomeQuestion } : {}),
+                },
+                undefined,
+              );
+              acknowledgeDeliveredSystemAgentWelcome(session);
+              return;
+            }
+          } finally {
+            releasePendingEngine();
           }
         }
         session.lastUsedAt = Date.now();

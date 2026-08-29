@@ -5,6 +5,13 @@ type DisposableSystemAgentSession = {
   };
 };
 
+type DisposableSystemAgentEngine = DisposableSystemAgentSession["engine"];
+
+const pendingSystemAgentEngines = new WeakMap<
+  Map<string, DisposableSystemAgentSession>,
+  Set<DisposableSystemAgentEngine>
+>();
+
 export type GatewaySystemAgentSessionDisposal = {
   drain: Promise<void>;
   finish: () => Promise<void>;
@@ -20,19 +27,42 @@ async function settleSystemAgentDisposals(disposals: readonly Promise<void>[]): 
   }
 }
 
+/** Track an engine before its partially initialized session can enter the live session map. */
+export function registerPendingGatewaySystemAgentEngine(
+  sessions: Map<string, DisposableSystemAgentSession>,
+  engine: DisposableSystemAgentEngine,
+): () => void {
+  let pending = pendingSystemAgentEngines.get(sessions);
+  if (!pending) {
+    pending = new Set();
+    pendingSystemAgentEngines.set(sessions, pending);
+  }
+  pending.add(engine);
+  return () => {
+    pending?.delete(engine);
+    if (pending?.size === 0) {
+      pendingSystemAgentEngines.delete(sessions);
+    }
+  };
+}
+
 /** Begin draining every chat engine before the harness runtime that owns its bindings. */
 export function beginGatewaySystemAgentSessionDisposal(
   sessions: Map<string, DisposableSystemAgentSession>,
 ): GatewaySystemAgentSessionDisposal {
-  const engines = Array.from(sessions.values(), (session) => session.engine);
+  const engines = new Set(Array.from(sessions.values(), (session) => session.engine));
+  for (const engine of pendingSystemAgentEngines.get(sessions) ?? []) {
+    engines.add(engine);
+  }
   sessions.clear();
+  pendingSystemAgentEngines.delete(sessions);
   return {
     drain: settleSystemAgentDisposals(
-      engines.map((engine) => engine.beginDisposalForGatewayShutdown()),
+      Array.from(engines, (engine) => engine.beginDisposalForGatewayShutdown()),
     ),
     finish: async () =>
       await settleSystemAgentDisposals(
-        engines.map((engine) => engine.finishDisposalForGatewayShutdown()),
+        Array.from(engines, (engine) => engine.finishDisposalForGatewayShutdown()),
       ),
   };
 }

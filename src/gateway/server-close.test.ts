@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   logWarn: vi.fn(),
   listChannelPlugins: vi.fn((): Array<{ id: "telegram" | "discord" }> => []),
   disposeAllCodeModeRuns: vi.fn(),
+  beginSystemAgentTaskShutdown: vi.fn(async () => undefined),
   beginSystemAgentSessionDisposal: vi.fn(() => ({
     drain: Promise.resolve(),
     finish: vi.fn(async () => undefined),
@@ -162,6 +163,7 @@ function createGatewayCloseTestDeps(
     drainRetainedOpenAiEmbeddingProviders: mocks.drainRetainedEmbeddingProviders,
     stopGmailWatcher: mocks.stopGmailWatcher,
     disposeAllCodeModeRuns: mocks.disposeAllCodeModeRuns,
+    beginSystemAgentTaskShutdown: mocks.beginSystemAgentTaskShutdown,
     beginSystemAgentSessionDisposal: mocks.beginSystemAgentSessionDisposal,
     closeProviderTransportDispatcherPool: mocks.closeProviderTransportDispatcherPool,
     cron: { stop: vi.fn() },
@@ -216,6 +218,8 @@ describe("createGatewayCloseHandler", () => {
     mocks.listChannelPlugins.mockReset();
     mocks.listChannelPlugins.mockReturnValue([]);
     mocks.disposeAllCodeModeRuns.mockReset();
+    mocks.beginSystemAgentTaskShutdown.mockReset();
+    mocks.beginSystemAgentTaskShutdown.mockResolvedValue(undefined);
     mocks.beginSystemAgentSessionDisposal.mockReset();
     mocks.beginSystemAgentSessionDisposal.mockReturnValue({
       drain: Promise.resolve(),
@@ -1665,6 +1669,9 @@ describe("createGatewayCloseHandler", () => {
     mocks.disposeAllCodeModeRuns.mockImplementation(() => {
       closeOrder.push("code-mode-runs");
     });
+    mocks.beginSystemAgentTaskShutdown.mockImplementation(async () => {
+      closeOrder.push("system-agent-tasks");
+    });
     mocks.beginSystemAgentSessionDisposal.mockImplementation(() => {
       closeOrder.push("system-agent-sessions");
       return {
@@ -1721,6 +1728,7 @@ describe("createGatewayCloseHandler", () => {
     expect(transcriptUnsub).toHaveBeenCalledTimes(1);
     expect(stopTaskRegistryMaintenance).toHaveBeenCalledTimes(1);
     expect(mocks.disposeAllCodeModeRuns).toHaveBeenCalledTimes(1);
+    expect(mocks.beginSystemAgentTaskShutdown).toHaveBeenCalledTimes(1);
     expect(mocks.beginSystemAgentSessionDisposal).toHaveBeenCalledTimes(1);
     expect(mocks.disposeAgentHarnesses).toHaveBeenCalledTimes(1);
     expect(mocks.disposeAllSessionMcpRuntimes).toHaveBeenCalledTimes(1);
@@ -1728,6 +1736,7 @@ describe("createGatewayCloseHandler", () => {
     expect(mocks.drainRetainedEmbeddingProviders).toHaveBeenCalledTimes(1);
     expect(closeOrder).toEqual([
       "code-mode-runs",
+      "system-agent-tasks",
       "system-agent-sessions",
       "agent-harnesses",
       "system-agent-finish",
@@ -1766,6 +1775,21 @@ describe("createGatewayCloseHandler", () => {
     expect(result.warnings).toContain("system-agent-sessions");
     expect(closeOrder).toEqual(["agent-harnesses"]);
     expect(finish).not.toHaveBeenCalled();
+  });
+
+  it("does not close harnesses while accepted system-agent work remains undrained", async () => {
+    vi.useFakeTimers();
+    mocks.beginSystemAgentTaskShutdown.mockReturnValue(new Promise<undefined>(() => {}));
+    const close = createGatewayCloseHandler(createGatewayCloseTestDeps());
+    const closePromise = close({ reason: "test shutdown" });
+
+    await vi.waitFor(() => expect(mocks.beginSystemAgentTaskShutdown).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(SYSTEM_AGENT_SESSION_CLOSE_GRACE_MS);
+    const result = await closePromise;
+
+    expect(result.warnings).toContain("system-agent-tasks");
+    expect(mocks.beginSystemAgentSessionDisposal).toHaveBeenCalledOnce();
+    expect(mocks.disposeAgentHarnesses).not.toHaveBeenCalled();
   });
 
   it("bounds post-harness cleanup when a system-agent finalizer never settles", async () => {

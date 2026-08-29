@@ -46,6 +46,7 @@ function makeContext() {
     wizardSessions,
     context: {
       wizardSessions,
+      systemAgentSessions: new Map(),
       findRunningWizard: () => undefined,
       purgeWizardSession: (id: string) => wizardSessions.delete(id),
     } as unknown as GatewayRequestContext,
