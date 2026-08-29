@@ -3251,6 +3251,70 @@ describe("compaction-safeguard recent-turn preservation", () => {
     expectCanonicalSummaryHeadingsOnce(finalSummary);
   });
 
+  it("keeps an older pending ask when the split prefix has no user request", async () => {
+    mockSummarizeInStages.mockReset();
+    const latestAsk = "finish the pending provider migration";
+    const historySummary = [
+      "## Decisions",
+      "Keep the migration active.",
+      "## Open TODOs",
+      "Finish the provider migration.",
+      "## Constraints/Rules",
+      "Preserve the pending request.",
+      "## Pending user asks",
+      latestAsk,
+      "## Exact identifiers",
+      "None.",
+    ].join("\n");
+    mockSummarizeInStages
+      .mockResolvedValueOnce(summaryResult(historySummary))
+      .mockResolvedValueOnce(
+        summaryResult("Maintenance activity continues in the retained suffix."),
+      );
+
+    const sessionManager = stubSessionManager();
+    setCompactionSafeguardRuntime(sessionManager, {
+      model: createAnthropicModelFixture(),
+      recentTurnsPreserve: 0,
+      qualityGuardEnabled: true,
+      qualityGuardMaxRetries: 0,
+    });
+    const { result } = await runCompactionScenario({
+      sessionManager,
+      event: {
+        preparation: {
+          messagesToSummarize: [
+            { role: "user", content: latestAsk, timestamp: 1 },
+          ] as AgentMessage[],
+          turnPrefixMessages: [
+            {
+              role: "custom",
+              customType: "maintenance",
+              content: "maintenance event",
+              display: true,
+              timestamp: 2,
+            },
+          ] as AgentMessage[],
+          firstKeptEntryId: "entry-2",
+          tokensBefore: 90_000,
+          fileOps: { read: [], edited: [], written: [] },
+          settings: { reserveTokens: 4_000 },
+          isSplitTurn: true,
+        },
+        customInstructions: "",
+        signal: new AbortController().signal,
+      },
+      apiKey: "test-key",
+    });
+
+    const finalSummary = expectCompactionResult(result).summary;
+    const historyCall = requireRecord(mockCallArg(mockSummarizeInStages));
+    expect(historyCall.customInstructions).not.toContain("belongs to a split turn");
+    expect(finalSummary).toContain(`## Pending user asks\n${latestAsk}`);
+    expectCanonicalSummaryHeadingsOnce(finalSummary);
+    expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
+  });
+
   it("does not revive a split-turn request the model classified as completed", async () => {
     mockSummarizeInStages.mockReset();
     const latestAsk = "combine the provider boxes into one completed artifact";
