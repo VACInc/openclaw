@@ -8,11 +8,13 @@ import { levenshteinDistance } from "../shared/levenshtein-distance.js";
 import {
   getBeforeToolCallFailureDisposition,
   isPreExecutionBlockedToolResult,
+  isToolWrappedWithBeforeToolCallHook,
 } from "./agent-tools.before-tool-call.js";
 import { runWithToolExecutionValidation } from "./agent-tools.execution-validation.js";
 import { getChannelAgentToolMeta } from "./channel-tool-metadata.js";
 import type { AgentToolResult } from "./runtime/index.js";
-import { transferToolEffectReceipt } from "./tool-effect-receipt.js";
+import { registerToolEffectReceipt, transferToolEffectReceipt } from "./tool-effect-receipt.js";
+import { isReplaySafeToolCall } from "./tool-mutation.js";
 import { isAgentToolReplaySafe } from "./tool-replay-safety.js";
 import {
   isTrustedToolExecutionPreflightError,
@@ -46,7 +48,12 @@ import type {
   UnknownToolErrorOptions,
   UnknownToolRecoverySurface,
 } from "./tool-search-types.js";
-import { asToolParamsRecord, jsonResult, ToolInputError } from "./tools/common.js";
+import {
+  asToolParamsRecord,
+  jsonResult,
+  ToolInputError,
+  type AnyAgentTool,
+} from "./tools/common.js";
 
 function describeEntry(entry: ToolSearchCatalogEntry) {
   return {
@@ -567,7 +574,7 @@ export class ToolSearchRuntime {
     return this.terminalTargetBatchByParent.delete(parent) && terminal;
   }
 
-  isReplaySafeExactId = (id: string): boolean => {
+  isReplaySafeExactId = (id: string, input?: unknown, requireFinalArgs = false): boolean => {
     let entry: ToolSearchCatalogEntry;
     try {
       entry = findEntryByExactId(resolveCatalog(this.ctx), id);
@@ -577,16 +584,26 @@ export class ToolSearchRuntime {
     if (entry.source !== "openclaw") {
       return false;
     }
-    const pluginMeta = getPluginToolMeta(entry.tool as Parameters<typeof getPluginToolMeta>[0]);
-    if (pluginMeta) {
-      return pluginMeta.mcp
-        ? false
-        : pluginMeta.replaySafe === true && pluginMeta.sideEffecting !== true;
-    }
-    if (getChannelAgentToolMeta(entry.tool as never)) {
+    // SAFETY: openclaw catalog entries are created from AnyAgentTool in toCatalogEntry.
+    const tool = entry.tool as AnyAgentTool;
+    if (requireFinalArgs && isToolWrappedWithBeforeToolCallHook(tool)) {
       return false;
     }
-    return isAgentToolReplaySafe(entry.tool);
+    const pluginMeta = getPluginToolMeta(tool);
+    if (pluginMeta?.mcp || getChannelAgentToolMeta(tool)) {
+      return false;
+    }
+    const classifier = tool.classifyEffect;
+    if (typeof classifier === "function") {
+      try {
+        return classifier(input ?? {}) === "read";
+      } catch {
+        return false;
+      }
+    }
+    return pluginMeta
+      ? pluginMeta.replaySafe === true && pluginMeta.sideEffecting !== true
+      : isAgentToolReplaySafe(tool) || isReplaySafeToolCall(entry.name, input ?? {});
   };
 
   private readonly callEntry = async (
@@ -626,7 +643,14 @@ export class ToolSearchRuntime {
       const snapshot = snapshotToolSearchTargetTranscriptResult(candidate);
       // Projection changes object identity; move the private terminal receipt with it.
       transferToolEffectReceipt(candidate, snapshot);
-      await assertCatalogOutputMatchesSchema(entry, snapshot);
+      try {
+        await assertCatalogOutputMatchesSchema(entry, snapshot);
+      } catch (error) {
+        // Schema projection can fail after the owner has already settled. Keep
+        // its exact effect fact on the replacement error instead of guessing.
+        transferToolEffectReceipt(snapshot, error);
+        throw error;
+      }
       return snapshot;
     };
     const validateInput = this.options.validateInput && entry.source === "openclaw";
@@ -650,11 +674,14 @@ export class ToolSearchRuntime {
           sourceName: entry.sourceName,
           toolCallId,
           parentToolCallId: options?.parentToolCallId,
-          replaySafe: this.isReplaySafeExactId(entry.id),
+          replaySafe: this.isReplaySafeExactId(entry.id, normalizedInput),
           input: normalizedInput,
           signal,
           onUpdate: options?.onUpdate,
           acceptResultBeforeProjection,
+          bindEffectReceipt: (target, receipt) => {
+            registerToolEffectReceipt(target, receipt);
+          },
         });
         if (networkInvocation && !preExecutionBlocked) {
           networkInvocation.observed = true;
