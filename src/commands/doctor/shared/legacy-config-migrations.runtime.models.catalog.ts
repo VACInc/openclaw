@@ -94,6 +94,22 @@ function buildConfiguredProviderCatalogRows(
   return rows;
 }
 
+/** Resolves an unambiguous shipped catalog identity without treating a configured route as proof. */
+export function resolveConfiguredModelCatalogIdentity(params: {
+  providerId: string;
+  provider: Record<string, unknown>;
+  model: Record<string, unknown>;
+}): NormalizedModelCatalogRow | undefined {
+  const modelId = typeof params.model.id === "string" ? params.model.id : "";
+  if (!modelId) {
+    return undefined;
+  }
+  const rows = buildConfiguredProviderCatalogRows({ [params.providerId]: params.provider }).get(
+    normalizedCatalogModelKey(params.providerId, modelId),
+  );
+  return rows?.length === 1 ? rows[0] : undefined;
+}
+
 function inspectModelCompatOverrides(
   providersValue: unknown,
   onEntry?: (params: {
