@@ -1006,10 +1006,11 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
     const qualityGuardEnabled = runtime?.qualityGuardEnabled ?? false;
     const providerId = runtime?.provider;
     const turnPrefixMessages = baseTurnPrefixMessages;
+    const splitUserAsk = preparation.isSplitTurn ? extractLatestUserAsk(turnPrefixMessages) : null;
     const recentTurnsPreserve = resolveRecentTurnsPreserve(runtime?.recentTurnsPreserve);
     const structuredInstructions = [
       buildCompactionStructureInstructions(customInstructions, summarizationInstructions),
-      preparation.isSplitTurn
+      splitUserAsk !== null
         ? "The latest user request belongs to a split turn whose remaining suffix stays verbatim; preserve its work state outside ## Pending user asks."
         : "",
     ]
@@ -1235,7 +1236,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       }
 
       const oracleMessages = [...messagesToSummarize, ...turnPrefixMessages];
-      const latestUserAsk = extractLatestUserAsk(oracleMessages);
+      const latestUserAsk = splitUserAsk ?? extractLatestUserAsk(messagesToSummarize);
       const identifiers = extractOpaqueIdentifiers(
         oracleMessages.slice(-10).map(extractMessageText).filter(Boolean).join("\n"),
       );
@@ -1354,7 +1355,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
                 auditSummary: unbudgetedSummary,
                 identifiers,
                 latestAsk: latestUserAsk,
-                latestAskInRetainedTurn: preparation.isSplitTurn,
+                latestAskInRetainedTurn: splitUserAsk !== null,
                 requiredAskContext,
                 identifierPolicy,
               }
@@ -1384,7 +1385,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           sourceSummaries: [historySummary, splitTurnSummaryLocal].filter(Boolean),
           identifiers,
           latestAsk: latestUserAsk,
-          latestAskInRetainedTurn: preparation.isSplitTurn,
+          latestAskInRetainedTurn: splitUserAsk !== null,
           identifierPolicy,
         });
         if (quality.ok) {
