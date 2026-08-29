@@ -181,10 +181,12 @@ describe("OpenClaw configured-model planner", () => {
     const runEmbeddedAgent = vi.fn(async () => ({
       payloads: [{ text: '{"reply":"Ready.","command":"gateway status"}' }],
     }));
+    const abortSignal = new AbortController().signal;
 
     const result = await planSystemAgentCommandWithConfiguredModel({
       input: "check the gateway",
       overview: overview("openai/gpt-5.5"),
+      abortSignal,
       verifiedInference: binding,
       deps: {
         ...authDeps,
@@ -199,6 +201,7 @@ describe("OpenClaw configured-model planner", () => {
     expect(runEmbeddedAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         authProfileId: "openai:p2",
+        abortSignal,
         authProfileIdSource: "user",
         config: binding.execution.runConfig,
         streamParams: {
@@ -279,6 +282,38 @@ describe("OpenClaw configured-model planner", () => {
     expect(runEmbeddedAgent).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["empty", []],
+    ["completed", [{ text: '{"reply":"Ready."}' }]],
+  ])(
+    "rejects an %s planner result when cleanup observes cancellation",
+    async (_label, payloads) => {
+      const config = {
+        agents: { defaults: { model: "openai/gpt-5.5" } },
+      } satisfies OpenClawConfig;
+      const { binding, deps } = await createSystemAgentVerifiedInferenceTestFixture(config);
+      const abort = new AbortController();
+
+      await expect(
+        planSystemAgentCommandWithConfiguredModel({
+          input: "is the gateway healthy",
+          overview: overview("openai/gpt-5.5"),
+          verifiedInference: binding,
+          abortSignal: abort.signal,
+          deps: {
+            ...deps,
+            readConfigFileSnapshot: vi.fn(async () => snapshot(config)) as never,
+            runEmbeddedAgent: vi.fn(async () => ({ payloads })) as never,
+            createTempDir: async () => "/tmp/openclaw-planner",
+            removeTempDir: async () => {
+              abort.abort(new Error("planner disposed"));
+            },
+          },
+        }),
+      ).rejects.toThrow("planner disposed");
+    },
+  );
+
   it("plans through the configured default agent CLI route with native tools disabled", async () => {
     const config: OpenClawConfig = {
       agents: {
@@ -302,10 +337,12 @@ describe("OpenClaw configured-model planner", () => {
     const removeTempDir = vi.fn(async () => {});
     const { binding, deps } = await createSystemAgentVerifiedInferenceTestFixture(config);
     useFastVerifiedInference(binding);
+    const abortSignal = new AbortController().signal;
 
     const result = await planSystemAgentCommandWithConfiguredModel({
       input: "please finish setup",
       overview: overview("claude-cli/claude-opus-4-8"),
+      abortSignal,
       verifiedInference: binding,
       deps: {
         ...deps,
@@ -329,6 +366,7 @@ describe("OpenClaw configured-model planner", () => {
         model: "claude-opus-4-8",
         agentDir: "/tmp/ops-agent",
         authProfileId: "claude-cli:ops",
+        abortSignal,
         executionMode: "side-question",
         disableTools: true,
         workspaceDir: "/tmp/openclaw-planner",

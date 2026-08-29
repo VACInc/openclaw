@@ -36,6 +36,7 @@ export {
 export type SystemAgentAssistantPlanner = (params: {
   input: string;
   overview: SystemAgentOverview;
+  abortSignal?: AbortSignal;
   history?: SystemAgentAssistantTurn[];
   pendingOperation?: string;
   readonly verifiedInference: SystemAgentVerifiedInferenceBinding;
@@ -65,6 +66,7 @@ const SYSTEM_AGENT_PLANNER_RESPONSE_SCHEMA = {
 export async function planSystemAgentCommand(params: {
   input: string;
   overview: SystemAgentOverview;
+  abortSignal?: AbortSignal;
   history?: SystemAgentAssistantTurn[];
   pendingOperation?: string;
   readonly verifiedInference: SystemAgentVerifiedInferenceBinding;
@@ -77,6 +79,7 @@ export async function planSystemAgentCommand(params: {
 export async function planSystemAgentCommandWithConfiguredModel(params: {
   input: string;
   overview: SystemAgentOverview;
+  abortSignal?: AbortSignal;
   history?: SystemAgentAssistantTurn[];
   pendingOperation?: string;
   readonly verifiedInference: SystemAgentVerifiedInferenceBinding;
@@ -96,6 +99,7 @@ export async function planSystemAgentCommandWithConfiguredModel(params: {
     prompt,
     systemPrompt: SYSTEM_AGENT_ASSISTANT_SYSTEM_PROMPT,
     runIdPrefix: "openclaw-planner",
+    abortSignal: params.abortSignal,
     verifiedInference: params.verifiedInference,
     deps: params.deps,
     responseFormat: SYSTEM_AGENT_PLANNER_RESPONSE_SCHEMA,
@@ -127,6 +131,7 @@ async function runConfiguredSystemAgentText(params: {
   prompt: string;
   systemPrompt: string;
   runIdPrefix: string;
+  abortSignal?: AbortSignal;
   readonly verifiedInference: SystemAgentVerifiedInferenceBinding;
   deps?: SystemAgentConfiguredModelPlannerDeps;
   timeoutMs?: number;
@@ -180,6 +185,7 @@ async function runConfiguredSystemAgentText(params: {
       messageProvider: "openclaw",
       disableTools: true,
       disableTrajectory: true,
+      ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
       ...(params.responseFormat ? { streamParams: { responseFormat: params.responseFormat } } : {}),
       ...(route.authProfileId ? { authProfileId: route.authProfileId } : {}),
     };
@@ -207,6 +213,7 @@ async function runConfiguredSystemAgentText(params: {
           });
     text = extractAgentRunText(result)?.trim();
   } catch (error) {
+    params.abortSignal?.throwIfAborted();
     if (error instanceof SystemAgentInferenceUnavailableError) {
       throw error;
     }
@@ -215,12 +222,14 @@ async function runConfiguredSystemAgentText(params: {
     preparedRunAdmission?.close();
     await (params.deps?.removeTempDir ?? removeTempPlannerDir)(tempDir);
   }
+  params.abortSignal?.throwIfAborted();
   if (!text) {
     return null;
   }
   // Cleanup is the final suspension before callers can display model text, so
   // authority must still match after cleanup completes.
   await requireVerifiedPlannerRoute(params.verifiedInference, params.deps);
+  params.abortSignal?.throwIfAborted();
   return { text, modelLabel: route.modelLabel };
 }
 

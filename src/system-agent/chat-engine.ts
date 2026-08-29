@@ -3,6 +3,7 @@ import type {
   SystemAgentWizardCancel,
   WizardAnswer,
 } from "../../packages/gateway-protocol/src/index.js";
+import { createAgentRunDirectAbortError } from "../agents/run-termination.js";
 import type { RuntimeEnv } from "../runtime.js";
 import {
   cleanupSystemAgentSession,
@@ -74,6 +75,7 @@ export class SystemAgentChatEngine {
   private turnQueue: Promise<unknown> = Promise.resolve();
   private disposal: Promise<void> | undefined;
   private disposed = false;
+  private readonly turnAbort = new AbortController();
 
   constructor(
     private readonly options: SystemAgentChatEngineOptions,
@@ -89,11 +91,12 @@ export class SystemAgentChatEngine {
       surface: options.surface,
       beforePersistentApply: async (runtime) => {
         await this.requirePersistentApplyInference(runtime);
+        this.turnAbort.signal.throwIfAborted();
       },
       dependencies: internals.wizardDependencies,
     });
     this.router = new ChatTurnRouter(
-      options,
+      { ...options, abortSignal: this.turnAbort.signal },
       { executeOperation: internals.executeOperation },
       this.agentSession,
       this.wizard,
@@ -155,8 +158,10 @@ export class SystemAgentChatEngine {
   async dispose(): Promise<void> {
     if (!this.disposal) {
       this.disposed = true;
+      this.turnAbort.abort(createAgentRunDirectAbortError());
       // The turn owns the native thread until it settles; cleanup must not race
-      // binding creation or an active-thread deletion refusal.
+      // binding creation or an active-thread deletion refusal. Embedded abort
+      // settlement is bounded by the runner before this queue resolves.
       this.disposal = this.turnQueue.then(async () => {
         this.wizard.dispose();
         await cleanupSystemAgentSession(this.agentSession);
@@ -205,7 +210,12 @@ export class SystemAgentChatEngine {
     if (this.disposed) {
       throw new Error("System-agent chat engine is disposed");
     }
-    const turn = this.turnQueue.then(run);
+    const turn = this.turnQueue.then(async () => {
+      this.turnAbort.signal.throwIfAborted();
+      const result = await run();
+      this.turnAbort.signal.throwIfAborted();
+      return result;
+    });
     this.turnQueue = turn.catch(() => undefined);
     return await turn;
   }

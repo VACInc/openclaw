@@ -228,6 +228,7 @@ describe("runSystemAgentTurn", () => {
     const fixture = await createSystemAgentVerifiedInferenceTestFixture(config);
     const first = createSystemAgentSession(fixture.binding);
     const second = createSystemAgentSession(fixture.binding);
+    const abortSignal = new AbortController().signal;
     const deps = {
       ...fixture.deps,
       readConfigFileSnapshot: vi.fn(async () => configSnapshot(config)) as never,
@@ -239,6 +240,7 @@ describe("runSystemAgentTurn", () => {
         overview,
         surface: "gateway",
         approvalArmed: false,
+        abortSignal,
         session: first,
       },
       deps,
@@ -276,6 +278,7 @@ describe("runSystemAgentTurn", () => {
     expect(firstSessionKey).toBe(`agent:openclaw:${first.sessionId}`);
     expect(secondSessionKey).toBe(`agent:openclaw:${second.sessionId}`);
     expect(firstSessionKey).not.toBe(secondSessionKey);
+    expect(mocks.runEmbeddedAgent.mock.calls[0]?.[0]?.abortSignal).toBe(abortSignal);
     expect(mocks.runEmbeddedAgent.mock.calls[0]?.[0]?.sandboxSessionKey).toBe(
       "agent:openclaw:main",
     );
@@ -314,6 +317,7 @@ describe("runSystemAgentTurn", () => {
       payloads: [],
     }));
     const { session, deps } = await createVerifiedSession(config);
+    const abortSignal = new AbortController().signal;
 
     await runSystemAgentTurnWithDeps(
       {
@@ -321,6 +325,7 @@ describe("runSystemAgentTurn", () => {
         overview: { defaultModel: "claude-cli/claude-opus-4-8" } as never,
         surface: "gateway",
         approvalArmed: false,
+        abortSignal,
         session,
       },
       {
@@ -339,6 +344,7 @@ describe("runSystemAgentTurn", () => {
       model: "claude-opus-4-8",
       agentDir,
       authProfileId: "claude-cli:ops",
+      abortSignal,
       agentId: "openclaw",
       sessionKey: `agent:openclaw:${session.sessionId}`,
       runtimePolicySessionKey: "agent:openclaw:main",

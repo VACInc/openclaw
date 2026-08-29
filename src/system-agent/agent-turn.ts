@@ -53,6 +53,7 @@ export type SystemAgentTurnRunner = (params: {
   input: string;
   overview: SystemAgentOverview;
   surface: "cli" | "gateway";
+  abortSignal?: AbortSignal;
   /** Host-verified: the user's current message is an explicit approval. */
   approvalArmed: boolean;
   /** Delegated sessions can only resolve approvals in the operator UI. */
@@ -359,6 +360,7 @@ async function runSystemAgentTurnWithDeps(
     messageChannel: "openclaw",
     messageProvider: "openclaw",
     disableTrajectory: true,
+    ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
   };
   // Directives are per-turn: the tool records at most one interactive handoff
   // and the engine executes it after the reply.

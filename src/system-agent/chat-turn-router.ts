@@ -60,6 +60,7 @@ type ChatTurnRouterOptions = {
   surface?: "cli" | "gateway";
   operatorApprovalOnly?: boolean;
   requesterAgentId?: string;
+  abortSignal?: AbortSignal;
 };
 
 type CaptureRuntime = RuntimeEnv & { read: () => string };
@@ -313,6 +314,7 @@ export class ChatTurnRouter {
   private async applyApprovedPersistentOperation(
     operation: SystemAgentOperation,
   ): Promise<SystemAgentChatReply> {
+    this.options.abortSignal?.throwIfAborted();
     if (!isPersistentSystemAgentOperation(operation)) {
       throw new Error("OpenClaw host received a non-persistent approved operation.");
     }
@@ -373,10 +375,13 @@ export class ChatTurnRouter {
         overview,
         surface: this.options.surface ?? "cli",
         approvalArmed,
+        ...(this.options.abortSignal ? { abortSignal: this.options.abortSignal } : {}),
         ...(this.options.operatorApprovalOnly ? { operatorApprovalOnly: true } : {}),
         session: this.agentSession,
       });
+      this.options.abortSignal?.throwIfAborted();
     } catch (error) {
+      this.options.abortSignal?.throwIfAborted();
       log.warn(`agent turn failed before planner fallback: ${formatErrorMessage(error)}`);
       agentFailure = error;
       loopReply = null;
@@ -391,6 +396,8 @@ export class ChatTurnRouter {
       return await this.applyAgentTurnReply(loopReply);
     }
 
+    this.options.abortSignal?.throwIfAborted();
+
     const planner =
       this.options.planWithAssistant ?? (await import("./assistant.js")).planSystemAgentCommand;
     let plannerFailure: unknown;
@@ -399,6 +406,7 @@ export class ChatTurnRouter {
       plan = await planner({
         input: `${uiContextMarker}${text}`,
         overview,
+        ...(this.options.abortSignal ? { abortSignal: this.options.abortSignal } : {}),
         history: this.callbacks.getHistory(),
         ...(this.pending
           ? { pendingOperation: formatPendingOperationForAssistant(this.pending) }
@@ -409,9 +417,11 @@ export class ChatTurnRouter {
         await this.callbacks.requireVerifiedInference();
       }
     } catch (error) {
+      this.options.abortSignal?.throwIfAborted();
       plannerFailure = error;
       plan = null;
     }
+    this.options.abortSignal?.throwIfAborted();
     if (!plan) {
       throw new SystemAgentInferenceUnavailableError(
         "conversation",
@@ -436,6 +446,7 @@ export class ChatTurnRouter {
       return { text: replyText, action: "none" };
     }
     const provenance = `(${plan.modelLabel ?? "model"} → \`${plan.command}\`)`;
+    this.options.abortSignal?.throwIfAborted();
     const executed = await this.runOperation(operation, provenance);
     return { ...executed, text: [replyText, executed.text].filter(Boolean).join("\n\n") };
   }
@@ -445,6 +456,7 @@ export class ChatTurnRouter {
     directive?: SystemAgentTurnDirective;
   }): Promise<SystemAgentChatReply> {
     await this.callbacks.requireVerifiedInference();
+    this.options.abortSignal?.throwIfAborted();
     const directive = loopReply.directive;
     if (!directive) {
       return { text: loopReply.text, action: "none" };
@@ -468,6 +480,7 @@ export class ChatTurnRouter {
   ): Promise<SystemAgentChatReply> {
     const recordedOperation = this.recordCreateAgentRequester(operation);
     await this.callbacks.requireVerifiedInference();
+    this.options.abortSignal?.throwIfAborted();
     // All inputs (typed commands, tool directives, and planner fallback) enter
     // here before any wizard or handoff starts.
     if (this.options.operatorApprovalOnly && isSystemAgentNavigationOperation(recordedOperation)) {
@@ -586,10 +599,12 @@ export class ChatTurnRouter {
         deps: this.commandDeps(),
         beforePersistentApply: async () => {
           await this.callbacks.requirePersistentApplyInference(capture);
+          this.options.abortSignal?.throwIfAborted();
         },
         onVerifiedInferenceChanged: this.callbacks.rebindVerifiedInference,
       });
     } catch (error) {
+      this.options.abortSignal?.throwIfAborted();
       if (isSystemAgentInferenceUnavailableError(error)) {
         throw error;
       }
