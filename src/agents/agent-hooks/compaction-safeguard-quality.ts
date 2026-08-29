@@ -140,6 +140,11 @@ function parseRequiredSummarySectionContents(summary: string): string[] | null {
   return contents.map((lines) => lines.join("\n").trim());
 }
 
+function extractPendingAskSection(summary: string): string {
+  const section = summary.split(/^## Pending user asks[ \t]*$/mu, 2)[1];
+  return section?.split(/^##[ \t]+\S.*$/mu, 1)[0]?.trim() ?? "";
+}
+
 /**
  * Plan truncation that keeps the audit facts and lets everything else shrink.
  * Only the headings, the bounded latest-ask context, and the audited source
@@ -470,12 +475,7 @@ export function auditSummaryQuality(params: {
   if (
     params.retainedTurnSummary !== undefined &&
     resolveAskOverlapRequirement(params.latestAsk) &&
-    hasAskOverlap(
-      parseRequiredSummarySectionContents(params.retainedTurnSummary)?.[
-        PENDING_ASK_SECTION_INDEX
-      ] ?? "",
-      params.latestAsk,
-    )
+    hasAskOverlap(extractPendingAskSection(params.retainedTurnSummary), params.latestAsk)
   ) {
     reasons.push("retained_turn_ask_marked_pending");
   }

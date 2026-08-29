@@ -1442,22 +1442,35 @@ describe("compaction-safeguard recent-turn preservation", () => {
         "## Exact identifiers",
         "None.",
       ].join("\n");
+    const prefixSummary = (pendingAsk?: string) =>
+      [
+        "## Original Request",
+        latestAsk,
+        "## Early Progress",
+        "Validated the provider boxes.",
+        "## Context for Suffix",
+        "The retained suffix owns continuation state.",
+        ...(pendingAsk ? ["## Pending user asks", pendingAsk] : []),
+      ].join("\n");
     const historySummary = structuredSummary("combine the provider boxes after migration");
-    const splitSummary = structuredSummary("None.");
-    const params = {
-      summary: splitSummary,
-      sourceSummaries: [historySummary, splitSummary],
-      identifiers: [],
-      latestAsk,
-    };
+    const structuralSummary = structuredSummary("None.");
+    const auditRetained = (retainedTurnSummary: string) =>
+      auditSummaryQuality({
+        summary: `${structuralSummary}\n\n${retainedTurnSummary}`,
+        sourceSummaries: [historySummary, retainedTurnSummary],
+        identifiers: [],
+        latestAsk,
+        retainedTurnSummary,
+      });
 
-    expect(auditSummaryQuality({ ...params, retainedTurnSummary: splitSummary })).toEqual({
+    expect(auditRetained(prefixSummary())).toEqual({
       ok: true,
       reasons: [],
     });
-    expect(
-      auditSummaryQuality({ ...params, retainedTurnSummary: historySummary }).reasons,
-    ).toContain("retained_turn_ask_marked_pending");
+    expect(auditRetained(historySummary).reasons).toContain("retained_turn_ask_marked_pending");
+    expect(auditRetained(prefixSummary(latestAsk)).reasons).toContain(
+      "retained_turn_ask_marked_pending",
+    );
   });
 
   it("dedupes pure-hex identifiers across case variants", () => {
@@ -3228,22 +3241,19 @@ describe("compaction-safeguard recent-turn preservation", () => {
     mockSummarizeInStages.mockReset();
     const latestAsk = "combine the provider boxes into one completed artifact";
     const identifier = "/tmp/pr130620/live/marker";
-    const structuredSummary = (pendingAsk: string, openTodo: string) =>
+    const prefixSummary = (pendingAsk?: string) =>
       [
-        "## Decisions",
-        "Keep the provider-box work active.",
-        "## Open TODOs",
-        openTodo,
-        "## Constraints/Rules",
-        "Preserve exact identifiers.",
-        "## Pending user asks",
-        pendingAsk,
-        "## Exact identifiers",
-        identifier,
+        "## Original Request",
+        latestAsk,
+        "## Early Progress",
+        "The RCA is complete.",
+        "## Context for Suffix",
+        `Implementation remains. Preserve ${identifier}.`,
+        ...(pendingAsk ? ["## Pending user asks", pendingAsk] : []),
       ].join("\n");
     mockSummarizeInStages
-      .mockResolvedValueOnce(summaryResult(structuredSummary(latestAsk, "Implement the repair.")))
-      .mockResolvedValueOnce(summaryResult(structuredSummary("None.", "Implement the repair.")));
+      .mockResolvedValueOnce(summaryResult(prefixSummary(latestAsk)))
+      .mockResolvedValueOnce(summaryResult(prefixSummary()));
 
     const sessionManager = stubSessionManager();
     setCompactionSafeguardRuntime(sessionManager, {
@@ -3284,7 +3294,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     const retry = requireRecord(mockCallArg(mockSummarizeInStages, 1));
     expect(retry.customInstructions).toContain("retained_turn_ask_marked_pending");
     expect(finalSummary).toContain(`## Latest user request context\n${JSON.stringify(latestAsk)}`);
-    expect(finalSummary).toContain("## Open TODOs\nImplement the repair.");
+    expect(finalSummary).toContain("### Context for Suffix\nImplementation remains.");
     expect(finalSummary).toContain("## Pending user asks\nNone.");
     expect(finalSummary).not.toContain(`## Pending user asks\n${latestAsk}`);
     expectCanonicalSummaryHeadingsOnce(finalSummary);
