@@ -96,6 +96,8 @@ type RuntimeCreateSessionEntryBaseParams = {
   key: string;
   agentId?: string;
   label?: string;
+  /** Create-only title snapshot: trimmed, capped at 500 UTF-16 units without splitting pairs; not a unique label. */
+  displayName?: string;
   spawnedCwd?: string;
   sessionRoot?: string;
   permissionMode?: RuntimeSessionEntry["permissionMode"];
@@ -350,6 +352,11 @@ export type PluginRuntimeCore = {
     resolveThinkingPolicy: (
       params: PluginRuntimeThinkingPolicyRequest,
     ) => PluginRuntimeThinkingPolicy;
+    /** Admit a turn for this exact trusted channel plugin and its authenticated sender. */
+    runCommandFromIngress: (
+      opts: import("../../agents/command/types.js").AgentCommandIngressOpts,
+      runtime: import("../../runtime.js").RuntimeEnv,
+    ) => ReturnType<typeof import("../../agents/agent-command.js").agentCommandFromIngress>;
     runEmbeddedAgent: RuntimeRunEmbeddedAgent;
     resolveAgentTimeoutMs: typeof import("../../agents/timeout.js").resolveAgentTimeoutMs;
     /**
@@ -380,6 +387,21 @@ export type PluginRuntimeCore = {
         params: RuntimeSessionStoreEntryUpdateParams,
       ) => Promise<RuntimeSessionEntry | null>;
     };
+  };
+  hooks: {
+    /** Dispatch untrusted external content through an isolated, contained hook agent turn. */
+    dispatchHookAgentTurn: (params: {
+      name: string;
+      agentId: string;
+      sessionKey: string;
+      message: string;
+      externalContentSource: "email";
+      deliver: boolean;
+      model?: string;
+      thinking?: import("../../auto-reply/thinking.js").ThinkLevel;
+      timeoutSeconds?: number;
+      idempotencyKey?: string;
+    }) => Promise<{ ok: true; runId: string } | { ok: false; reason: string }>;
   };
   system: {
     enqueueSystemEvent: typeof import("../../infra/system-events.js").enqueueSystemEvent;

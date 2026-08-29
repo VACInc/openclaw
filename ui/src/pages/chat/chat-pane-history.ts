@@ -20,6 +20,7 @@ import {
 } from "./attachment-payload-store.ts";
 import type { ChatHistoryPagination } from "./chat-history-pagination.ts";
 import {
+  commitCurrentChatHistorySnapshot,
   loadChatHistory,
   loadOlderChatHistoryPage,
   resolveChatHistoryPagination,
@@ -28,7 +29,7 @@ import {
 } from "./chat-history.ts";
 import { ChatPaneReplyNavigation } from "./chat-pane-reply-navigation.ts";
 import {
-  CHAT_HISTORY_INTENT_EDGE_PX,
+  CHAT_HISTORY_PREFETCH_EDGE_PX,
   CHAT_HISTORY_INTENT_IDLE_MS,
   CHAT_HISTORY_TOUCH_INTENT_PX,
   CHAT_HISTORY_UPWARD_KEYS,
@@ -104,7 +105,7 @@ export abstract class ChatPaneHistory extends ChatPaneReplyNavigation {
       this.clearHistoryObserver();
       return;
     }
-    const root = this.querySelector<HTMLElement>(".chat-thread");
+    const root = this.transcript.scrollElement;
     const sentinel = root?.querySelector<HTMLElement>(".chat-history-sentinel") ?? null;
     if (!root || !sentinel) {
       this.clearHistoryObserver();
@@ -141,7 +142,10 @@ export abstract class ChatPaneHistory extends ChatPaneReplyNavigation {
           void this.loadOlderMessages();
         }
       },
-      { root, rootMargin: "300px 0px 0px", threshold: 0 },
+      // Fire well before the wall: a page fetch takes long enough that a short
+      // margin guarantees the user hits the top before the prepend lands. The
+      // arming gates above share this constant, so the trigger distance is real.
+      { root, rootMargin: `${CHAT_HISTORY_PREFETCH_EDGE_PX}px 0px 0px`, threshold: 0 },
     );
     this.historyObserverRoot = root;
     this.historyObserverSentinel = sentinel;
@@ -178,7 +182,7 @@ export abstract class ChatPaneHistory extends ChatPaneReplyNavigation {
       root !== null &&
       previousScrollTop !== null &&
       root.scrollTop < previousScrollTop &&
-      root.scrollTop <= CHAT_HISTORY_INTENT_EDGE_PX;
+      root.scrollTop <= CHAT_HISTORY_PREFETCH_EDGE_PX;
     const newHistoryIntent = hasUpwardIntent && this.consumeHistoryIntent();
     // A failed request or exhausted bootstrap stays disarmed until renewed
     // upward intent, preventing request loops without stranding older history.
@@ -236,7 +240,7 @@ export abstract class ChatPaneHistory extends ChatPaneReplyNavigation {
     if (
       !root ||
       !upward ||
-      root.scrollTop > CHAT_HISTORY_INTENT_EDGE_PX ||
+      root.scrollTop > CHAT_HISTORY_PREFETCH_EDGE_PX ||
       this.loadingOlder ||
       !this.hasOlderMessages() ||
       !this.consumeHistoryIntent()
@@ -254,16 +258,8 @@ export abstract class ChatPaneHistory extends ChatPaneReplyNavigation {
 
   protected async showEarlierMessages(): Promise<void> {
     const state = this.state;
-    const root = this.querySelector<HTMLElement>(".chat-thread");
+    const root = this.transcript.scrollElement;
     if (!state || !root) {
-      return;
-    }
-    if (root.scrollTop > CHAT_HISTORY_INTENT_EDGE_PX) {
-      const nextScrollTop = Math.max(0, root.scrollTop - root.clientHeight);
-      // Keep the observer's intent tracker aligned so this explicit page-up
-      // cannot masquerade as a user scroll and trigger an older-page load.
-      this.transcriptScrollTop = nextScrollTop;
-      root.scrollTop = nextScrollTop;
       return;
     }
     const sessionKey = state.sessionKey;
@@ -355,6 +351,7 @@ export abstract class ChatPaneHistory extends ChatPaneReplyNavigation {
           : nextPagination;
         state.chatHistoryPagination = appliedPagination;
         state.lastError = null;
+        commitCurrentChatHistorySnapshot(state);
         scheduleChatScroll(state, false);
         prepended = grew || !exhausted;
       }
@@ -363,8 +360,7 @@ export abstract class ChatPaneHistory extends ChatPaneReplyNavigation {
         state.lastError = formatUiError(error);
         // Loading-row removal can emit a layout scroll. Align the tracker so it
         // cannot masquerade as renewed user intent and consume the manual retry.
-        this.transcriptScrollTop =
-          this.querySelector<HTMLElement>(".chat-thread")?.scrollTop ?? null;
+        this.transcriptScrollTop = this.transcript.scrollElement?.scrollTop ?? null;
       }
     } finally {
       if (generation === this.olderLoadGeneration) {
@@ -486,16 +482,20 @@ export abstract class ChatPaneHistory extends ChatPaneReplyNavigation {
   }
 
   protected async forkFromMessage(entryId: string): Promise<void> {
-    const state = this.state;
-    if (!state) {
+    const scope = this.captureConnectionScope();
+    if (!scope) {
       return;
     }
+    const state = scope.state;
     const sourceKey = state.sessionKey;
     const agentParams = scopedAgentParamsForSession(state, sourceKey);
     try {
       const result = await state.sessions.forkAtMessage(sourceKey, entryId, agentParams);
       const editorText = result.editorText ?? "";
-      if (this.state !== state || !visibleSessionMatches(state, sourceKey, agentParams.agentId)) {
+      if (
+        !this.ownsHeaderOutcomeScope(scope) ||
+        !visibleSessionMatches(state, sourceKey, agentParams.agentId)
+      ) {
         return;
       }
       if (this.onPaneSessionChange?.(this.paneId, result.sessionKey) === false) {
@@ -510,6 +510,12 @@ export abstract class ChatPaneHistory extends ChatPaneReplyNavigation {
         draft: editorText,
       });
     } catch (error) {
+      if (
+        !this.ownsHeaderOutcomeScope(scope) ||
+        !visibleSessionMatches(state, sourceKey, agentParams.agentId)
+      ) {
+        return;
+      }
       state.lastError = formatUiError(error);
       state.chatError = state.lastError;
       state.requestUpdate?.();
