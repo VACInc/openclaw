@@ -14,6 +14,7 @@ import {
   type WorkerLiveEventErrorDetails,
   WORKER_GITHUB_PUBLICATION_PROTOCOL_FEATURE,
   WORKER_LIVE_EVENT_PROTOCOL_FEATURE,
+  WORKER_PORTAL_PROTOCOL_FEATURE,
   WORKER_SESSION_TOOLS_PROTOCOL_FEATURE,
   type WorkerSessionToolResult,
   type WorkerTranscriptCommitErrorReason,
@@ -25,12 +26,9 @@ import {
   type WorkerInferenceTerminalFrame,
   WORKER_INFERENCE_PROTOCOL_FEATURE,
 } from "../../../../packages/gateway-protocol/src/schema/worker-inference.js";
-import { createTestAdmittedRunContext } from "../../../agents/admitted-run-context.test-support.js";
+import { createNoisyPngBuffer } from "../../../../test/helpers/image-fixtures.js";
+import { prepareSystemAgentRunAdmission } from "../../../agents/admitted-run-context.js";
 import type { SessionPlacementTurnParams } from "../../../agents/session-placement-admission.js";
-import {
-  claimAgentRunDelegatedAuthority,
-  releaseAgentRunDelegatedAuthority,
-} from "../../../infra/agent-run-registry.js";
 import {
   beginGatewayRestartSignalAdmission,
   resetGatewayWorkAdmission,
@@ -61,6 +59,7 @@ const HANDSHAKE = {
     WORKER_LIVE_EVENT_PROTOCOL_FEATURE,
     WORKER_SESSION_TOOLS_PROTOCOL_FEATURE,
     WORKER_GITHUB_PUBLICATION_PROTOCOL_FEATURE,
+    WORKER_PORTAL_PROTOCOL_FEATURE,
     WORKER_INFERENCE_PROTOCOL_FEATURE,
   ],
 };
@@ -172,6 +171,12 @@ const SESSION_TOOL_CASES = [
     method: "worker.github.publish",
     toolName: "github_publish",
     request: { toolCallId: "call-publish", title: "Publish the fix" },
+  },
+  {
+    name: "portal",
+    method: "worker.portal",
+    toolName: "portal",
+    request: { toolCallId: "call-portal", action: "open", port: 3000 },
   },
 ] as const;
 const cleanups: Array<() => void> = [];
@@ -656,9 +661,11 @@ describe("dedicated worker websocket protocol", () => {
 
   it.each(SESSION_TOOL_CASES)("feature-gates $name independently", async (testCase) => {
     const requiredFeature =
-      testCase.toolName === "github_publish"
-        ? WORKER_GITHUB_PUBLICATION_PROTOCOL_FEATURE
-        : WORKER_SESSION_TOOLS_PROTOCOL_FEATURE;
+      testCase.toolName === "portal"
+        ? WORKER_PORTAL_PROTOCOL_FEATURE
+        : testCase.toolName === "github_publish"
+          ? WORKER_GITHUB_PUBLICATION_PROTOCOL_FEATURE
+          : WORKER_SESSION_TOOLS_PROTOCOL_FEATURE;
     const harness = attachHarness({
       identity: {
         ...ATTACHED_IDENTITY,
@@ -674,6 +681,26 @@ describe("dedicated worker websocket protocol", () => {
       expect(harness.close).toHaveBeenCalledWith(1008, "method-not-allowed"),
     );
     expect(harness.service.executeSessionTool).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an invalid action", { toolCallId: "call-portal", action: "delete", port: 3000 }],
+    [
+      "an unexpected field",
+      { toolCallId: "call-portal", action: "open", port: 3000, unexpected: true },
+    ],
+  ])("rejects portal parameters with %s before execution", async (_reason, request) => {
+    const harness = attachHarness({ identity: ATTACHED_IDENTITY });
+    await admit(harness);
+    harness.sendRequest("worker.portal", request);
+
+    await waitForWorkerProtocol(() => expect(harness.responses).toHaveLength(2));
+    expect(harness.responses[1]).toMatchObject({
+      ok: false,
+      error: { details: { reason: "invalid-frame" } },
+    });
+    expect(harness.service.executeSessionTool).not.toHaveBeenCalled();
+    expect(harness.close).not.toHaveBeenCalled();
   });
 
   it("dispatches semantic transcript commits on the closed worker allowlist", async () => {
@@ -692,6 +719,57 @@ describe("dedicated worker websocket protocol", () => {
       method: "worker.transcript.commit",
     });
     expect(harness.close).not.toHaveBeenCalled();
+  });
+
+  it("admits large image transcript frames without enlarging control or text budgets", async () => {
+    const image = {
+      type: "image",
+      data: createNoisyPngBuffer(256, 256).toString("base64"),
+      mimeType: "image/png",
+    };
+    expect(Buffer.byteLength(image.data)).toBeGreaterThan(64 * 1024);
+    const transcript = {
+      ...TRANSCRIPT_COMMIT,
+      messages: [
+        {
+          role: "toolResult",
+          toolName: "read",
+          toolCallId: "read-image",
+          timestamp: 1,
+          isError: false,
+          content: [image],
+        },
+      ],
+    };
+    const valid = attachHarness();
+    await admit(valid);
+    valid.sendRequest("worker.transcript.commit", transcript);
+    await waitForWorkerProtocol(() => expect(valid.responses).toHaveLength(2));
+    expect(valid.service.commitTranscript).toHaveBeenCalledWith(IDENTITY, transcript);
+    expect(valid.close).not.toHaveBeenCalled();
+    for (const [method, params] of [
+      [
+        "worker.transcript.commit",
+        {
+          ...transcript,
+          messages: [
+            {
+              ...transcript.messages[0],
+              content: [image, { type: "text", text: "x".repeat(64 * 1024) }],
+            },
+          ],
+        },
+      ],
+      ["worker.heartbeat", { runEpoch: 1, extra: image.data }],
+    ] as const) {
+      const oversized = attachHarness();
+      await admit(oversized);
+      oversized.sendRequest(method, params);
+      await waitForWorkerProtocol(() =>
+        expect(oversized.close).toHaveBeenCalledWith(1009, "invalid-frame"),
+      );
+      expect(oversized.service.commitTranscript).not.toHaveBeenCalled();
+    }
   });
 
   it("gates live-event features, schema, and closed errors", async () => {
@@ -889,9 +967,11 @@ describe("dedicated worker websocket protocol", () => {
     if (!claim) {
       throw new Error("expected attached worker turn claim");
     }
-    const admittedRunContext = createTestAdmittedRunContext(claim.runId);
-    const delegatedAuthority = claimAgentRunDelegatedAuthority(
-      admittedRunContext.operationalRunInstance,
+    const preparedRunAdmission = prepareSystemAgentRunAdmission(
+      {},
+      claim.runId,
+      "main",
+      "test.worker-suspension",
     );
     const stateDir = await fs.mkdtemp(
       path.join(await fs.realpath(os.tmpdir()), "openclaw-worker-suspension-"),
@@ -910,25 +990,26 @@ describe("dedicated worker websocket protocol", () => {
     let suspension: ReturnType<typeof tryBeginGatewaySuspendAdmission> = null;
     let restartSignal: ReturnType<typeof beginGatewayRestartSignalAdmission> = null;
     try {
-      await rootAdmission.run(() =>
+      const { runtimeIdentity } = await rootAdmission.run(() =>
         prepareWorkerAgentRuntimeIdentity({
           agentId: "main",
           placements,
           runtimeInstanceId: ATTACHED_IDENTITY.environmentId,
           sessionKey: "agent:main:worker-suspension",
           turn: {
-            admittedRunContext,
+            preparedRunAdmission,
             runId: claim.runId,
           } as SessionPlacementTurnParams,
           turnClaim: claim,
         }),
       );
+      expect(runtimeIdentity.executionIdentityToken).toBeUndefined();
       const harness = attachHarness({ identity: ATTACHED_IDENTITY });
       await admit(harness);
       suspension = tryBeginGatewaySuspendAdmission(() => {});
       expect(suspension?.drain()).toBe(true);
       if (fence === "run") {
-        releaseAgentRunDelegatedAuthority(delegatedAuthority);
+        preparedRunAdmission.close();
       } else if (fence === "placement") {
         placementActive = false;
         signalWorkerTurnClaimClosed(storePath, claim);
@@ -955,7 +1036,7 @@ describe("dedicated worker websocket protocol", () => {
       restartSignal?.rollback();
       suspension?.release();
       signalWorkerTurnClaimClosed(storePath, claim);
-      releaseAgentRunDelegatedAuthority(delegatedAuthority);
+      preparedRunAdmission.close();
       rootAdmission.release();
       closeOpenClawStateDatabaseForTest();
       await fs.rm(stateDir, { recursive: true, force: true });
