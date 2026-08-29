@@ -1006,16 +1006,11 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
     const qualityGuardEnabled = runtime?.qualityGuardEnabled ?? false;
     const providerId = runtime?.provider;
     const turnPrefixMessages = baseTurnPrefixMessages;
-    const splitUserAsk = preparation.isSplitTurn ? extractLatestUserAsk(turnPrefixMessages) : null;
     const recentTurnsPreserve = resolveRecentTurnsPreserve(runtime?.recentTurnsPreserve);
-    const structuredInstructions = [
-      buildCompactionStructureInstructions(customInstructions, summarizationInstructions),
-      splitUserAsk !== null
-        ? "The latest user request belongs to a split turn whose remaining suffix stays verbatim; preserve its work state outside ## Pending user asks."
-        : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const structuredInstructions = buildCompactionStructureInstructions(
+      customInstructions,
+      summarizationInstructions,
+    );
     let workspaceContextPromise: Promise<string> | undefined;
     const finalizeSummaryText = async (
       body: string,
@@ -1236,6 +1231,9 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       }
 
       const oracleMessages = [...messagesToSummarize, ...turnPrefixMessages];
+      const splitUserAsk = preparation.isSplitTurn
+        ? extractLatestUserAsk(turnPrefixMessages)
+        : null;
       const latestUserAsk = splitUserAsk ?? extractLatestUserAsk(messagesToSummarize);
       const identifiers = extractOpaqueIdentifiers(
         oracleMessages.slice(-10).map(extractMessageText).filter(Boolean).join("\n"),
