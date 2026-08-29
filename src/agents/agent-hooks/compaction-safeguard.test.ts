@@ -2788,6 +2788,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
 
   it("restores source ask evidence omitted by the split-turn summary", async () => {
     mockSummarizeInStages.mockReset();
+    const olderAsk = "summarize the earlier provider migration";
     const latestAsk = "confirm whether the aurora migration completed successfully";
     const identifier = "/tmp/split-turn-retention.log";
     const historySummary = [
@@ -2798,7 +2799,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
       "## Constraints/Rules",
       "Preserve exact context.",
       "## Pending user asks",
-      "Continue the active work.",
+      olderAsk,
       "## Exact identifiers",
       "None.",
     ].join("\n");
@@ -2816,9 +2817,7 @@ describe("compaction-safeguard recent-turn preservation", () => {
     });
     const event = {
       preparation: {
-        messagesToSummarize: [
-          { role: "user", content: "summarize earlier work", timestamp: 1 },
-        ] as AgentMessage[],
+        messagesToSummarize: [{ role: "user", content: olderAsk, timestamp: 1 }] as AgentMessage[],
         turnPrefixMessages: [
           { role: "user", content: `${latestAsk} ${identifier}`, timestamp: 2 },
         ] as AgentMessage[],
@@ -2836,11 +2835,14 @@ describe("compaction-safeguard recent-turn preservation", () => {
 
     const summary = expectCompactionResult(result).summary;
     expect(summary.length).toBeLessThanOrEqual(MAX_COMPACTION_SUMMARY_CHARS);
+    expect(summary).toContain(`## Pending user asks\n${olderAsk}`);
     expect(summary).toContain(latestAsk);
     expect(summary).toContain(identifier);
     expectCanonicalSummaryHeadingsOnce(summary);
     expect(auditSummaryQuality({ summary, identifiers: [identifier], latestAsk }).ok).toBe(true);
     expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
+    const historyCall = requireRecord(mockCallArg(mockSummarizeInStages));
+    expect(historyCall.customInstructions).not.toContain("belongs to a split turn");
     const prefixCall = requireRecord(mockCallArg(mockSummarizeInStages, 1));
     expect(prefixCall.customInstructions).toContain("## Original Request");
     expect(prefixCall.customInstructions).not.toContain(
