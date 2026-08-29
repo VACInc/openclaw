@@ -492,7 +492,8 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
                   return resolveEffectiveCompactionMode(params.config) === "default" &&
                     trigger !== "manual"
                     ? activeSession[agentSessionAutomaticCompaction](params.customInstructions)
-                    : activeSession.compact(params.customInstructions),
+                    : activeSession.compact(params.customInstructions);
+                },
                 compactionTimeoutMs,
                 {
                   abortSignal: params.abortSignal,

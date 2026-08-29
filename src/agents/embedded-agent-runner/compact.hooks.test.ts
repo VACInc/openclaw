@@ -613,6 +613,8 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
         }),
       }),
     );
+  });
+
   it("refreshes the delegated watchdog before post-compaction hooks", async () => {
     const compactionTimeoutReset = vi.fn();
     hookRunner.hasHooks.mockImplementation((name?: string) => name === "after_compaction");
@@ -1824,6 +1826,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
           "## Exact identifiers",
           "None.",
         ].join("\n");
+        const expectedSummaryRequest = `## Latest user request context\n${JSON.stringify("Compare the remaining options.")}`;
         const sessionManager = SessionManager.inMemory(TEST_WORKSPACE_DIR);
         for (const content of [
           "Review the deployment checklist.",
@@ -1929,12 +1932,15 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
           expect(result).toMatchObject({
             ok: true,
             compacted: true,
-            result: { summary: fallbackSummary },
+            result: { summary: expect.stringContaining(expectedSummaryRequest) },
           });
+          expect(result.result?.summary).toContain(
+            "Review the deployment checklist before rollout.",
+          );
           expect(
             sessionManager.getBranch().findLast((entry) => entry.type === "compaction"),
           ).toMatchObject({
-            summary: fallbackSummary,
+            summary: expect.stringContaining(expectedSummaryRequest),
           });
         } else {
           expect(result).toMatchObject({ ok: false, compacted: false });

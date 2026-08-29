@@ -1282,25 +1282,6 @@ function truncateOversizedToolResultsInExistingSessionManager(params: {
     return { truncated: false, truncatedCount: 0, reason: "empty session" };
   }
 
-  if (params.projectionState) {
-    const messages = sessionManager.buildSessionContext().messages;
-    const projected = truncateOversizedToolResultsInMessages(
-      messages,
-      contextWindowTokens,
-      params.maxCharsOverride,
-      params.aggregateMaxCharsOverride,
-      params.projectionState,
-    );
-    // Recovery progress is measured against the frozen provider projection, not durable rows.
-    // Reusing identical projected bytes must not trigger another provider retry.
-    const truncatedCount = projected.truncatedCount;
-    return {
-      truncated: truncatedCount > 0,
-      truncatedCount,
-      ...(truncatedCount === 0 ? { reason: "no oversized or aggregate tool results" } : {}),
-    };
-  }
-
   const { maxChars, aggregateBudgetChars, plan } = buildRecoveryToolResultReplacementPlan({
     branch,
     contextWindowTokens,
