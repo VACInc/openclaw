@@ -1422,9 +1422,42 @@ describe("compaction-safeguard recent-turn preservation", () => {
         sourceSummaries: [summary],
         identifiers: [],
         latestAsk: null,
-        latestAskInRetainedTurn: true,
+        retainedTurnSummary: summary,
       }),
     ).toEqual({ ok: true, reasons: [] });
+  });
+
+  it("scopes retained ask checks to the split-prefix summary", () => {
+    const latestAsk = "combine the provider boxes into one artifact";
+    const structuredSummary = (pendingAsk: string) =>
+      [
+        "## Decisions",
+        `${latestAsk} after validation.`,
+        "## Open TODOs",
+        "None.",
+        "## Constraints/Rules",
+        "Preserve the request state.",
+        "## Pending user asks",
+        pendingAsk,
+        "## Exact identifiers",
+        "None.",
+      ].join("\n");
+    const historySummary = structuredSummary("combine the provider boxes after migration");
+    const splitSummary = structuredSummary("None.");
+    const params = {
+      summary: splitSummary,
+      sourceSummaries: [historySummary, splitSummary],
+      identifiers: [],
+      latestAsk,
+    };
+
+    expect(auditSummaryQuality({ ...params, retainedTurnSummary: splitSummary })).toEqual({
+      ok: true,
+      reasons: [],
+    });
+    expect(
+      auditSummaryQuality({ ...params, retainedTurnSummary: historySummary }).reasons,
+    ).toContain("retained_turn_ask_marked_pending");
   });
 
   it("dedupes pure-hex identifiers across case variants", () => {

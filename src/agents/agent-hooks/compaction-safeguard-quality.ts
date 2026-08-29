@@ -434,7 +434,7 @@ export function auditSummaryQuality(params: {
   sourceSummaries?: string[];
   identifiers: string[];
   latestAsk: string | null;
-  latestAskInRetainedTurn?: boolean;
+  retainedTurnSummary?: string;
   identifierPolicy?: CompactionSummarizationInstructions["identifierPolicy"];
 }): { ok: boolean; reasons: string[] } {
   const reasons: string[] = [];
@@ -464,13 +464,13 @@ export function auditSummaryQuality(params: {
     reasons.push("latest_user_ask_not_reflected");
   }
   if (
-    params.latestAskInRetainedTurn &&
+    params.retainedTurnSummary !== undefined &&
     resolveAskOverlapRequirement(params.latestAsk) &&
-    params.sourceSummaries?.some((source) =>
-      hasAskOverlap(
-        parseRequiredSummarySectionContents(source)?.[PENDING_ASK_SECTION_INDEX] ?? "",
-        params.latestAsk,
-      ),
+    hasAskOverlap(
+      parseRequiredSummarySectionContents(params.retainedTurnSummary)?.[
+        PENDING_ASK_SECTION_INDEX
+      ] ?? "",
+      params.latestAsk,
     )
   ) {
     reasons.push("retained_turn_ask_marked_pending");
