@@ -56,6 +56,7 @@ type GatewayRunSignalRequest = {
   restartReason?: string;
   restartIntent?: GatewayRestartIntent;
   hostedStop?: ReturnType<typeof createGatewayHostLifecycle>;
+  forceStop?: boolean;
 };
 
 type GatewayLifecycleRuntimeModule = typeof import("./lifecycle.runtime.js");
@@ -608,6 +609,7 @@ export async function runGatewayLoop(params: {
   const runAcceptedRequest = (acceptedRequest: GatewayRunSignalRequest) => {
     const { action, restartIntent } = acceptedRequest;
     const isRestart = action === "restart";
+    const forceStop = !isRestart && acceptedRequest.forceStop === true;
     if (isRestart) {
       activeRestartRequest = acceptedRequest;
     } else {
@@ -763,22 +765,37 @@ export async function runGatewayLoop(params: {
         } else {
           // Keep all process-owned work alive without spending the shutdown reserve
           // that server teardown and the supervisor watchdog need.
-          try {
-            markGatewayRestartTrace("stop.drain.begin");
-            const activeWorkDrain = await measureGatewayRestartTrace("stop.drain", () =>
-              eagerLifecycleRuntime.waitForGatewayActiveWork(drainTimeoutMs, {
-                onSnapshot: reportDrainSnapshot,
-              }),
+          if (forceStop) {
+            const snapshot = eagerLifecycleRuntime.createGatewayActiveWorkSnapshot();
+            if (snapshot.counts.embeddedRuns > 0) {
+              // A lifecycle stop is recoverable on the next Gateway start, so use the
+              // established restart abort reason instead of classifying it as user cancellation.
+              eagerLifecycleRuntime.abortEmbeddedAgentRun(undefined, {
+                mode: "compacting",
+                reason: "restart",
+              });
+            }
+            gatewayLog.warn(
+              `forced stop requested; skipping active work drain: ${snapshot.blockers.map((blocker) => blocker.message).join("; ") || "no active work"}`,
             );
-            if (!activeWorkDrain.drained) {
+          } else {
+            try {
+              markGatewayRestartTrace("stop.drain.begin");
+              const activeWorkDrain = await measureGatewayRestartTrace("stop.drain", () =>
+                eagerLifecycleRuntime.waitForGatewayActiveWork(drainTimeoutMs, {
+                  onSnapshot: reportDrainSnapshot,
+                }),
+              );
+              if (!activeWorkDrain.drained) {
+                gatewayLog.warn(
+                  `gateway active-work drain timeout reached; proceeding with shutdown: ${formatDrainCounts(activeWorkDrain.snapshot)}`,
+                );
+              }
+            } catch (err) {
               gatewayLog.warn(
-                `gateway active-work drain timeout reached; proceeding with shutdown: ${formatDrainCounts(activeWorkDrain.snapshot)}`,
+                `gateway active-work drain failed; proceeding with shutdown: ${formatErrorMessage(err)}`,
               );
             }
-          } catch (err) {
-            gatewayLog.warn(
-              `gateway active-work drain failed; proceeding with shutdown: ${formatErrorMessage(err)}`,
-            );
           }
           gatewayLog.info("active-work drain settled; beginning server close");
         }
@@ -821,7 +838,9 @@ export async function runGatewayLoop(params: {
           armForceExitTimer(SHUTDOWN_TIMEOUT_MS);
         }
         const closeDrainTimeoutMs = !isRestart
-          ? null
+          ? forceStop
+            ? 0
+            : null
           : restartDrainTimeoutMs === undefined
             ? SHUTDOWN_TIMEOUT_MS - RESTART_CLOSE_REPLY_DRAIN_SHUTDOWN_RESERVE_MS
             : Math.max(0, (restartDrainDeadlineAt ?? Date.now()) - Date.now());
@@ -889,8 +908,9 @@ export async function runGatewayLoop(params: {
     restartReason?: string,
     restartIntent?: GatewayRestartIntent,
     hostedStop?: ReturnType<typeof createGatewayHostLifecycle>,
+    forceStop?: boolean,
   ) => {
-    const acceptedRequest = { action, signal, restartReason, restartIntent, hostedStop };
+    const acceptedRequest = { action, signal, restartReason, restartIntent, hostedStop, forceStop };
     if (shuttingDown) {
       const currentRestartRequest = pendingStartupRequest ?? activeRestartRequest;
       if (
@@ -980,14 +1000,13 @@ export async function runGatewayLoop(params: {
       return;
     }
     void (async () => {
-      const { consumeGatewayRestartIntentPayloadSync } = await loadGatewayLifecycleRuntimeModule();
-      const restartIntent = consumeGatewayRestartIntentPayloadSync();
-      request(
-        restartIntent ? "restart" : "stop",
-        "SIGTERM",
-        restartIntent?.reason,
-        restartIntent ?? undefined,
-      );
+      const { consumeGatewayLifecycleIntentSync } = await loadGatewayLifecycleRuntimeModule();
+      const lifecycleIntent = consumeGatewayLifecycleIntentSync();
+      if (lifecycleIntent?.kind === "restart") {
+        request("restart", "SIGTERM", lifecycleIntent.intent.reason, lifecycleIntent.intent);
+        return;
+      }
+      request("stop", "SIGTERM", undefined, undefined, undefined, lifecycleIntent?.kind === "stop");
     })().catch((err: unknown) => {
       gatewayLog.error(`failed to handle SIGTERM: ${String(err)}`);
       request("stop", "SIGTERM");
