@@ -762,40 +762,38 @@ export async function runGatewayLoop(params: {
               ["force", restartIntent?.force === true],
             ],
           );
+        } else if (forceStop) {
+          const snapshot = eagerLifecycleRuntime.createGatewayActiveWorkSnapshot();
+          if (snapshot.counts.embeddedRuns > 0) {
+            // A lifecycle stop is recoverable on the next Gateway start, so use the
+            // established restart abort reason instead of classifying it as user cancellation.
+            eagerLifecycleRuntime.abortEmbeddedAgentRun(undefined, {
+              mode: "compacting",
+              reason: "restart",
+            });
+          }
+          gatewayLog.warn(
+            `forced stop requested; skipping active work drain: ${snapshot.blockers.map((blocker) => blocker.message).join("; ") || "no active work"}`,
+          );
         } else {
           // Keep all process-owned work alive without spending the shutdown reserve
           // that server teardown and the supervisor watchdog need.
-          if (forceStop) {
-            const snapshot = eagerLifecycleRuntime.createGatewayActiveWorkSnapshot();
-            if (snapshot.counts.embeddedRuns > 0) {
-              // A lifecycle stop is recoverable on the next Gateway start, so use the
-              // established restart abort reason instead of classifying it as user cancellation.
-              eagerLifecycleRuntime.abortEmbeddedAgentRun(undefined, {
-                mode: "compacting",
-                reason: "restart",
-              });
-            }
-            gatewayLog.warn(
-              `forced stop requested; skipping active work drain: ${snapshot.blockers.map((blocker) => blocker.message).join("; ") || "no active work"}`,
+          try {
+            markGatewayRestartTrace("stop.drain.begin");
+            const activeWorkDrain = await measureGatewayRestartTrace("stop.drain", () =>
+              eagerLifecycleRuntime.waitForGatewayActiveWork(drainTimeoutMs, {
+                onSnapshot: reportDrainSnapshot,
+              }),
             );
-          } else {
-            try {
-              markGatewayRestartTrace("stop.drain.begin");
-              const activeWorkDrain = await measureGatewayRestartTrace("stop.drain", () =>
-                eagerLifecycleRuntime.waitForGatewayActiveWork(drainTimeoutMs, {
-                  onSnapshot: reportDrainSnapshot,
-                }),
-              );
-              if (!activeWorkDrain.drained) {
-                gatewayLog.warn(
-                  `gateway active-work drain timeout reached; proceeding with shutdown: ${formatDrainCounts(activeWorkDrain.snapshot)}`,
-                );
-              }
-            } catch (err) {
+            if (!activeWorkDrain.drained) {
               gatewayLog.warn(
-                `gateway active-work drain failed; proceeding with shutdown: ${formatErrorMessage(err)}`,
+                `gateway active-work drain timeout reached; proceeding with shutdown: ${formatDrainCounts(activeWorkDrain.snapshot)}`,
               );
             }
+          } catch (err) {
+            gatewayLog.warn(
+              `gateway active-work drain failed; proceeding with shutdown: ${formatErrorMessage(err)}`,
+            );
           }
           gatewayLog.info("active-work drain settled; beginning server close");
         }
