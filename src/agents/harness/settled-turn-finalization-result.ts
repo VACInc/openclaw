@@ -16,12 +16,39 @@ const ALLOWED_SETTLED_FINALIZATION_RESULT_KEYS = new Set([
   "diagnosticTrace",
 ]);
 
+const SERIALIZED_TOOL_CALL_PROVIDER_MARKER_RE = /\]<\]provider\[>\[/g;
+const SERIALIZED_TOOL_CALL_MARKUP_RE =
+  /^<tool_call\b[^>]*>\s*<invoke\b[^>]*>[\s\S]*<\/invoke>\s*<\/tool_call>$/i;
+
 function assistantContainsToolCall(
   assistant: AgentHarnessSettledTurnFinalizationResult["assistant"],
 ): boolean {
   return assistant.content.some(
     (block) => block !== null && typeof block === "object" && block.type === "toolCall",
   );
+}
+
+function assistantContainsSerializedToolCallMarkup(
+  assistant: AgentHarnessSettledTurnFinalizationResult["assistant"],
+): boolean {
+  const text = assistant.content
+    .map((block) => {
+      if (
+        block === null ||
+        typeof block !== "object" ||
+        !("type" in block) ||
+        !("text" in block) ||
+        (block.type !== "text" && block.type !== "output_text" && block.type !== "input_text") ||
+        typeof block.text !== "string"
+      ) {
+        return "";
+      }
+      return block.text;
+    })
+    .join("")
+    .replace(SERIALIZED_TOOL_CALL_PROVIDER_MARKER_RE, "")
+    .trim();
+  return SERIALIZED_TOOL_CALL_MARKUP_RE.test(text);
 }
 
 /**
@@ -42,6 +69,9 @@ export function assertSettledTurnFinalizationResult(
   }
   if (result.assistant.stopReason === "toolUse" || assistantContainsToolCall(result.assistant)) {
     throw new Error("Settled-turn finalization returned a tool call");
+  }
+  if (assistantContainsSerializedToolCallMarkup(result.assistant)) {
+    throw new Error("Settled-turn finalization returned serialized tool-call markup");
   }
   if (result.assistant.stopReason !== "stop") {
     throw new Error(

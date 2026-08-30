@@ -78,6 +78,60 @@ describe("assertSettledTurnFinalizationResult", () => {
     ).toThrow("returned a tool call");
   });
 
+  it("rejects serialized tool-call markup returned as visible text", () => {
+    expect(() =>
+      assertSettledTurnFinalizationResult({
+        assistant: assistantMessage([
+          {
+            type: "text",
+            text: ']<]provider[>[<tool_call>\n]<]provider[>[<invoke name="tool_call">]<]provider[>[<id>read]<]provider[>[</id>]<]provider[>[</invoke>\n]<]provider[>[</tool_call>',
+          },
+        ]),
+      }),
+    ).toThrow("returned serialized tool-call markup");
+  });
+
+  it("rejects serialized tool-call markup split across text blocks", () => {
+    expect(() =>
+      assertSettledTurnFinalizationResult({
+        assistant: assistantMessage([
+          { type: "text", text: "]<]provider[>[<tool_call>\n" },
+          {
+            type: "text",
+            text: ']<]provider[>[<invoke name="tool_call">]<]provider[>[<id>read]<]provider[>[</id>]<]provider[>[</invoke>\n]<]provider[>[</tool_call>',
+          },
+        ]),
+      }),
+    ).toThrow("returned serialized tool-call markup");
+  });
+
+  it("rejects serialized tool-call markup in output_text content", () => {
+    expect(() =>
+      assertSettledTurnFinalizationResult({
+        assistant: assistantMessage([
+          {
+            type: "output_text",
+            text: '<tool_call><invoke name="tool_call"><id>read</id></invoke></tool_call>',
+            annotations: [],
+          } as unknown as AssistantMessage["content"][number],
+        ]),
+      }),
+    ).toThrow("returned serialized tool-call markup");
+  });
+
+  it("allows prose that quotes serialized tool-call markup as an example", () => {
+    const result = {
+      assistant: assistantMessage([
+        {
+          type: "text" as const,
+          text: 'The leaked payload looked like `<tool_call><invoke name="read"></invoke></tool_call>`.',
+        },
+      ]),
+    };
+
+    expect(assertSettledTurnFinalizationResult(result)).toBe(result);
+  });
+
   it("classifies a normally completed empty answer", () => {
     const result = {
       assistant: assistantMessage([{ type: "text", text: "  " }]),
