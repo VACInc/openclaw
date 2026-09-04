@@ -36,6 +36,13 @@ const findVerifiedGatewayListenerPidsOnPortSync = vi.fn<(port: number) => number
 const signalVerifiedGatewayPidSync = vi.fn<(pid: number, signal: "SIGTERM" | "SIGUSR1") => void>();
 const writeGatewayRestartIntentSync = vi.fn();
 const clearGatewayRestartIntentSync = vi.fn();
+const resolveGatewayServiceProbeHosts = vi.fn(
+  async (_params: { env?: Record<string, string | undefined>; command?: unknown }) =>
+    ["127.0.0.1"] as readonly string[],
+);
+const probePortUsage = vi.fn(
+  async (_port: number, _hosts?: readonly string[]) => "free" as "free" | "busy" | "unknown",
+);
 const formatGatewayPidList = vi.fn<(pids: number[]) => string>((pids) => pids.join(", "));
 const probeGateway =
   vi.fn<
@@ -247,6 +254,8 @@ describe("runDaemonRestart health checks", () => {
     repairLoadedGatewayServiceForStart.mockReset();
     appendGatewayLifecycleAudit.mockClear();
     createGatewayLifecycleMutationAudit.mockClear();
+    resolveGatewayServiceProbeHosts.mockReset().mockResolvedValue(["127.0.0.1"]);
+    probePortUsage.mockReset().mockResolvedValue("free");
     mockSystemAccountHome();
 
     service.readCommand.mockResolvedValue({
