@@ -10,6 +10,7 @@ import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js"
 import { formatSqliteSessionFileMarker } from "../../config/sessions/legacy-sqlite-marker.js";
 import {
   appendTranscriptMessage,
+  appendTranscriptMessageSync,
   loadTranscriptEvents,
   readActiveTranscriptEntryAnchor,
   replaceSessionEntry,
@@ -201,9 +202,25 @@ describe("rewriteTranscriptEntriesInSessionManager", () => {
         }),
         "pending input receipt",
       );
+      const sources = [source];
+      if (collected) {
+        sources.push(
+          requireValue(
+            await stageSessionPendingInput(target, {
+              runId: "admitted-rewrite-second",
+              message: {
+                ...message,
+                idempotencyKey: "admitted-rewrite-second:user",
+              },
+              assertCurrent: () => {},
+            }),
+            "second pending input receipt",
+          ),
+        );
+      }
       const receipt = collected
         ? requireValue(
-            bindSessionPendingInputSources([source], {
+            bindSessionPendingInputSources(sources, {
               ...message,
               idempotencyKey: "collected-rewrite:user",
             }),
@@ -299,6 +316,12 @@ describe("rewriteTranscriptEntriesInSessionManager", () => {
             }),
           );
           expect(rewritten.changed).toBe(true);
+          expect(
+            receipt.run(() => appendTranscriptMessageSync(target, { message: receipt.message })),
+          ).toMatchObject({
+            ok: true,
+            value: { appended: false },
+          });
           await waitForSessionTranscriptProjection(target);
           const reopened = SessionManager.open(target, directory);
           const activeUsers = reopened

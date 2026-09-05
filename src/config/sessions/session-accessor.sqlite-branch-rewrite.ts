@@ -72,18 +72,10 @@ export function prepareTranscriptRewriteSync(
       }
     }
     let committedVersion: SessionTranscriptContextVersion;
-    const statePublications: Array<() => void> = [];
     runOpenClawAgentWriteTransaction((current) => {
-      // Register first: observers queued by inserts must see the committed manager view.
+      // Custody stages commit first; insert observers must also see the committed manager view.
       // The version is assigned before COMMIT; rollback discards this publication.
-      if (
-        !deferOpenClawAgentPostCommitPublication(current, () => {
-          for (const publishState of statePublications) {
-            publishState();
-          }
-          adopt(committedVersion);
-        })
-      ) {
+      if (!deferOpenClawAgentPostCommitPublication(current, () => adopt(committedVersion))) {
         throw new Error("Transcript rewrite requires a commit publication");
       }
       assertActive();
@@ -131,22 +123,14 @@ export function prepareTranscriptRewriteSync(
             throw new Error("Transcript rewrite message has no source entry");
           }
           const result = withSessionPendingInputRelocation(source.id, entry.message, () =>
-            appendTranscriptMessageInTransaction(
-              current,
-              resolved,
-              {
-                eventId: entry.id,
-                parentId: entry.parentId,
-                now: Date.parse(entry.timestamp),
-                message: entry.message,
-                messageAlreadyRedacted: true,
-                idempotencyLookup: "caller-checked",
-              },
-              (publishState) => {
-                statePublications.push(publishState);
-                return true;
-              },
-            ),
+            appendTranscriptMessageInTransaction(current, resolved, {
+              eventId: entry.id,
+              parentId: entry.parentId,
+              now: Date.parse(entry.timestamp),
+              message: entry.message,
+              messageAlreadyRedacted: true,
+              idempotencyLookup: "caller-checked",
+            }),
           );
           if (!result?.appended || result.messageId !== entry.id) {
             throw new Error("Transcript rewrite message was not appended");
