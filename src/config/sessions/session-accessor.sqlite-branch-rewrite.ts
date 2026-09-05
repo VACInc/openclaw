@@ -1,5 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
-import type { SessionEntry } from "../../agents/sessions/session-manager-types.js";
+import type {
+  SessionEntry,
+  SessionLeafControl,
+} from "../../agents/sessions/session-manager-types.js";
 import { executeSqliteQueryTakeFirstSync } from "../../infra/kysely-sync.js";
 import {
   deferOpenClawAgentPostCommitPublication,
@@ -38,7 +41,7 @@ export function prepareTranscriptRewriteSync(
   assertActive: () => void,
   loadedVersion: SessionTranscriptContextVersion | undefined,
 ): (
-  entries: SessionEntry[],
+  entries: Array<SessionEntry | SessionLeafControl>,
   sources: ReadonlyMap<string, SessionEntry>,
   adopt: (version: SessionTranscriptContextVersion) => void,
 ) => void {
@@ -129,6 +132,7 @@ export function prepareTranscriptRewriteSync(
               now: Date.parse(entry.timestamp),
               message: entry.message,
               messageAlreadyRedacted: true,
+              appendMode: entry.appendMode,
               idempotencyLookup: "caller-checked",
             }),
           );
