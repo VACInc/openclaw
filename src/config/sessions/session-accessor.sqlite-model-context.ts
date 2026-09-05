@@ -13,7 +13,6 @@ import {
 import { runSqliteDeferredTransactionSync } from "../../infra/sqlite-transaction.js";
 import type { UserTurnTranscriptAdmissionReceipt } from "../../sessions/user-turn-transcript.types.js";
 import { withOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-db-readonly.js";
-import type { OpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import type {
   SessionTranscriptReadScope,
   TranscriptEvent,
@@ -23,6 +22,10 @@ import {
   resolveSqliteTranscriptReadScope,
   toDatabaseOptions,
 } from "./session-accessor.sqlite-scope.js";
+import {
+  readTranscriptContextVersionInTransaction,
+  type SessionTranscriptContextVersion,
+} from "./session-accessor.sqlite-transcript-state.js";
 import {
   projectModelContextEventSql,
   projectModelContextNavigationSql,
@@ -37,11 +40,10 @@ import {
   selectSessionTranscriptTreePathNodes,
 } from "./transcript-tree.js";
 
+export type { SessionTranscriptContextVersion } from "./session-accessor.sqlite-transcript-state.js";
+
 type ContextEntry = SessionTreeEntry & { seq: number };
-export type SessionTranscriptContextVersion = {
-  generation: string | null;
-  rawSeq: number | null;
-};
+
 type ModelContextRequest = { entry: ContextEntry; omitCheckpoint: boolean };
 type TranscriptContextSnapshot = {
   header: TranscriptEvent;
@@ -55,24 +57,6 @@ type TranscriptContextSnapshot = {
 
 const MODEL_CONTEXT_PAYLOAD_BATCH_SIZE = 400;
 
-function readContextVersion(database: Pick<OpenClawAgentDatabase, "db">, sessionId: string) {
-  const db = getSessionKysely(database.db);
-  return executeSqliteQueryTakeFirstSync(
-    database.db,
-    db
-      .selectFrom("transcript_events")
-      .select((eb) => [
-        eb.fn.max<number | null>("seq").as("rawSeq"),
-        eb
-          .selectFrom("transcript_rewrite_watermarks")
-          .select("generation")
-          .where("session_id", "=", sessionId)
-          .as("generation"),
-      ])
-      .where("session_id", "=", sessionId),
-  )!;
-}
-
 /** Unadmitted context must still describe this session when an async read returns. */
 export function validateSessionTranscriptContextVersion(
   scope: SessionTranscriptReadScope,
@@ -80,7 +64,7 @@ export function validateSessionTranscriptContextVersion(
 ): void {
   const resolved = resolveSqliteTranscriptReadScope(scope);
   const result = withOpenClawAgentDatabaseReadOnly(
-    (database) => readContextVersion(database, resolved.sessionId),
+    (database) => readTranscriptContextVersionInTransaction(database, resolved.sessionId),
     toDatabaseOptions(resolved),
     { throwOnMissingTable: true },
   );
@@ -176,7 +160,7 @@ function withTranscriptContextSnapshot<T>(
         () => {
           const db = getSessionKysely(database.db);
           const fence = resolveSqliteSessionTranscriptReadFence({ database, ...resolved });
-          const version = readContextVersion(database, resolved.sessionId);
+          const version = readTranscriptContextVersionInTransaction(database, resolved.sessionId);
           const base = db
             .selectFrom("transcript_events")
             .where("session_id", "=", resolved.sessionId)

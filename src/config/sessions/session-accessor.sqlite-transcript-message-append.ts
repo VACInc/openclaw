@@ -51,6 +51,8 @@ export function appendTranscriptMessageInTransaction<TMessage>(
   database: OpenClawAgentDatabase,
   resolved: ResolvedTranscriptScope,
   options: TranscriptMessageAppendOptions<TMessage> & { messageAlreadyRedacted?: boolean },
+  deferPublication: (publish: () => void) => boolean = (publish) =>
+    deferOpenClawAgentPostCommitPublication(database, publish),
 ): TranscriptMessageAppendResult<TMessage> | undefined {
   const pending = resolveSessionPendingInputAppend(database, resolved, options.message);
   if (
@@ -191,11 +193,7 @@ export function appendTranscriptMessageInTransaction<TMessage>(
   const anchor = readAnchor({ message: persistedMessage, messageId });
   if (pending) {
     if (pending.commitRelocation) {
-      if (
-        !deferOpenClawAgentPostCommitPublication(database, () =>
-          pending.commitRelocation?.(messageId),
-        )
-      ) {
+      if (!deferPublication(() => pending.commitRelocation?.(messageId))) {
         throw new Error("Pending input relocation requires a transcript write transaction");
       }
     } else {
