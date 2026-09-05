@@ -252,7 +252,6 @@ export class SessionManagerCore extends SessionEntryNavigation<SessionEntry> {
   }
 
   protected override normalizeEntryParent(entry: SessionEntry): SessionEntry {
-    const parentId = this.resolveEntryParentId(entry);
     let normalized = super.normalizeEntryParent(entry);
     const boundedFirstKept = this.boundedFirstKeptById.get(normalized.id);
     if (
@@ -275,7 +274,7 @@ export class SessionManagerCore extends SessionEntryNavigation<SessionEntry> {
           normalized.parentId,
         ) ??
         this.findFirstCanonicalDescendant(normalized.firstKeptEntryId) ??
-        parentId;
+        this.resolveEntryParentId(entry);
       if (firstKeptEntryId && firstKeptEntryId !== normalized.firstKeptEntryId) {
         normalized = { ...normalized, firstKeptEntryId };
       }
