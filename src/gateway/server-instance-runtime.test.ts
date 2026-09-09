@@ -240,6 +240,9 @@ describe("createGatewayInstanceRuntime", () => {
           isCurrent: () => ownerCurrent,
         });
         await vi.waitFor(() => expect(sendText).toHaveBeenCalledTimes(2));
+        const queuedResumption = findDeliveryIntentOwner(
+          "main-session-restart-recovery:run-2:failed-notice",
+        );
         ownerCurrent = false;
         releasePlatformDispatch?.();
 
@@ -248,6 +251,7 @@ describe("createGatewayInstanceRuntime", () => {
         );
 
         expect(visibleSend).toHaveBeenCalledOnce();
+        expect(queuedResumption).toBeNull();
         expect(sendText).toHaveBeenCalledWith(
           expect.objectContaining({
             to: "+15551234567",
