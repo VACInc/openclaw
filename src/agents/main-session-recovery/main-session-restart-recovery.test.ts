@@ -138,6 +138,7 @@ vi.mock("../../gateway/call.js", () => ({
 const sendRecoveryNotice = vi.fn<GatewayRecoveryRuntime["sendRecoveryNotice"]>(async () => ({
   suppressed: false,
 }));
+let dispatchSettlement = createDeferred<void>();
 const mockRecoveryRuntime = {
   dispatchSessionMethod: vi.fn(),
   dispatchAgent: async <T>(
@@ -154,6 +155,7 @@ const mockRecoveryRuntime = {
       });
       options?.onAccepted?.(result);
       options?.onExecutionStarted?.();
+      await dispatchSettlement.promise;
     }
     return result;
   },
@@ -213,6 +215,7 @@ function loadSessionEntry(
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  dispatchSettlement = createDeferred<void>();
   vi.mocked(callGateway).mockReset();
   vi.mocked(callGateway).mockImplementation(async () => ({ runId: "run-resumed" }));
   resetAgentEventsForTest();
@@ -1916,6 +1919,10 @@ describe("main-session-restart-recovery", () => {
         [sessionKey]: { ...current, sessionId: "replacement-session" },
       });
       expect(notice?.isCurrent?.({})).toBe(false);
+      await writeStore(sessionsDir, { [sessionKey]: current });
+      expect(notice?.isCurrent?.({})).toBe(true);
+      dispatchSettlement.resolve();
+      await waitForFast(() => expect(notice?.isCurrent?.({})).toBe(false));
     },
   );
 
