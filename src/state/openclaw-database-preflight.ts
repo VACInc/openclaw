@@ -24,6 +24,9 @@ import {
   prepareSqliteReadOnlyLocation,
 } from "../infra/sqlite-snapshot-source.js";
 import { readSqliteUserVersion, SqliteSchemaVersionError } from "../infra/sqlite-user-version.js";
+import { hasStateDatabaseSourceExclusion, prepareStateDatabaseCanonicalMutation } from "../infra/state-database-coordinator.js";
+import { inspectAgentDatabaseSchemaInWorker } from "./openclaw-agent-schema-inspection-worker.js";
+import type { AgentSchemaInspection } from "./openclaw-agent-schema-inspection.js";
 import { discoverAgentDatabaseMigrationTargets } from "../infra/state-migrations.media-persistence-targets.js";
 import { isValidAgentId } from "../routing/session-key.js";
 import {
@@ -582,6 +585,7 @@ export async function preflightOpenClawDatabaseSchemas(options: {
       inspectedAgentPaths.add(realAgentPath);
       inspectedAgentTargets.add(inspectionKey);
       let agentVersion: number;
+      let schemaInspection: AgentSchemaInspection | null = null;
       let writerAppVersion: string | undefined;
       let agentSchemaMeta: ExistingAgentSchemaMeta | null | undefined;
       const inspectOwnership =
@@ -598,17 +602,36 @@ export async function preflightOpenClawDatabaseSchemas(options: {
         writerAppVersion = header.writerAppVersion;
         agentSchemaMeta = header.agentSchemaMeta;
       } else {
-        // Full readiness retains its private snapshot; diagnostics need only bounded metadata.
-        agentSnapshot = await prepareSqliteReadOnlyLocation(realAgentPath, {
-          signal: options.signal,
-        });
-        options.signal?.throwIfAborted();
-        agentDatabase = openNodeSqliteDatabase(agentSnapshot.location, { readOnly: true });
-        agentDatabase.exec(`PRAGMA busy_timeout = ${OPENCLAW_SQLITE_BUSY_TIMEOUT_MS};`);
-        agentVersion = readSqliteUserVersion(agentDatabase);
-        writerAppVersion = readWriterAppVersion(agentDatabase);
-        if (inspectOwnership && agentVersion <= supportedVersions.agent) {
-          agentSchemaMeta = readExistingAgentSchemaMeta(agentDatabase);
+        // Ownership admission and startup readiness retain their upstream snapshot contract.
+        if (
+          !options.requireStartupMigrationReadiness &&
+          !inspectOwnership &&
+          !hasStateDatabaseSourceExclusion(realAgentPath) &&
+          !prepareStateDatabaseCanonicalMutation(realAgentPath)
+        ) {
+          schemaInspection = await inspectAgentDatabaseSchemaInWorker({
+            pathname: realAgentPath,
+            agentId: row.agentId,
+            supportedVersion: supportedVersions.agent,
+            verifyCurrentSchemaShape: options.verifyCurrentSchemaShape,
+          }, options.signal);
+        }
+        if (schemaInspection) {
+          agentVersion = schemaInspection.version;
+          writerAppVersion = schemaInspection.writerAppVersion;
+        } else {
+          // Full readiness retains its private snapshot; diagnostics need only bounded metadata.
+          agentSnapshot = await prepareSqliteReadOnlyLocation(realAgentPath, {
+            signal: options.signal,
+          });
+          options.signal?.throwIfAborted();
+          agentDatabase = openNodeSqliteDatabase(agentSnapshot.location, { readOnly: true });
+          agentDatabase.exec(`PRAGMA busy_timeout = ${OPENCLAW_SQLITE_BUSY_TIMEOUT_MS};`);
+          agentVersion = readSqliteUserVersion(agentDatabase);
+          writerAppVersion = readWriterAppVersion(agentDatabase);
+          if (inspectOwnership && agentVersion <= supportedVersions.agent) {
+            agentSchemaMeta = readExistingAgentSchemaMeta(agentDatabase);
+          }
         }
       }
       if (agentVersion <= supportedVersions.agent && inspectOwnership && row.agentId) {
@@ -630,6 +653,9 @@ export async function preflightOpenClawDatabaseSchemas(options: {
           foundVersion: agentVersion,
           supportedVersion: supportedVersions.agent,
         });
+      }
+      if (schemaInspection?.reason) {
+        throw new Error(schemaInspection.reason);
       }
       if (agentVersion > supportedVersions.agent) {
         result.incompatible.push({
