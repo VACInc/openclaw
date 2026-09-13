@@ -418,8 +418,8 @@ const ToolExecBaseShape = {
       model: AgentModelSchema.optional(),
       /** Optional reasoning effort for model-backed approval reviews. */
       thinking: z.enum(["minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
-      /** Optional service tier for providers that support priority processing. */
-      serviceTier: z.enum(["default", "priority"]).optional(),
+      /** Optional Fast processing for supported provider requests. */
+      fastMode: z.boolean().optional(),
       /** Reviewer timeout in milliseconds (default: 30000). */
       timeoutMs: z.number().int().positive().optional(),
     })

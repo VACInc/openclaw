@@ -351,13 +351,13 @@ describe("createModelExecAutoReviewer", () => {
   });
 
   it.each([
-    { thinking: undefined, serviceTier: undefined },
-    { thinking: "low", serviceTier: "priority" },
-    { thinking: "high", serviceTier: "default" },
-    { thinking: "max", serviceTier: "priority" },
+    { thinking: undefined, fastMode: undefined },
+    { thinking: "low", fastMode: true },
+    { thinking: "high", fastMode: false },
+    { thinking: "max", fastMode: true },
   ] as const)(
-    "uses reviewer model, thinking $thinking and service tier $serviceTier for review calls",
-    async ({ thinking, serviceTier }) => {
+    "uses reviewer model, thinking $thinking and Fast mode $fastMode for review calls",
+    async ({ thinking, fastMode }) => {
       const prepare = vi.fn(async () => ({
         selection: {
           provider: "openrouter",
@@ -394,7 +394,7 @@ describe("createModelExecAutoReviewer", () => {
       const reviewer = createModelExecAutoReviewer({
         cfg: {},
         agentId: "ops",
-        reviewer: { model: reviewerModel, thinking, serviceTier },
+        reviewer: { model: reviewerModel, thinking, fastMode },
         deps: {
           acquireSimpleCompletionModelForAgent:
             prepare as unknown as typeof import("./simple-completion-runtime.js").acquireSimpleCompletionModelForAgent,
@@ -430,7 +430,8 @@ describe("createModelExecAutoReviewer", () => {
         }),
       );
       const options = complete.mock.calls[0]?.[0].options;
-      if (thinking && serviceTier) {
+      if (thinking && fastMode !== undefined) {
+        const serviceTier = fastMode ? "priority" : "default";
         expect(options).toMatchObject({ reasoning: thinking, serviceTier });
       } else {
         expect(options).not.toHaveProperty("reasoning");

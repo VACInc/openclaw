@@ -512,7 +512,9 @@ export function createModelExecAutoReviewer(params: {
               maxTokens: resolveExecReviewerMaxTokens(prepared.model.maxTokens),
               temperature: 0,
               ...(params.reviewer?.thinking ? { reasoning: params.reviewer.thinking } : {}),
-              ...(params.reviewer?.serviceTier ? { serviceTier: params.reviewer.serviceTier } : {}),
+              ...(params.reviewer?.fastMode !== undefined
+                ? { serviceTier: params.reviewer.fastMode ? "priority" : "default" }
+                : {}),
               signal,
             },
           }),

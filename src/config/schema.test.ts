@@ -1025,13 +1025,13 @@ describe("config schema", () => {
             primary: "openrouter/anthropic/claude-sonnet-4-6",
           },
           thinking: "low",
-          serviceTier: "priority",
+          fastMode: true,
           timeoutMs: 15_000,
         },
       },
     });
     expect(tools?.exec?.reviewer?.thinking).toBe("low");
-    expect(tools?.exec?.reviewer?.serviceTier).toBe("priority");
+    expect(tools?.exec?.reviewer?.fastMode).toBe(true);
     expect(tools?.exec?.reviewer?.model).toEqual({
       primary: "openrouter/anthropic/claude-sonnet-4-6",
     });
@@ -1046,7 +1046,7 @@ describe("config schema", () => {
                 reviewer: {
                   model: "openai/gpt-5.5",
                   thinking: "high",
-                  serviceTier: "default",
+                  fastMode: false,
                 },
               },
             },
@@ -1056,8 +1056,8 @@ describe("config schema", () => {
     });
     expect(config.agents?.entries?.main?.tools?.exec?.reviewer?.model).toBe("openai/gpt-5.5");
     expect(config.agents?.entries?.main?.tools?.exec?.reviewer?.thinking).toBe("high");
-    expect(config.agents?.entries?.main?.tools?.exec?.reviewer?.serviceTier).toBe("default");
-    expect(ToolsSchema.safeParse({ exec: { reviewer: { serviceTier: "turbo" } } }).success).toBe(
+    expect(config.agents?.entries?.main?.tools?.exec?.reviewer?.fastMode).toBe(false);
+    expect(ToolsSchema.safeParse({ exec: { reviewer: { fastMode: "priority" } } }).success).toBe(
       false,
     );
     expect(ToolsSchema.safeParse({ exec: { reviewer: { thinking: "turbo" } } }).success).toBe(
