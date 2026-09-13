@@ -8,7 +8,6 @@ import {
   hasDeliberateSilentTerminalReply,
   hasIntentionalTerminalCompletion,
 } from "../../agents/embedded-agent-runner/result-fallback-classifier.js";
-import { EMBEDDED_CYBER_FAILOVER_TRIGGER_CODE } from "../../agents/model-fallback.types.js";
 import {
   deriveContextPromptTokens,
   hasBillableUsage,
@@ -24,9 +23,9 @@ import {
 import { isSubagentSessionKey } from "../../routing/session-key.js";
 import { estimateAggregateUsageCost } from "../../utils/usage-format.js";
 import {
-  buildDaybreakRetryNotice,
   buildFallbackClearedNotice,
   buildFallbackNotice,
+  buildProviderPolicyRetryNotice,
 } from "../fallback-state.js";
 import {
   getReplyPayloadMetadata,
@@ -341,23 +340,32 @@ export async function prepareReplyAgentPayloads(state: {
     opts?.onAgentRunTerminalOutcome?.("failed");
     return returnPreparedFallbackPayload(silentFallbackFailurePayload);
   };
-  const daybreakRetrySucceeded =
+  const providerPolicyRetry = runResult.meta?.executionTrace?.providerPolicyRetry;
+  const successfulProviderPolicyRetry =
     isInteractive &&
     !isHeartbeat &&
     context.execution.status === "ok" &&
-    fallbackAttempts.some((attempt) => attempt.code === EMBEDDED_CYBER_FAILOVER_TRIGGER_CODE);
+    runResult.meta?.aborted !== true &&
+    providerPolicyRetry?.category === "cyber"
+      ? providerPolicyRetry
+      : undefined;
+  const providerPolicyRetrySucceeded = successfulProviderPolicyRetry !== undefined;
   const fallbackNoticeChanged =
     !fallbackExhausted &&
     !preserveUserFacingSessionState &&
     (fallbackTransition.fallbackTransitioned || fallbackTransition.fallbackCleared);
   const fallbackNoticeChatType =
-    fallbackNoticeChanged && !daybreakRetrySucceeded
+    fallbackNoticeChanged && !providerPolicyRetrySucceeded
       ? normalizeChatType(sessionCtx.ChatType)
       : undefined;
   const shouldDeliverFallbackNotice =
     fallbackNoticeChatType !== "group" && fallbackNoticeChatType !== "channel";
-  let fallbackNoticeText: string | null = daybreakRetrySucceeded
-    ? buildDaybreakRetryNotice()
+  let fallbackNoticeText: string | null = successfulProviderPolicyRetry
+    ? buildProviderPolicyRetryNotice({
+        provider: successfulProviderPolicyRetry.provider,
+        model: successfulProviderPolicyRetry.model,
+        cfg,
+      })
     : null;
   if (fallbackNoticeChanged && fallbackTransition.fallbackTransitioned) {
     emitAgentEvent({
@@ -375,7 +383,7 @@ export async function prepareReplyAgentPayloads(state: {
         attempts: fallbackAttempts,
       },
     });
-    if (shouldDeliverFallbackNotice && !daybreakRetrySucceeded) {
+    if (shouldDeliverFallbackNotice && !providerPolicyRetrySucceeded) {
       fallbackNoticeText = buildFallbackNotice({
         selectedProvider,
         selectedModel,
@@ -400,7 +408,7 @@ export async function prepareReplyAgentPayloads(state: {
         previousActiveModel: fallbackTransition.previousState.activeModel,
       },
     });
-    if (shouldDeliverFallbackNotice && !daybreakRetrySucceeded) {
+    if (shouldDeliverFallbackNotice && !providerPolicyRetrySucceeded) {
       fallbackNoticeText = buildFallbackClearedNotice({
         selectedProvider,
         selectedModel,

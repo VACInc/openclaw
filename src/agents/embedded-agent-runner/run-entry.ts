@@ -25,11 +25,11 @@ import type {
   ModelFallbackAttemptProvenance,
   ModelFallbackRouteResolution,
 } from "../model-fallback.types.js";
-import { EMBEDDED_CYBER_FAILOVER_TRIGGER_CODE } from "../model-fallback.types.js";
 import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
 import { resolveAgentRunAbortLifecycleFields } from "../run-termination.js";
 import {
   didEmbeddedCyberFailoverTargetCommitWork,
+  EMBEDDED_CYBER_FAILOVER_TRIGGER_CODE,
   isEmbeddedCyberFailoverTargetSkipped,
   isEmbeddedCyberFailoverTargetUsable,
   isEmbeddedModelSelectionStrict,
@@ -597,6 +597,15 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
       requestedProvider: params.selection.provider,
       requestedModel: params.selection.model,
       fallbackAttempts: fallbackResult.attempts,
+      ...(policyEscalated
+        ? {
+            providerPolicyRetry: {
+              category: "cyber",
+              provider: fallbackResult.provider,
+              model: fallbackResult.model,
+            } as const,
+          }
+        : {}),
     });
     const settledResult = {
       ...fallbackResult,

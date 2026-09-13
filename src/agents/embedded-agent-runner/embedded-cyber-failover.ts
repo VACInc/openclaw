@@ -11,6 +11,8 @@ import { hasCommittedOutboundDeliveryEvidence } from "./delivery-evidence.js";
 import { hasVisibleAgentPayload } from "./message-visibility.js";
 import type { EmbeddedAgentRunResult } from "./types.js";
 
+export const EMBEDDED_CYBER_FAILOVER_TRIGGER_CODE = "OPENAI_CYBER_POLICY_REFUSAL";
+
 export type EmbeddedCyberFailoverConfig = {
   mode: "auto" | "off";
   model: string;
