@@ -346,6 +346,7 @@ exports[`config tier coverage > keeps the curated common leaf set reviewable 1`]
   "tools.exec.reviewer.model",
   "tools.exec.reviewer.model.fallbacks.*",
   "tools.exec.reviewer.model.primary",
+  "tools.exec.reviewer.thinking",
   "tools.exec.safeBinProfiles.*.allowedValueFlags.*",
   "tools.exec.safeBinProfiles.*.deniedFlags.*",
   "tools.exec.safeBinTrustedDirs.*",
