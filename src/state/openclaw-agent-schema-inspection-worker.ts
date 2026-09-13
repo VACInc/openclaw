@@ -1,6 +1,7 @@
 import { fork } from "node:child_process";
 import fs from "node:fs";
 import { toStringifiedError } from "@openclaw/normalization-core/error-coercion";
+import { z } from "zod";
 import { resolveRuntimeProcessEntrypointUrl } from "../infra/runtime-process-url.js";
 import { resolveRuntimeWorkerArgv } from "../infra/runtime-worker-url.js";
 import {
@@ -11,6 +12,28 @@ import type {
   AgentSchemaInspection,
   AgentSchemaInspectionInput,
 } from "./openclaw-agent-schema-inspection.js";
+
+const inspectionResponse = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(false), message: z.string() }),
+  z.object({
+    ok: z.literal(true),
+    inspection: z
+      .object({
+        version: z.number().int().safe(),
+        writerAppVersion: z.string().optional(),
+        reason: z.string().optional(),
+        agentSchemaMeta: z
+          .object({
+            agentId: z.string().nullable(),
+            role: z.string().nullable(),
+            schemaVersion: z.number().nullable(),
+          })
+          .nullable()
+          .optional(),
+      })
+      .nullable(),
+  }),
+]);
 
 /** Join the reader before releasing caller authority, including on cancellation. */
 export function inspectAgentDatabaseSchemaInWorker(
@@ -35,40 +58,13 @@ export function inspectAgentDatabaseSchemaInWorker(
     let result: AgentSchemaInspection | null | undefined;
     let failure: Error | undefined;
     child.on("message", (message: unknown) => {
-      if (!message || typeof message !== "object" || !("ok" in message)) {
+      const parsed = inspectionResponse.safeParse(message);
+      if (!parsed.success) {
         failure = new Error("Invalid agent schema inspection response");
-      } else if (
-        message.ok === false &&
-        "message" in message &&
-        typeof message.message === "string"
-      ) {
-        failure = new Error(message.message);
-      } else if (message.ok === true && "inspection" in message) {
-        const value = message.inspection;
-        if (value === null) {
-          result = null;
-        } else if (
-          typeof value === "object" &&
-          "version" in value &&
-          typeof value.version === "number" &&
-          Number.isSafeInteger(value.version) &&
-          (!("writerAppVersion" in value) || typeof value.writerAppVersion === "string") &&
-          (!("reason" in value) || typeof value.reason === "string")
-        ) {
-          result = {
-            version: value.version,
-            ...("writerAppVersion" in value && typeof value.writerAppVersion === "string"
-              ? { writerAppVersion: value.writerAppVersion }
-              : {}),
-            ...("reason" in value && typeof value.reason === "string"
-              ? { reason: value.reason }
-              : {}),
-          };
-        } else {
-          failure = new Error("Invalid agent schema inspection response");
-        }
+      } else if (!parsed.data.ok) {
+        failure = new Error(parsed.data.message);
       } else {
-        failure = new Error("Invalid agent schema inspection response");
+        result = parsed.data.inspection;
       }
     });
     child.on("error", (error) => {

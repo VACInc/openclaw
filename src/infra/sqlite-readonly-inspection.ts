@@ -1,13 +1,12 @@
 import fs from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
-import { openNodeSqliteDatabase } from "./node-sqlite.js";
 import {
   isSqliteReadOnlyError,
   readSourceJournalMode,
   readSourceSidecars,
   SqliteSourceChangedError,
 } from "./sqlite-readonly-location.js";
-import { withSqliteSourceHandle } from "./sqlite-source-handle.js";
+import { withSqliteSourceHandle, withSqliteSourceReadDatabase } from "./sqlite-source-handle.js";
 
 /** Inspect in a dedicated child: closing a source in the caller can release its POSIX locks. */
 export function tryInspectSqliteReadOnlyInProcess<T>(
@@ -35,10 +34,8 @@ export function tryInspectSqliteReadOnlyInProcess<T>(
     ) {
       return undefined;
     }
-    let database: DatabaseSync | undefined;
-    try {
+    return withSqliteSourceReadDatabase(canonicalPath, (database) => {
       try {
-        database = openNodeSqliteDatabase(canonicalPath, { readOnly: true });
         // sqlite-allow-raw -- SQLite connection policy and deferred read admission, not a row query.
         database.exec("PRAGMA busy_timeout = 30000; PRAGMA trusted_schema = OFF; BEGIN;");
         // sqlite-allow-raw -- Stepping this SQLite pragma pins the schema read snapshot.
@@ -68,8 +65,6 @@ export function tryInspectSqliteReadOnlyInProcess<T>(
       // sqlite-allow-raw -- End the read-only snapshot without committing any source changes.
       database.exec("ROLLBACK;");
       return { value };
-    } finally {
-      database?.close();
-    }
+    });
   });
 }

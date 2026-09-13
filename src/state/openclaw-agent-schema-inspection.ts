@@ -1,24 +1,30 @@
+import { existsSync, realpathSync, statSync } from "node:fs";
+import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { formatErrorMessage } from "../infra/errors.js";
-import {
-  clearNodeSqliteKyselyCacheForDatabase,
-  executeSqliteQueryTakeFirstSync,
-  getNodeSqliteKysely,
-} from "../infra/kysely-sync.js";
+import { clearNodeSqliteKyselyCacheForDatabase } from "../infra/kysely-sync.js";
+import { openNodeSqliteDatabase, resolveImmutableSqliteFileUri } from "../infra/node-sqlite.js";
 import { assertSqliteIntegrity } from "../infra/sqlite-integrity.js";
+import { readSqliteWriterAppVersion } from "../infra/sqlite-schema-header.js";
 import { readSqliteUserVersion } from "../infra/sqlite-user-version.js";
+import { isValidAgentId } from "../routing/session-key.js";
+import { OPENCLAW_AGENT_SCHEMA_VERSION } from "./openclaw-agent-db-contract.js";
 import { assertOpenClawAgentDatabaseForMaintenance } from "./openclaw-agent-db-maintenance.js";
+import type { ExistingAgentSchemaMeta } from "./openclaw-agent-db-metadata.js";
 import {
   assertCanonicalAgentPersistenceVersion,
+  assertOpenClawAgentCurrentRuntimeSchema,
   readExistingAgentSchemaMeta,
 } from "./openclaw-agent-db-schema-helpers.js";
-import type { DB } from "./openclaw-agent-db.generated.js";
+import type { OpenClawAgentSchemaPreflightResult } from "./openclaw-database-preflight.types.js";
+import { OPENCLAW_SQLITE_BUSY_TIMEOUT_MS } from "./openclaw-state-db-contract.js";
 
 export type AgentSchemaInspectionInput = {
   pathname: string;
   agentId?: string;
   supportedVersion: number;
   verifyCurrentSchemaShape?: boolean;
+  inspectOwnership?: boolean;
   requireStartupMigrationReadiness?: boolean;
 };
 
@@ -26,6 +32,7 @@ export type AgentSchemaInspection = {
   version: number;
   writerAppVersion?: string;
   reason?: string;
+  agentSchemaMeta?: ExistingAgentSchemaMeta | null;
 };
 
 /** All facts belong to the caller's single read transaction or private snapshot. */
@@ -34,27 +41,16 @@ export function inspectAgentDatabaseSchema(
   input: AgentSchemaInspectionInput,
 ): AgentSchemaInspection {
   const version = readSqliteUserVersion(database);
+  const inspection: AgentSchemaInspection = { version };
   try {
     if (version > input.supportedVersion) {
-      try {
-        const row = executeSqliteQueryTakeFirstSync(
-          database,
-          getNodeSqliteKysely<DB>(database)
-            .selectFrom("schema_meta")
-            .select("app_version")
-            .where("meta_key", "=", "primary")
-            .limit(1),
-        );
-        return {
-          version,
-          ...(typeof row?.app_version === "string" && row.app_version.length > 0
-            ? { writerAppVersion: row.app_version }
-            : {}),
-        };
-      } catch {
-        // A newer schema may no longer expose the current metadata shape.
-        return { version };
-      }
+      const writerAppVersion = readSqliteWriterAppVersion(database);
+      return { version, ...(writerAppVersion ? { writerAppVersion } : {}) };
+    }
+    if (input.inspectOwnership) {
+      // Preserve ownership even when shape validation fails: the parent must
+      // apply its existing isolation decision before reporting schema defects.
+      inspection.agentSchemaMeta = readExistingAgentSchemaMeta(database);
     }
     if (input.requireStartupMigrationReadiness) {
       assertSqliteIntegrity(database, input.pathname);
@@ -75,15 +71,71 @@ export function inspectAgentDatabaseSchema(
         pathname: input.pathname,
       });
     }
-    return { version };
+    return inspection;
   } catch (error) {
     if (input.requireStartupMigrationReadiness) {
       throw error;
     }
     // Preserve the observed version even when shape validation fails, so Doctor
     // can still report a pending migration alongside the unreadable shape.
-    return { version, reason: formatErrorMessage(error) };
+    return { ...inspection, reason: formatErrorMessage(error) };
   } finally {
     clearNodeSqliteKyselyCacheForDatabase(database);
+  }
+}
+
+/** Validate one consolidated agent copy using this release's exact maintenance reader.
+ * This never discovers, registers, migrates, or opens an ordinary runtime store.
+ */
+export async function preflightOpenClawAgentDatabasePath(
+  databasePath: string,
+  agentId: string,
+): Promise<OpenClawAgentSchemaPreflightResult> {
+  const resolvedPath = path.resolve(databasePath);
+  const base = {
+    schema: "openclaw.agent-schema-preflight.v1" as const,
+    databasePath: resolvedPath,
+    agentId,
+    targetVersion: OPENCLAW_AGENT_SCHEMA_VERSION,
+    requiresWrite: false,
+    issues: [],
+  };
+  let database: DatabaseSync | undefined;
+  let foundVersion: number | null = null;
+  let status: "indeterminate" | "incompatible" = "indeterminate";
+  try {
+    // The maintenance owner normalizes IDs. An explicit proof must never fall
+    // back to main or silently bless a different, normalized input identity.
+    if (!isValidAgentId(agentId) || agentId !== agentId.trim().toLowerCase()) {
+      throw new Error("Agent preflight requires an explicit canonical agent ID.");
+    }
+    const inspectionPath = realpathSync.native(resolvedPath);
+    if (inspectionPath !== resolvedPath || !statSync(inspectionPath).isFile()) {
+      throw new Error("Agent preflight requires a canonical regular copied database path.");
+    }
+    if (["-wal", "-shm", "-journal"].some((suffix) => existsSync(inspectionPath + suffix))) {
+      throw new Error("Agent preflight requires a consolidated snapshot with no SQLite sidecars.");
+    }
+    database = openNodeSqliteDatabase(resolveImmutableSqliteFileUri(inspectionPath), {
+      readOnly: true,
+    });
+    database.exec(
+      `PRAGMA busy_timeout = ${OPENCLAW_SQLITE_BUSY_TIMEOUT_MS}; PRAGMA query_only = ON; PRAGMA trusted_schema = OFF;`,
+    );
+    assertSqliteIntegrity(database, resolvedPath);
+    foundVersion = readSqliteUserVersion(database);
+    status = "incompatible";
+    assertOpenClawAgentDatabaseForMaintenance(database, { agentId, pathname: resolvedPath });
+    // Maintenance-compatible storage can still require a retired-schema repair
+    // before runtime admission. A read-only proof must never bless that repair.
+    assertOpenClawAgentCurrentRuntimeSchema(database, { agentId, pathname: resolvedPath });
+    return { ...base, foundVersion, status: "exact" as const };
+  } catch (error) {
+    return { ...base, foundVersion, status, reason: formatErrorMessage(error) };
+  } finally {
+    if (database) {
+      clearNodeSqliteKyselyCacheForDatabase(database);
+    }
+    database?.close();
   }
 }
