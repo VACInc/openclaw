@@ -350,9 +350,14 @@ describe("createModelExecAutoReviewer", () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
-  it.each([undefined, "low", "high", "max"] as const)(
-    "uses reviewer model and thinking %s for review calls",
-    async (thinking) => {
+  it.each([
+    { thinking: undefined, serviceTier: undefined },
+    { thinking: "low", serviceTier: "priority" },
+    { thinking: "high", serviceTier: "default" },
+    { thinking: "max", serviceTier: "priority" },
+  ] as const)(
+    "uses reviewer model, thinking $thinking and service tier $serviceTier for review calls",
+    async ({ thinking, serviceTier }) => {
       const prepare = vi.fn(async () => ({
         selection: {
           provider: "openrouter",
@@ -367,7 +372,7 @@ describe("createModelExecAutoReviewer", () => {
       const complete = vi.fn(
         async (request: {
           context: { messages: Array<{ content: string }> };
-          options: { reasoning?: string };
+          options: { reasoning?: string; serviceTier?: string };
         }) => {
           capturedPrompt = request.context.messages[0]?.content ?? "";
           return {
@@ -388,7 +393,11 @@ describe("createModelExecAutoReviewer", () => {
       const reviewer = createModelExecAutoReviewer({
         cfg: {},
         agentId: "ops",
-        reviewer: { model: { primary: "openrouter/anthropic/claude-sonnet-4-6" }, thinking },
+        reviewer: {
+          model: { primary: "openrouter/anthropic/claude-sonnet-4-6" },
+          thinking,
+          serviceTier,
+        },
         deps: {
           acquireSimpleCompletionModelForAgent:
             prepare as unknown as typeof import("./simple-completion-runtime.js").acquireSimpleCompletionModelForAgent,
@@ -428,6 +437,11 @@ describe("createModelExecAutoReviewer", () => {
         expect(options?.reasoning).toBe(thinking);
       } else {
         expect(options).not.toHaveProperty("reasoning");
+      }
+      if (serviceTier) {
+        expect(options?.serviceTier).toBe(serviceTier);
+      } else {
+        expect(options).not.toHaveProperty("serviceTier");
       }
       expect(capturedPrompt).toContain('"resolvedPath": "/usr/bin/git"');
       expect(capturedPrompt).not.toContain("sessionKey");
