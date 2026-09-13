@@ -99,7 +99,7 @@ export async function announceRestartRecoveryResumption(
     }
     await params.gatewayRuntime.sendRecoveryNotice({
       ...params.deliveryContext,
-      text: "I'm continuing your interrupted request after the gateway restart. I'll post the result here.",
+      text: "I'm continuing your interrupted request now (the gateway has just restarted).  Don't be concerned with the lack of typing; I am working behind the scenes and I'll send a message when I'm done!",
       idempotencyKey: `main-session-restart-recovery:${params.recoveryRunId}:resumed-notice`,
       liveOnly: true,
       isCurrent,
