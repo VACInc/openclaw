@@ -8,6 +8,7 @@ import {
   hasDeliberateSilentTerminalReply,
   hasIntentionalTerminalCompletion,
 } from "../../agents/embedded-agent-runner/result-fallback-classifier.js";
+import { EMBEDDED_CYBER_FAILOVER_TRIGGER_CODE } from "../../agents/model-fallback.types.js";
 import {
   deriveContextPromptTokens,
   hasBillableUsage,
@@ -22,7 +23,11 @@ import {
 } from "../../infra/diagnostic-trace-context.js";
 import { isSubagentSessionKey } from "../../routing/session-key.js";
 import { estimateAggregateUsageCost } from "../../utils/usage-format.js";
-import { buildFallbackClearedNotice, buildFallbackNotice } from "../fallback-state.js";
+import {
+  buildDaybreakRetryNotice,
+  buildFallbackClearedNotice,
+  buildFallbackNotice,
+} from "../fallback-state.js";
 import {
   getReplyPayloadMetadata,
   isReplyPayloadStatusNotice,
@@ -336,16 +341,24 @@ export async function prepareReplyAgentPayloads(state: {
     opts?.onAgentRunTerminalOutcome?.("failed");
     return returnPreparedFallbackPayload(silentFallbackFailurePayload);
   };
+  const daybreakRetrySucceeded =
+    isInteractive &&
+    !isHeartbeat &&
+    context.execution.status === "ok" &&
+    fallbackAttempts.some((attempt) => attempt.code === EMBEDDED_CYBER_FAILOVER_TRIGGER_CODE);
   const fallbackNoticeChanged =
     !fallbackExhausted &&
     !preserveUserFacingSessionState &&
     (fallbackTransition.fallbackTransitioned || fallbackTransition.fallbackCleared);
-  const fallbackNoticeChatType = fallbackNoticeChanged
-    ? normalizeChatType(sessionCtx.ChatType)
-    : undefined;
+  const fallbackNoticeChatType =
+    fallbackNoticeChanged && !daybreakRetrySucceeded
+      ? normalizeChatType(sessionCtx.ChatType)
+      : undefined;
   const shouldDeliverFallbackNotice =
     fallbackNoticeChatType !== "group" && fallbackNoticeChatType !== "channel";
-  let fallbackNoticeText: string | null = null;
+  let fallbackNoticeText: string | null = daybreakRetrySucceeded
+    ? buildDaybreakRetryNotice()
+    : null;
   if (fallbackNoticeChanged && fallbackTransition.fallbackTransitioned) {
     emitAgentEvent({
       runId,
@@ -362,7 +375,7 @@ export async function prepareReplyAgentPayloads(state: {
         attempts: fallbackAttempts,
       },
     });
-    if (shouldDeliverFallbackNotice) {
+    if (shouldDeliverFallbackNotice && !daybreakRetrySucceeded) {
       fallbackNoticeText = buildFallbackNotice({
         selectedProvider,
         selectedModel,
@@ -387,7 +400,7 @@ export async function prepareReplyAgentPayloads(state: {
         previousActiveModel: fallbackTransition.previousState.activeModel,
       },
     });
-    if (shouldDeliverFallbackNotice) {
+    if (shouldDeliverFallbackNotice && !daybreakRetrySucceeded) {
       fallbackNoticeText = buildFallbackClearedNotice({
         selectedProvider,
         selectedModel,

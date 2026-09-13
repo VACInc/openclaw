@@ -6150,6 +6150,65 @@ describe("runReplyAgent typing (heartbeat)", () => {
     },
   );
 
+  it.each([
+    { label: "direct chats", chatType: "direct" as const },
+    { label: "group chats", chatType: "group" as const },
+    { label: "channels", chatType: "channel" as const },
+  ])("delivers successful Daybreak retry notices to $label", async ({ chatType }) => {
+    const { sessionEntry, sessionStore, storePath } = await makeSessionFixture({
+      modelProvider: "openai",
+      model: "gpt-5.6-sol",
+    });
+
+    state.runEmbeddedAgentMock.mockResolvedValue({
+      payloads: [{ text: "final" }],
+      meta: {},
+    });
+    const fallbackSpy = vi
+      .spyOn(modelFallbackModule, "runWithModelFallback")
+      .mockImplementation(async (params: TestModelFallbackRunnerParams) => ({
+        outcome: "completed" as const,
+        result: await runFallbackModelAttempt(
+          params,
+          "openai",
+          "gpt-daybreak-blue-latest",
+          "unknown",
+        ),
+        provider: "openai",
+        model: "gpt-daybreak-blue-latest",
+        attempts: [
+          {
+            provider: "openai",
+            model: "gpt-5.6-sol",
+            error: "OpenAI cyber policy refusal",
+            reason: "unknown",
+            code: "OPENAI_CYBER_POLICY_REFUSAL",
+          },
+        ],
+      }));
+    try {
+      const { run } = createMinimalRun({
+        resolvedVerboseLevel: "on",
+        sessionEntry,
+        sessionStore,
+        sessionKey: "main",
+        storePath,
+        sessionCtx: { ChatType: chatType },
+      });
+
+      const result = await run();
+      expect(result).toEqual([
+        expect.objectContaining({
+          text: "↪️ Retried on Daybreak",
+          isFallbackNotice: true,
+        }),
+        expect.objectContaining({ text: "final" }),
+      ]);
+    } finally {
+      fallbackSpy.mockRestore();
+    }
+  });
+
   it("clears native fallback state without attributing finalizer response usage to the native model", async () => {
     const runtimeModelSelection = { provider: "openai", model: "gpt-5.6-sol" };
     const response = { provider: "google", model: "gemini-2.5-flash" };

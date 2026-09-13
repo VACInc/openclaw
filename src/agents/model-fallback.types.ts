@@ -4,6 +4,7 @@
 import type { FailoverReason } from "./failover/signal.js";
 
 export const MODEL_FALLBACK_SKIPPED_CODE = "MODEL_FALLBACK_SKIPPED";
+export const EMBEDDED_CYBER_FAILOVER_TRIGGER_CODE = "OPENAI_CYBER_POLICY_REFUSAL";
 
 // Shared model fallback record types used by selection, observation, and retry
 // reporting.

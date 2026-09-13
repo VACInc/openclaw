@@ -4,14 +4,12 @@ import { classifyFailoverReason } from "../failover/classify.js";
 import type { FailoverReason } from "../failover/signal.js";
 import { GENERIC_EXTERNAL_RUN_FAILURE_TEXT } from "../failover/user-copy.js";
 import type { ModelFallbackResultClassification } from "../model-fallback-attempt.js";
+import { EMBEDDED_CYBER_FAILOVER_TRIGGER_CODE } from "../model-fallback.types.js";
 import {
   hasCommittedOutboundDeliveryEvidence,
   hasVisibleAgentPayload,
 } from "./delivery-evidence.js";
-import {
-  EMBEDDED_CYBER_FAILOVER_TRIGGER_CODE,
-  isReplaySafeEmbeddedOpenAiCyberRefusal,
-} from "./embedded-cyber-failover.js";
+import { isReplaySafeEmbeddedOpenAiCyberRefusal } from "./embedded-cyber-failover.js";
 import type { EmbeddedAgentRunResult } from "./types.js";
 
 type ProviderErrorPayloadFailoverReason = Extract<

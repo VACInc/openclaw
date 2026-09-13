@@ -106,6 +106,11 @@ export function buildFallbackNotice(params: {
   return `↪️ Model Fallback: ${active} (selected ${selected}; ${reasonSummary})`;
 }
 
+/** Builds the visible notice shown after a successful embedded Daybreak retry. */
+export function buildDaybreakRetryNotice(): string {
+  return "↪️ Retried on Daybreak";
+}
+
 /** Builds the visible notice shown when runtime returns to the selected model. */
 export function buildFallbackClearedNotice(params: {
   selectedProvider: string;
