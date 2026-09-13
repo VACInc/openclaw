@@ -10,7 +10,10 @@ import {
   openOpenClawAgentDatabase,
   OPENCLAW_AGENT_SCHEMA_VERSION,
 } from "./openclaw-agent-db.js";
-import { preflightOpenClawDatabaseSchemas } from "./openclaw-database-preflight.js";
+import {
+  assertOpenClawDatabasesReady,
+  preflightOpenClawDatabaseSchemas,
+} from "./openclaw-database-preflight.js";
 import { OPENCLAW_STATE_SCHEMA_VERSION } from "./openclaw-state-db-contract.js";
 import { closeOpenClawStateDatabaseForTest } from "./openclaw-state-db.js";
 
@@ -44,16 +47,27 @@ describe("schema-only agent preflight", () => {
           return prepare(pathname, options);
         },
       );
+      const config = { agents: { list: [{ id: "worker", default: true }] } };
+      const ready = (operation: "doctor" | "gateway-restart") =>
+        assertOpenClawDatabasesReady({
+          env,
+          config,
+          operation,
+          configuredAgentDatabaseTargets: [{ agentId: "worker", path: agentPath }],
+        });
       const inspect = () =>
         preflightOpenClawDatabaseSchemas({
           env,
           verifyCurrentSchemaShape: true,
+          agentAdmissionConfig: config,
           supportedVersions: {
             state: OPENCLAW_STATE_SCHEMA_VERSION,
             agent: OPENCLAW_AGENT_SCHEMA_VERSION,
           },
         });
       try {
+        await expect(ready("doctor")).resolves.toBeUndefined();
+        await expect(ready("gateway-restart")).resolves.toBeUndefined();
         expect(await inspect()).toEqual({ incompatible: [], indeterminate: [] });
         writer.exec(`PRAGMA user_version=${OPENCLAW_AGENT_SCHEMA_VERSION + 1};`);
         expect(await inspect()).toMatchObject({
@@ -67,9 +81,16 @@ describe("schema-only agent preflight", () => {
           ],
           indeterminate: [],
         });
-        writer.exec(
-          `PRAGMA user_version=${OPENCLAW_AGENT_SCHEMA_VERSION}; DROP INDEX idx_agent_cache_expiry;`,
-        );
+        writer.exec(`PRAGMA user_version=${OPENCLAW_AGENT_SCHEMA_VERSION};`);
+        writer
+          .prepare("UPDATE schema_meta SET agent_id = ? WHERE meta_key = 'primary'")
+          .run("foreign");
+        await expect(ready("doctor")).rejects.toThrow("belongs to agent foreign");
+        await expect(ready("gateway-restart")).rejects.toThrow("belongs to agent foreign");
+        writer
+          .prepare("UPDATE schema_meta SET agent_id = ? WHERE meta_key = 'primary'")
+          .run("worker");
+        writer.exec("DROP INDEX idx_agent_cache_expiry;");
         expect(await inspect()).toMatchObject({
           incompatible: [],
           indeterminate: [
@@ -113,7 +134,11 @@ it("uses the mutation owner's snapshot while that owner excludes source readers"
       },
       async (assertCurrent) => {
         assertCurrent();
-        return { location: resolveImmutableSqliteFileUri(snapshotPath), cleanup };
+        return {
+          location: resolveImmutableSqliteFileUri(snapshotPath),
+          cleanup,
+          cleanupAsync: async () => cleanup(),
+        };
       },
     );
   } finally {
