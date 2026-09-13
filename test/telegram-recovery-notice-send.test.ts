@@ -47,7 +47,7 @@ describe("recovery notice final transport fence", () => {
         mode === "automatic delivery revoked" ||
         mode === "owner retired";
       const noticeText = productionPredicate
-        ? "I'm continuing your interrupted request after the gateway restart. I'll post the result here."
+        ? "I'm continuing your interrupted request now (the gateway has just restarted).  Don't be concerned with the lack of typing; I am working behind the scenes and I'll send a message when I'm done!"
         : "Recovery resumed";
       const accept = (response: ServerResponse, text: string) => {
         visible.push(text);
