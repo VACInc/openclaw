@@ -4,9 +4,11 @@ import type { DatabaseSync } from "node:sqlite";
 import { formatErrorMessage } from "../infra/errors.js";
 import { clearNodeSqliteKyselyCacheForDatabase } from "../infra/kysely-sync.js";
 import { openNodeSqliteDatabase, resolveImmutableSqliteFileUri } from "../infra/node-sqlite.js";
+import { setSqliteBusyTimeout } from "../infra/sqlite-busy-timeout.js";
 import { assertSqliteIntegrity } from "../infra/sqlite-integrity.js";
 import { readSqliteWriterAppVersion } from "../infra/sqlite-schema-header.js";
 import { readSqliteUserVersion } from "../infra/sqlite-user-version.js";
+import { configureSqliteReadOnlyPragmas } from "../infra/sqlite-wal.js";
 import { isValidAgentId } from "../routing/session-key.js";
 import { OPENCLAW_AGENT_SCHEMA_VERSION } from "./openclaw-agent-db-contract.js";
 import { assertOpenClawAgentDatabaseForMaintenance } from "./openclaw-agent-db-maintenance.js";
@@ -119,9 +121,8 @@ export async function preflightOpenClawAgentDatabasePath(
     database = openNodeSqliteDatabase(resolveImmutableSqliteFileUri(inspectionPath), {
       readOnly: true,
     });
-    database.exec(
-      `PRAGMA busy_timeout = ${OPENCLAW_SQLITE_BUSY_TIMEOUT_MS}; PRAGMA query_only = ON; PRAGMA trusted_schema = OFF;`,
-    );
+    setSqliteBusyTimeout(database, OPENCLAW_SQLITE_BUSY_TIMEOUT_MS);
+    configureSqliteReadOnlyPragmas(database);
     assertSqliteIntegrity(database, resolvedPath);
     foundVersion = readSqliteUserVersion(database);
     status = "incompatible";
