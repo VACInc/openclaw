@@ -390,14 +390,11 @@ describe("createModelExecAutoReviewer", () => {
           };
         },
       );
+      const reviewerModel = { primary: "openrouter/anthropic/claude-sonnet-4-6" };
       const reviewer = createModelExecAutoReviewer({
         cfg: {},
         agentId: "ops",
-        reviewer: {
-          model: { primary: "openrouter/anthropic/claude-sonnet-4-6" },
-          thinking,
-          serviceTier,
-        },
+        reviewer: { model: reviewerModel, thinking, serviceTier },
         deps: {
           acquireSimpleCompletionModelForAgent:
             prepare as unknown as typeof import("./simple-completion-runtime.js").acquireSimpleCompletionModelForAgent,
@@ -433,14 +430,10 @@ describe("createModelExecAutoReviewer", () => {
         }),
       );
       const options = complete.mock.calls[0]?.[0].options;
-      if (thinking) {
-        expect(options?.reasoning).toBe(thinking);
+      if (thinking && serviceTier) {
+        expect(options).toMatchObject({ reasoning: thinking, serviceTier });
       } else {
         expect(options).not.toHaveProperty("reasoning");
-      }
-      if (serviceTier) {
-        expect(options?.serviceTier).toBe(serviceTier);
-      } else {
         expect(options).not.toHaveProperty("serviceTier");
       }
       expect(capturedPrompt).toContain('"resolvedPath": "/usr/bin/git"');
