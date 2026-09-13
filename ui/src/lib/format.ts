@@ -136,15 +136,7 @@ export function formatUnknownText(value: unknown): string {
   if (value == null) {
     return "";
   }
-  if (typeof value === "string") {
-    return value;
-  }
-  if (
-    typeof value === "number" ||
-    typeof value === "boolean" ||
-    typeof value === "bigint" ||
-    typeof value === "symbol"
-  ) {
+  if (typeof value !== "object" && typeof value !== "function") {
     return String(value);
   }
   try {

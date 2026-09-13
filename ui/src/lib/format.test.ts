@@ -259,6 +259,23 @@ describe("stripThinkingTags", () => {
 });
 
 describe("formatUnknownText", () => {
+  it.each([
+    { name: "null", value: null, expected: "" },
+    { name: "undefined", value: undefined, expected: "" },
+    { name: "string", value: "agent", expected: "agent" },
+    { name: "number", value: 42, expected: "42" },
+    { name: "boolean", value: false, expected: "false" },
+    { name: "bigint", value: 42n, expected: "42" },
+    { name: "function", value: () => "not source text", expected: "[object Function]" },
+    {
+      name: "function with JSON representation",
+      value: Object.assign(() => undefined, { toJSON: () => ({ ok: true }) }),
+      expected: '{"ok":true}',
+    },
+  ])("preserves $name formatting", ({ value, expected }) => {
+    expect(formatUnknownText(value)).toBe(expected);
+  });
+
   it("stringifies plain objects without throwing", () => {
     expect(formatUnknownText({ ok: true })).toBe('{"ok":true}');
   });
