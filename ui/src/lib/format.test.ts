@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { i18n } from "../i18n/index.ts";
 import { captureI18nStateForTesting } from "../i18n/lib/translate.test-support.ts";
+import { formatDurationCompact, formatDurationHuman } from "./format-duration.ts";
 import {
   clampText,
   createMsFormatter,
@@ -10,8 +11,6 @@ import {
   formatDateMs,
   formatCompactTokenCount,
   formatContextTokenCapacity,
-  formatDurationCompact,
-  formatDurationHuman,
   formatMs,
   formatRelativeTimestamp,
   formatTimeAgo,
