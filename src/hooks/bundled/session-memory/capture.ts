@@ -1,6 +1,6 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import {
-  loadTranscriptEventsSync,
+  readSessionTranscriptMemoryTail,
   readSessionTranscriptBoundedMessageTailPage,
   type TranscriptEvent,
 } from "../../../config/sessions/session-accessor.js";
@@ -73,54 +73,6 @@ function captureRecentSessionMemoryEvents(
   return relinkCapturedActiveMessageEvents(captured);
 }
 
-// Memory excerpts span compactions, but never reach across the latest reset.
-// Reset history replays only user/assistant rows; discard kept-prefix tools
-// before applying capture budgets, just like the projection reader.
-function selectCurrentMemoryWindow(events: TranscriptEvent[]): TranscriptEvent[] {
-  const active = selectVisibleTranscriptEvents(events);
-  const boundaryIndex = active.findLastIndex((event) => isRecord(event) && event.type === "reset");
-  const boundary = active[boundaryIndex];
-  if (!isRecord(boundary)) {
-    return active;
-  }
-  const firstKeptIndex =
-    typeof boundary.firstKeptEntryId === "string"
-      ? active.findIndex((event) => isRecord(event) && event.id === boundary.firstKeptEntryId)
-      : -1;
-  const kept =
-    firstKeptIndex >= 0 && firstKeptIndex < boundaryIndex
-      ? active.slice(firstKeptIndex, boundaryIndex)
-      : [];
-  return [
-    ...kept.filter(
-      (event) =>
-        isRecord(event) &&
-        event.type === "message" &&
-        isRecord(event.message) &&
-        (event.message.role === "user" || event.message.role === "assistant"),
-    ),
-    ...active.slice(boundaryIndex + 1),
-  ];
-}
-
-function captureAuthoritativeMemoryEvents(
-  scope: Parameters<typeof captureRecentSessionMemoryEvents>[0],
-): TranscriptEvent[] {
-  const messages = selectCurrentMemoryWindow(loadTranscriptEventsSync(scope))
-    .filter((event) => isRecord(event) && event.type === "message")
-    .slice(-SESSION_MEMORY_CAPTURE_MAX_SCANNED_MESSAGES);
-  const captured: TranscriptEvent[] = [];
-  let bytes = 0;
-  for (const event of messages.toReversed()) {
-    const size = Buffer.byteLength(JSON.stringify(event)) + 1;
-    if (bytes + size <= SESSION_MEMORY_CAPTURE_MAX_BYTES) {
-      captured.unshift(event);
-      bytes += size;
-    }
-  }
-  return relinkCapturedActiveMessageEvents(captured);
-}
-
 /** Capture while the caller still owns the departing session's active window. */
 export function captureSessionMemoryTranscript(
   scope: Parameters<typeof captureRecentSessionMemoryEvents>[0],
@@ -134,9 +86,13 @@ export function captureSessionMemoryTranscript(
     try {
       events = captureRecentSessionMemoryEvents(scope, messageCount);
     } catch {
-      // Preserve capture during projection repair using authoritative rows.
-      // This exceptional full read is capped before any snapshot escapes.
-      events = captureAuthoritativeMemoryEvents(scope);
+      // Preserve capture during projection repair without hydrating retained bodies.
+      events = relinkCapturedActiveMessageEvents(
+        readSessionTranscriptMemoryTail(scope, {
+          maxBytes: SESSION_MEMORY_CAPTURE_MAX_BYTES,
+          maxMessages: SESSION_MEMORY_CAPTURE_MAX_SCANNED_MESSAGES,
+        }),
+      );
     }
     const projection = getRecentSessionProjectionFromEvents(events, messageCount);
     return projection

@@ -2,6 +2,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../../test/helpers/temp-dir.js";
 import * as accessor from "../../../config/sessions/session-accessor.js";
+import { runWithSessionTranscriptReadFence } from "../../../config/sessions/session-transcript-read-fence.js";
+import { appendSessionTranscriptMessageByIdentity } from "../../../plugin-sdk/session-transcript-runtime.js";
 import { captureSessionMemoryTranscript } from "./capture.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -35,6 +37,40 @@ describe("session memory capture", () => {
     });
     return captureSessionMemoryTranscript(scope, undefined);
   }
+
+  it("keeps repair capture before the admitted current turn", async () => {
+    await accessor.upsertSessionEntryCore(scope, { sessionId: scope.sessionId, updatedAt: 10 });
+    const prior = await appendSessionTranscriptMessageByIdentity({
+      ...scope,
+      message: { role: "assistant", content: "prior answer" },
+    });
+    const admitted = await appendSessionTranscriptMessageByIdentity({
+      ...scope,
+      parentId: prior?.messageId,
+      message: { role: "user", content: "current request" },
+    });
+    if (!admitted?.anchor) {
+      throw new Error("expected a current-turn transcript anchor");
+    }
+    await appendSessionTranscriptMessageByIdentity({
+      ...scope,
+      parentId: admitted.messageId,
+      message: { role: "assistant", content: "current answer" },
+    });
+    await accessor.waitForSessionTranscriptProjection(scope);
+    const receipt = { ...admitted.anchor, logicalTurnId: "memory-fence", role: "user" as const };
+    expect(runWithSessionTranscriptReadFence(receipt, captureDuringRepair)).toEqual({
+      status: "available",
+      originClass: "untrusted",
+      content: 'assistant: "prior answer"',
+    });
+    expect(
+      runWithSessionTranscriptReadFence(
+        { ...receipt, rawSeq: receipt.rawSeq + 1 },
+        captureDuringRepair,
+      ),
+    ).toMatchObject({ status: "unavailable" });
+  });
 
   it.each(
     [false, true].flatMap((preserve) =>
@@ -80,6 +116,7 @@ describe("session memory capture", () => {
   );
 
   it("spans compaction and selects the explicit branch without changing provenance", async () => {
+    const hiddenPayload = "inactive branch payload ".repeat(4_096);
     await accessor.replaceTranscriptEvents(scope, [
       {
         ...message("restricted", null, "user"),
@@ -87,7 +124,7 @@ describe("session memory capture", () => {
       },
       { type: "compaction", id: "compact", parentId: "restricted", summary: "summary" },
       message("chosen", "compact", "assistant"),
-      message("other", "compact", "assistant"),
+      message("other", "compact", "assistant", hiddenPayload),
       { type: "leaf", id: "leaf", parentId: "other", targetId: "chosen" },
     ]);
     const expected = {
@@ -96,7 +133,16 @@ describe("session memory capture", () => {
       content: 'user: "restricted"\nassistant: "chosen"',
     };
     expect(await captureReady()).toEqual(expected);
+    const parse = JSON.parse;
+    let hydratedHiddenPayloads = 0;
+    vi.spyOn(JSON, "parse").mockImplementation((text, reviver) => {
+      if (typeof text === "string" && text.includes(hiddenPayload)) {
+        hydratedHiddenPayloads += 1;
+      }
+      return parse(text, reviver);
+    });
     expect(captureDuringRepair()).toEqual(expected);
+    expect(hydratedHiddenPayloads).toBe(0);
   });
 
   it("does not charge discarded reset-tail tools against the capture budget", async () => {
@@ -125,7 +171,16 @@ describe("session memory capture", () => {
       content: 'assistant: "older"\nassistant: "latest"',
     };
     expect(await captureReady()).toEqual(expected);
+    const parse = JSON.parse;
+    let hydratedOversizedRows = 0;
+    vi.spyOn(JSON, "parse").mockImplementation((text, reviver) => {
+      if (typeof text === "string" && Buffer.byteLength(text) > 8 * 1024 * 1024) {
+        hydratedOversizedRows += 1;
+      }
+      return parse(text, reviver);
+    });
     expect(captureDuringRepair()).toEqual(expected);
+    expect(hydratedOversizedRows).toBe(0);
   });
 
   it("does not scan beyond the message cap to fill an excerpt", async () => {
