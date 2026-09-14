@@ -82,7 +82,9 @@ export function readSessionTranscriptMemoryTail(
             sql<number>`OCTET_LENGTH(event_json) + 1`.as("bytes"),
           ])
           .where("session_id", "=", resolved.sessionId)
-          .$if(fence !== undefined, (query) => query.where("seq", "<", fence!.beforeRawSeq))
+          // The admitted row can select an older branch. Retain its navigation
+          // before choosing the path, but never include its payload below.
+          .$if(fence !== undefined, (query) => query.where("seq", "<=", fence!.beforeRawSeq))
           .orderBy("seq", "asc"),
       );
       for (const row of rows) {
@@ -91,7 +93,12 @@ export function readSessionTranscriptMemoryTail(
         metadata.set(event, { seq: row.seq, bytes: row.bytes });
       }
       const candidates = selectCurrentMemoryWindow(events)
-        .filter((event) => isRecord(event) && event.type === "message")
+        .filter(
+          (event) =>
+            isRecord(event) &&
+            event.type === "message" &&
+            (fence === undefined || metadata.get(event)!.seq < fence.beforeRawSeq),
+        )
         .slice(-maxMessages);
       const selected: number[] = [];
       let bytes = 0;

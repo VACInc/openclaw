@@ -38,19 +38,29 @@ describe("session memory capture", () => {
     return captureSessionMemoryTranscript(scope, undefined);
   }
 
-  it("keeps repair capture before the admitted current turn", async () => {
+  it("keeps the admitted turn's selected branch during repair capture", async () => {
     await accessor.upsertSessionEntryCore(scope, { sessionId: scope.sessionId, updatedAt: 10 });
+    const root = await appendSessionTranscriptMessageByIdentity({
+      ...scope,
+      message: { role: "user", content: "earlier request" },
+    });
     const prior = await appendSessionTranscriptMessageByIdentity({
       ...scope,
+      parentId: root?.messageId,
       message: { role: "assistant", content: "prior answer" },
+    });
+    await appendSessionTranscriptMessageByIdentity({
+      ...scope,
+      parentId: root?.messageId,
+      message: { role: "assistant", content: "discarded answer" },
     });
     const admitted = await appendSessionTranscriptMessageByIdentity({
       ...scope,
       parentId: prior?.messageId,
       message: { role: "user", content: "current request" },
     });
-    if (!admitted?.anchor) {
-      throw new Error("expected a current-turn transcript anchor");
+    if (!admitted) {
+      throw new Error("expected an admitted user message");
     }
     await appendSessionTranscriptMessageByIdentity({
       ...scope,
@@ -58,12 +68,31 @@ describe("session memory capture", () => {
       message: { role: "assistant", content: "current answer" },
     });
     await accessor.waitForSessionTranscriptProjection(scope);
-    const receipt = { ...admitted.anchor, logicalTurnId: "memory-fence", role: "user" as const };
-    expect(runWithSessionTranscriptReadFence(receipt, captureDuringRepair)).toEqual({
+    // Branch changes defer projection publication; certify the admitted anchor
+    // only after its selected ancestry is authoritative.
+    const anchor = accessor.readActiveTranscriptEntryAnchor({
+      ...scope,
+      entryId: admitted.messageId,
+    });
+    if (!anchor) {
+      throw new Error("expected a current-turn transcript anchor");
+    }
+    const receipt = { ...anchor, logicalTurnId: "memory-fence", role: "user" as const };
+    const expected = {
       status: "available",
       originClass: "untrusted",
-      content: 'assistant: "prior answer"',
+      content: 'user: "earlier request"\nassistant: "prior answer"',
+    };
+    const parse = JSON.parse;
+    let hydratedCurrentTurnPayloads = 0;
+    vi.spyOn(JSON, "parse").mockImplementation((text, reviver) => {
+      if (typeof text === "string" && text.includes("current request")) {
+        hydratedCurrentTurnPayloads += 1;
+      }
+      return parse(text, reviver);
     });
+    expect(runWithSessionTranscriptReadFence(receipt, captureDuringRepair)).toEqual(expected);
+    expect(hydratedCurrentTurnPayloads).toBe(0);
     expect(
       runWithSessionTranscriptReadFence(
         { ...receipt, rawSeq: receipt.rawSeq + 1 },
