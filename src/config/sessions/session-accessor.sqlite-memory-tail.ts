@@ -15,21 +15,23 @@ import {
 import { assertSessionTranscriptHot } from "./session-cold-storage-state.js";
 import { projectResetBoundaryNavigationSql } from "./session-model-context-projection.js";
 import { resolveSqliteSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
-import { selectVisibleTranscriptEvents } from "./transcript-visible-events.js";
+import { selectVisibleTranscriptEventEntries } from "./transcript-visible-events.js";
 
 // Memory excerpts span compactions, but never reach across the latest reset.
 // Reset history replays only user/assistant rows; discard kept-prefix tools
 // before applying capture budgets, just like the projection reader.
-function selectCurrentMemoryWindow(events: TranscriptEvent[]): TranscriptEvent[] {
-  const active = selectVisibleTranscriptEvents(events);
-  const boundaryIndex = active.findLastIndex((event) => isRecord(event) && event.type === "reset");
-  const boundary = active[boundaryIndex];
+function selectCurrentMemoryWindow(events: TranscriptEvent[]) {
+  const active = selectVisibleTranscriptEventEntries(events);
+  const boundaryIndex = active.findLastIndex(
+    ({ event }) => isRecord(event) && event.type === "reset",
+  );
+  const boundary = active[boundaryIndex]?.event;
   if (!isRecord(boundary)) {
     return active;
   }
   const firstKeptIndex =
     typeof boundary.firstKeptEntryId === "string"
-      ? active.findIndex((event) => isRecord(event) && event.id === boundary.firstKeptEntryId)
+      ? active.findIndex(({ event }) => isRecord(event) && event.id === boundary.firstKeptEntryId)
       : -1;
   const kept =
     firstKeptIndex >= 0 && firstKeptIndex < boundaryIndex
@@ -37,7 +39,7 @@ function selectCurrentMemoryWindow(events: TranscriptEvent[]): TranscriptEvent[]
       : [];
   return [
     ...kept.filter(
-      (event) =>
+      ({ event }) =>
         isRecord(event) &&
         event.type === "message" &&
         isRecord(event.message) &&
@@ -69,7 +71,8 @@ export function readSessionTranscriptMemoryTail(
       assertSessionTranscriptHot(database.db, resolved.sessionId);
       const fence = resolveSqliteSessionTranscriptReadFence({ database, ...resolved });
       const db = getSessionKysely(database.db);
-      const metadata = new Map<TranscriptEvent, { seq: number; bytes: number }>();
+      const sequences: number[] = [];
+      const sizes: number[] = [];
       const events: TranscriptEvent[] = [];
       const rows = iterateSqliteQuerySync(
         database.db,
@@ -90,23 +93,27 @@ export function readSessionTranscriptMemoryTail(
       for (const row of rows) {
         const event: TranscriptEvent = JSON.parse(row.event_json);
         events.push(event);
-        metadata.set(event, { seq: row.seq, bytes: row.bytes });
+        sequences.push(row.seq);
+        sizes.push(row.bytes);
       }
       const candidates = selectCurrentMemoryWindow(events)
         .filter(
-          (event) =>
+          ({ event, seq }) =>
             isRecord(event) &&
             event.type === "message" &&
-            (fence === undefined || metadata.get(event)!.seq < fence.beforeRawSeq),
+            (fence === undefined || sequences[seq - 1]! < fence.beforeRawSeq),
         )
         .slice(-maxMessages);
       const selected: number[] = [];
       let bytes = 0;
-      for (const event of candidates.toReversed()) {
-        const row = metadata.get(event)!;
-        if (bytes + row.bytes <= maxBytes) {
-          selected.push(row.seq);
-          bytes += row.bytes;
+      // Selector sequences are one-based input positions, not SQLite sequence
+      // numbers: sparse storage and legacy non-monotonic paths retain their order.
+      for (const { seq } of candidates.toReversed()) {
+        const index = seq - 1;
+        const size = sizes[index]!;
+        if (bytes + size <= maxBytes) {
+          selected.push(sequences[index]!);
+          bytes += size;
         }
       }
       if (!selected.length) {

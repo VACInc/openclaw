@@ -101,6 +101,43 @@ describe("session memory capture", () => {
     ).toMatchObject({ status: "unavailable" });
   });
 
+  it("rejects an admission from the previous branch while projection repair is pending", async () => {
+    await accessor.upsertSessionEntryCore(scope, { sessionId: scope.sessionId, updatedAt: 10 });
+    const root = await appendSessionTranscriptMessageByIdentity({
+      ...scope,
+      message: { role: "user", content: "prior" },
+    });
+    const admitted = await appendSessionTranscriptMessageByIdentity({
+      ...scope,
+      parentId: root?.messageId,
+      message: { role: "user", content: "current" },
+    });
+    if (!root || !admitted) {
+      throw new Error("expected an admitted user branch");
+    }
+    await accessor.waitForSessionTranscriptProjection(scope);
+    const anchor = accessor.readActiveTranscriptEntryAnchor({
+      ...scope,
+      entryId: admitted.messageId,
+    });
+    if (!anchor) {
+      throw new Error("expected a current-turn transcript anchor");
+    }
+    await appendSessionTranscriptMessageByIdentity({
+      ...scope,
+      parentId: root.messageId,
+      message: { role: "assistant", content: "other branch" },
+    });
+    const receipt = { ...anchor, logicalTurnId: "stale-memory-fence", role: "user" as const };
+    expect(runWithSessionTranscriptReadFence(receipt, captureDuringRepair)).toMatchObject({
+      status: "unavailable",
+    });
+    await accessor.waitForSessionTranscriptProjection(scope);
+    expect(runWithSessionTranscriptReadFence(receipt, captureDuringRepair)).toMatchObject({
+      status: "unavailable",
+    });
+  });
+
   it.each(
     [false, true].flatMap((preserve) =>
       [false, true].map((compacted) => ({ preserve, compacted })),
@@ -210,6 +247,20 @@ describe("session memory capture", () => {
     });
     expect(captureDuringRepair()).toEqual(expected);
     expect(hydratedOversizedRows).toBe(0);
+  });
+
+  it("retains path order when a parent appears later in storage", async () => {
+    await accessor.replaceTranscriptEvents(scope, [
+      message("answer", "question", "assistant"),
+      { type: "custom", id: "side", parentId: null, appendMode: "side" },
+      message("question", null, "user"),
+      { type: "leaf", id: "selected", parentId: "question", targetId: "answer" },
+    ]);
+    expect(captureDuringRepair()).toEqual({
+      status: "available",
+      originClass: "untrusted",
+      content: 'user: "question"\nassistant: "answer"',
+    });
   });
 
   it("does not scan beyond the message cap to fill an excerpt", async () => {

@@ -1,10 +1,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { sql } from "kysely";
 import { executeSqliteQueryTakeFirstSync } from "../../infra/kysely-sync.js";
+import { runSqliteDeferredTransactionSync } from "../../infra/sqlite-transaction.js";
 import type { UserTurnTranscriptAdmissionReceipt } from "../../sessions/user-turn-transcript.types.js";
 import type { OpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import { getSessionKysely } from "./session-accessor.sqlite-scope.js";
 import type { SessionTranscriptRuntimeTarget } from "./session-accessor.types.js";
+import { sessionTranscriptIndexNeedsReconcile } from "./session-transcript-index.js";
 
 const transcriptReadFenceStorage = new AsyncLocalStorage<UserTurnTranscriptAdmissionReceipt>();
 
@@ -81,61 +83,78 @@ export function resolveSqliteSessionTranscriptReadFence(params: {
       "Current-turn transcript admission belongs to a different session key",
     );
   }
-  const db = getSessionKysely(params.database.db);
-  const boundary = executeSqliteQueryTakeFirstSync(
+  // Detached-result validation may not have an outer read transaction.
+  return runSqliteDeferredTransactionSync(
     params.database.db,
-    db
-      .selectFrom("transcript_event_identities as identity")
-      .innerJoin("session_transcript_active_events as active", (join) =>
-        join
-          .onRef("active.session_id", "=", "identity.session_id")
-          .onRef("active.event_seq", "=", "identity.seq"),
-      )
-      .innerJoin("transcript_events as event", (join) =>
-        join
-          .onRef("event.session_id", "=", "identity.session_id")
-          .onRef("event.seq", "=", "identity.seq"),
-      )
-      .innerJoin("transcript_rewrite_watermarks as rewrite", (join) =>
-        join.onRef("rewrite.session_id", "=", "identity.session_id"),
-      )
-      .select([
-        "identity.seq",
-        "identity.parent_id",
-        "active.message_position",
-        "rewrite.generation",
-        /* kysely-allow-raw: validate the admission role without acquiring its private payload. */
-        sql<string>`json_extract(event.event_json, '$.type')`.as("event_type"),
-        /* kysely-allow-raw: admission validation needs the exact role, not the message body. */
-        sql<string>`json_extract(event.event_json, '$.message.role')`.as("message_role"),
-      ])
-      .where("identity.session_id", "=", params.sessionId)
-      .where("identity.event_id", "=", receipt.entryId)
-      .limit(1),
+    () => {
+      // Retained active rows can outlive a branch switch while repair is pending.
+      // They cannot certify that an admission still belongs to the current path.
+      if (sessionTranscriptIndexNeedsReconcile(params.database.db, params.sessionId)) {
+        throw new SessionTranscriptReadFenceError(
+          `Current-turn transcript admission cannot be verified before projection repair: ${receipt.entryId}`,
+        );
+      }
+      const db = getSessionKysely(params.database.db);
+      const boundary = executeSqliteQueryTakeFirstSync(
+        params.database.db,
+        db
+          .selectFrom("transcript_event_identities as identity")
+          .innerJoin("session_transcript_active_events as active", (join) =>
+            join
+              .onRef("active.session_id", "=", "identity.session_id")
+              .onRef("active.event_seq", "=", "identity.seq"),
+          )
+          .innerJoin("transcript_events as event", (join) =>
+            join
+              .onRef("event.session_id", "=", "identity.session_id")
+              .onRef("event.seq", "=", "identity.seq"),
+          )
+          .innerJoin("transcript_rewrite_watermarks as rewrite", (join) =>
+            join.onRef("rewrite.session_id", "=", "identity.session_id"),
+          )
+          .select([
+            "identity.seq",
+            "identity.parent_id",
+            "active.message_position",
+            "rewrite.generation",
+            /* kysely-allow-raw: validate the admission role without acquiring its private payload. */
+            sql<string>`json_extract(event.event_json, '$.type')`.as("event_type"),
+            /* kysely-allow-raw: admission validation needs the exact role, not the message body. */
+            sql<string>`json_extract(event.event_json, '$.message.role')`.as("message_role"),
+          ])
+          .where("identity.session_id", "=", params.sessionId)
+          .where("identity.event_id", "=", receipt.entryId)
+          .limit(1),
+      );
+      if (boundary?.message_position === null || boundary?.message_position === undefined) {
+        throw new SessionTranscriptReadFenceError(
+          `Current-turn transcript admission is no longer a visible message: ${receipt.entryId}`,
+        );
+      }
+      if (
+        boundary.generation !== receipt.generation ||
+        boundary.seq !== receipt.rawSeq ||
+        boundary.parent_id !== receipt.effectiveParentId ||
+        boundary.message_position !== receipt.activeMessagePosition
+      ) {
+        throw new SessionTranscriptReadFenceError(
+          `Current-turn transcript admission identity changed: ${receipt.entryId}`,
+        );
+      }
+      if (boundary.event_type !== "message" || boundary.message_role !== "user") {
+        throw new SessionTranscriptReadFenceError(
+          `Current-turn transcript admission is not a user message: ${receipt.entryId}`,
+        );
+      }
+      return {
+        admission: receipt,
+        beforeActiveMessagePosition: boundary.message_position,
+        beforeRawSeq: boundary.seq,
+      };
+    },
+    {
+      databaseLabel: params.database.path,
+      operationLabel: "session transcript admission validation",
+    },
   );
-  if (boundary?.message_position === null || boundary?.message_position === undefined) {
-    throw new SessionTranscriptReadFenceError(
-      `Current-turn transcript admission is no longer a visible message: ${receipt.entryId}`,
-    );
-  }
-  if (
-    boundary.generation !== receipt.generation ||
-    boundary.seq !== receipt.rawSeq ||
-    boundary.parent_id !== receipt.effectiveParentId ||
-    boundary.message_position !== receipt.activeMessagePosition
-  ) {
-    throw new SessionTranscriptReadFenceError(
-      `Current-turn transcript admission identity changed: ${receipt.entryId}`,
-    );
-  }
-  if (boundary.event_type !== "message" || boundary.message_role !== "user") {
-    throw new SessionTranscriptReadFenceError(
-      `Current-turn transcript admission is not a user message: ${receipt.entryId}`,
-    );
-  }
-  return {
-    admission: receipt,
-    beforeActiveMessagePosition: boundary.message_position,
-    beforeRawSeq: boundary.seq,
-  };
 }
