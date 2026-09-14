@@ -33,6 +33,76 @@ afterEach(() => {
 });
 
 describe("legacy media persistence doctor migration", () => {
+  it.each([false, true])(
+    "restores the media connection cache after schema integrity (failure=%s)",
+    async (failIntegrity) => {
+      const stateDir = makeTempDir(tempDirs, "media-persistence-integrity-cache-");
+      const env = { OPENCLAW_STATE_DIR: stateDir };
+      const databasePath = createLegacyDatabaseFixture({
+        env,
+        schemaVersion: OPENCLAW_AGENT_SCHEMA_VERSION,
+        eventsBySession: {
+          current: [
+            createEvent({
+              id: "event-1",
+              parentId: null,
+              timestamp: 1000,
+              message: { role: "user", content: "already canonical" },
+            }),
+          ],
+        },
+      });
+      const integrityCaches: unknown[] = [];
+      const detectionCaches: unknown[] = [];
+      const closedCaches: unknown[] = [];
+      const openDatabase = nodeSqlite.openNodeSqliteDatabase;
+      const spy = vi
+        .spyOn(nodeSqlite, "openNodeSqliteDatabase")
+        .mockImplementation((file, options) => {
+          const database = openDatabase(file, options);
+          if (file !== databasePath) {
+            return database;
+          }
+          database.exec("PRAGMA cache_size = 123");
+          const prepare = database.prepare.bind(database);
+          const cacheSize = () => prepare("PRAGMA cache_size").get()?.cache_size;
+          vi.spyOn(database, "prepare").mockImplementation((sql) => {
+            if (sql === "PRAGMA integrity_check;") {
+              integrityCaches.push(cacheSize());
+              if (failIntegrity) {
+                throw new Error("fixture integrity failure");
+              }
+            }
+            if (sql.includes('from "transcript_events"')) {
+              detectionCaches.push(cacheSize());
+            }
+            return prepare(sql);
+          });
+          const close = database.close.bind(database);
+          vi.spyOn(database, "close").mockImplementation(() => {
+            closedCaches.push(cacheSize());
+            close();
+          });
+          return database;
+        });
+      try {
+        const result = await migrateLegacyMediaPersistence({ env });
+        expect(integrityCaches).toEqual([-65_536]);
+        expect(closedCaches).toEqual([123]);
+        if (failIntegrity) {
+          expect(result.warnings).toEqual([expect.stringContaining("fixture integrity failure")]);
+          expect(detectionCaches).toEqual([]);
+        } else {
+          expect(result.warnings).toEqual([]);
+          expect(detectionCaches.length).toBeGreaterThan(0);
+          expect(detectionCaches.every((value) => value === 123)).toBe(true);
+        }
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
+
   it("preserves the typed maintenance cause when lease acquisition fails", async () => {
     const stateDir = makeTempDir(tempDirs, "media-persistence-lease-");
     const env = { OPENCLAW_STATE_DIR: stateDir };

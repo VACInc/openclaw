@@ -132,6 +132,38 @@ type SqliteForeignKeyViolation = {
 };
 
 const MAX_REPORTED_FOREIGN_KEY_VIOLATIONS = 5;
+const SQLITE_INTEGRITY_CACHE_SIZE = -65_536;
+
+/** Bound repeated index-page reads to a temporary 64 MiB connection cache. */
+export function runWithSqliteIntegrityCache<T>(database: DatabaseSync, operation: () => T): T {
+  const previousCacheSize = database // sqlite-allow-raw -- Preserve connection-local page-cache policy around offline integrity work.
+    .prepare("PRAGMA cache_size")
+    .get()?.cache_size;
+  if (typeof previousCacheSize !== "number") {
+    throw new Error("SQLite did not return a numeric cache_size");
+  }
+  if (previousCacheSize === SQLITE_INTEGRITY_CACHE_SIZE) {
+    return operation();
+  }
+  database.exec(`PRAGMA cache_size = ${SQLITE_INTEGRITY_CACHE_SIZE}`); // sqlite-allow-raw -- Temporary integrity-check cache; never persisted as a database default.
+  let result: T;
+  let restorationFailure: { error: unknown } | undefined;
+  try {
+    result = operation();
+  } finally {
+    if (database.isOpen) {
+      try {
+        database.exec(`PRAGMA cache_size = ${previousCacheSize}`); // sqlite-allow-raw -- Restore the caller's exact page-count or KiB cache policy.
+      } catch (error) {
+        restorationFailure = { error };
+      }
+    }
+  }
+  if (restorationFailure) {
+    throw restorationFailure.error;
+  }
+  return result;
+}
 
 export class SqliteRepairableForeignKeyError extends Error {
   readonly repair: Readonly<{

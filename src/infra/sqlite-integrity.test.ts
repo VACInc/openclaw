@@ -16,6 +16,7 @@ import {
   confirmSqliteFileIntegrity,
   isTerminalSqliteIntegrityError,
   runSqliteIntegrityOperationSync,
+  runWithSqliteIntegrityCache,
   sqliteIntegrityCheckSteps,
   type SqliteIntegrityCheckTiming,
   type SqliteIntegrityDiagnostics,
@@ -28,6 +29,59 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+describe("temporary SQLite integrity cache", () => {
+  it("restores each enclosing cache policy after nested checks", () => {
+    const { DatabaseSync } = requireNodeSqlite();
+    const database = new DatabaseSync(":memory:");
+    const cacheSize = () => database.prepare("PRAGMA cache_size").get()?.cache_size;
+    try {
+      database.exec("PRAGMA cache_size = -3000");
+      runWithSqliteIntegrityCache(database, () => {
+        runWithSqliteIntegrityCache(database, () => {
+          expect(cacheSize()).toBe(-65_536);
+          expect(assertSqliteIntegrity(database, "nested fixture")).toEqual({
+            integrityCheck: "ok",
+          });
+        });
+        expect(cacheSize()).toBe(-65_536);
+      });
+      expect(cacheSize()).toBe(-3000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it.each([false, true])(
+    "preserves the primary failure when cache restoration fails (check failed=%s)",
+    (failCheck) => {
+      const { DatabaseSync } = requireNodeSqlite();
+      const database = new DatabaseSync(":memory:");
+      const checkFailure = new Error("fixture integrity failure");
+      const restoreFailure = new Error("fixture cache restoration failure");
+      database.exec("PRAGMA cache_size = 123");
+      const exec = database.exec.bind(database);
+      const spy = vi.spyOn(database, "exec").mockImplementation((sql) => {
+        if (sql === "PRAGMA cache_size = 123") {
+          throw restoreFailure;
+        }
+        exec(sql);
+      });
+      try {
+        expect(() =>
+          runWithSqliteIntegrityCache(database, () => {
+            if (failCheck) {
+              throw checkFailure;
+            }
+          }),
+        ).toThrow(failCheck ? checkFailure : restoreFailure);
+      } finally {
+        spy.mockRestore();
+        database.close();
+      }
+    },
+  );
+});
 
 describe("assertSqliteIntegrity", () => {
   it("accepts structurally and referentially consistent databases", () => {

@@ -10,7 +10,7 @@ import type {
   SqliteIntegrityWorkerPhase,
   SqliteIntegrityWorkerResult,
 } from "./sqlite-integrity-worker.js";
-import { assertSqliteIntegrity } from "./sqlite-integrity.js";
+import { assertSqliteIntegrity, runWithSqliteIntegrityCache } from "./sqlite-integrity.js";
 
 function nativeErrorDetails(error: Error) {
   // SAFETY: Node's filesystem and SQLite errors attach these optional diagnostic fields.
@@ -47,14 +47,14 @@ try {
   readSqliteIntegrityFileIdentity(input.pathname, input.identity);
   database = openNodeSqliteDatabase(input.pathname, { readOnly: true });
   setSqliteBusyTimeout(database, input.busyTimeoutMs);
-  // Full index checks revisit pages. Keep their cache in this disposable child,
-  // without raising the memory budget of the Gateway's retained connections.
-  database.exec("PRAGMA cache_size = -65536;"); // sqlite-allow-raw -- Connection-local page-cache policy for this disposable integrity child.
   readSqliteIntegrityFileIdentity(input.pathname, input.identity);
   await sendPhase("checking");
   const startedAt = performance.now();
   try {
-    assertSqliteIntegrity(database, input.databaseLabel);
+    const checkingDatabase = database;
+    runWithSqliteIntegrityCache(checkingDatabase, () =>
+      assertSqliteIntegrity(checkingDatabase, input.databaseLabel),
+    );
   } finally {
     checkElapsedMs = performance.now() - startedAt;
   }

@@ -46,6 +46,7 @@ import {
 import { openNodeSqliteDatabase } from "./node-sqlite.js";
 import { replaceFileAtomicSync } from "./replace-file.js";
 import { repairCanonicalSqliteIndexes } from "./sqlite-index-schema.js";
+import { runWithSqliteIntegrityCache } from "./sqlite-integrity.js";
 import {
   runSqliteDeferredTransactionSync,
   runSqliteImmediateTransactionSync,
@@ -354,10 +355,12 @@ async function migrateAgentDatabase(params: {
     let userVersion = readSqliteUserVersion(database);
     const initialVersion = userVersion;
     if (userVersion <= PREVIOUS_MEDIA_SCHEMA_VERSION) {
-      migrateOpenClawAgentDatabaseToMediaPrerequisiteSchema(database, {
-        agentId: params.agentId,
-        path: params.pathname,
-      });
+      runWithSqliteIntegrityCache(database, () =>
+        migrateOpenClawAgentDatabaseToMediaPrerequisiteSchema(database, {
+          agentId: params.agentId,
+          path: params.pathname,
+        }),
+      );
       metadata = assertOpenClawAgentDatabaseOwner(database, {
         agentId: params.agentId,
         pathname: params.pathname,
@@ -372,10 +375,12 @@ async function migrateAgentDatabase(params: {
     if (userVersion >= AGENT_MEDIA_SCHEMA_VERSION) {
       // The canonical owner admits supported versions and converges additive schema;
       // media must not enumerate later schema revisions independently.
-      ensureOpenClawAgentDatabaseSchema(database, {
-        agentId: params.agentId,
-        path: params.pathname,
-      });
+      runWithSqliteIntegrityCache(database, () =>
+        ensureOpenClawAgentDatabaseSchema(database, {
+          agentId: params.agentId,
+          path: params.pathname,
+        }),
+      );
       userVersion = readSqliteUserVersion(database);
     }
     const schemaMode = userVersion < OPENCLAW_AGENT_SCHEMA_VERSION ? "legacy" : "current";
@@ -457,7 +462,12 @@ async function migrateAgentDatabase(params: {
         operationLabel: "media-persistence-retirement",
       },
     );
-    ensureOpenClawAgentDatabaseSchema(database, { agentId: params.agentId, path: params.pathname });
+    runWithSqliteIntegrityCache(database, () =>
+      ensureOpenClawAgentDatabaseSchema(database, {
+        agentId: params.agentId,
+        path: params.pathname,
+      }),
+    );
     const rewrittenArchives = await migrateArchives();
     refreshAgentDatabasePlannerStatistics(database);
     return {
