@@ -27,7 +27,6 @@ it.each([0, 7_000])(
     const provider = "login-discovery-fixture";
     const trace: Array<{ path: string; time: number; method: string; authenticated: boolean }> = [];
     let responseDelay = catalogDelay;
-    let automaticCatalogResponseFinished = false;
     let holdNextCatalogResponse = false;
     const refreshRequestStarted = createDeferred<ServerResponse>();
     const releaseRefreshResponse = createDeferred();
@@ -55,9 +54,6 @@ it.each([0, 7_000])(
         } else {
           responseReady = delay(responseDelay);
         }
-        response.once("finish", () => {
-          automaticCatalogResponseFinished = true;
-        });
         void responseReady.then(() =>
           response.end(JSON.stringify([{ id: "account-exclusive", name: "Account exclusive" }])),
         );
@@ -183,13 +179,7 @@ it.each([0, 7_000])(
         };
         await delay(Math.max(0, loginCompleted + 1_000 - performance.now()));
         const observations = [await observePassiveReads("early")];
-        // Catalog startup and the fixture's injected delay precede publication.
-        // Give the completed response its own publication window, rather than
-        // requiring model rows before the endpoint can finish responding.
-        await expect
-          .poll(() => automaticCatalogResponseFinished, { timeout: catalogDelay + 10_000 })
-          .toBe(true);
-        const publicationDeadline = performance.now() + 10_000;
+        const publicationDeadline = loginCompleted + 10_000;
         while (performance.now() < publicationDeadline) {
           const publishedIds = (await list()).ids;
           if (publishedIds.includes("account-exclusive")) {
