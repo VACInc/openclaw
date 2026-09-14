@@ -1,4 +1,3 @@
-/** Handles inline slash commands, skill invocations, and abort actions before model runs. */
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import type { QueueMode } from "../../../packages/gateway-protocol/src/schema/logs-chat.js";
 import { collectTextContentBlocks } from "../../agents/content-blocks.js";
@@ -7,6 +6,8 @@ import type { ExecPolicyOverrides } from "../../agents/exec-defaults.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+/** Handles inline slash commands, skill invocations, and abort actions before model runs. */
+import type { BeforeResetHookMessages } from "../../gateway/session-reset-hook-messages.js";
 import { logVerbose } from "../../globals.js";
 import type { SessionMemoryTranscript } from "../../hooks/bundled/session-memory/capture.js";
 import { formatErrorMessage } from "../../infra/errors.js";
@@ -159,7 +160,7 @@ export async function handleInlineActions(params: {
   allowCreateSessionEntry?: boolean;
   previousSessionEntry?: SessionEntry;
   previousSessionMemory?: SessionMemoryTranscript;
-  previousSessionResetMessages?: unknown[];
+  previousSessionResetMessages?: BeforeResetHookMessages;
   sessionStore?: Record<string, SessionEntry>;
   sessionKey: string;
   storePath?: string;

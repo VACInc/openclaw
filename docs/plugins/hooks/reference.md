@@ -179,6 +179,13 @@ To short-circuit an agent turn with a synthetic reply or silence, use
 | `before_compaction` / `after_compaction` | Observe | Observe compaction boundaries; no rewrite or veto result     |
 | `before_reset`                           | Observe | Observe session-reset events (`/reset`, programmatic resets) |
 
+`before_reset.messages` is a bounded snapshot of the newest pre-reset messages
+(at most 4,096 messages and 8 MiB, oldest first), not the whole session.
+`totalMessages` reports the visible count before bounding and `truncated` is
+`true` when older messages were omitted. Plugins that need older history should
+read it through the session tools using `sessionFile`; the reset itself never
+loads an unbounded transcript into Gateway memory.
+
 Successful engine-owned compaction attempts emit `after_compaction` even when
 no history changes, with `compactedCount: 0`. Failed or aborted attempts do not
 emit that completion hook.

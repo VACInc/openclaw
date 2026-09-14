@@ -494,7 +494,12 @@ type PluginHookBeforeCompactionEvent = {
 
 type PluginHookBeforeResetEvent = {
   sessionFile?: string;
+  /** Newest pre-reset messages, bounded by count and bytes; oldest first. */
   messages?: unknown[];
+  /** Visible message count before bounding. */
+  totalMessages?: number;
+  /** True when older messages were omitted from `messages`. */
+  truncated?: boolean;
   reason?: string;
 };
 
