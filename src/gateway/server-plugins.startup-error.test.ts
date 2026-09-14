@@ -12,11 +12,7 @@ import {
   INSTANCE_BINDING_PROBE_METHOD,
   writeInstanceBindingProbePlugin,
 } from "./server-plugins.lifecycle.test-fixtures.js";
-import {
-  installInstanceBindingConfigIo,
-  requireBoundRuntime,
-  requestSettledInstanceBindingProbe,
-} from "./server-plugins.lifecycle.test-support.js";
+import { installInstanceBindingConfigIo } from "./server-plugins.lifecycle.test-support.js";
 import {
   connectWebchatClient,
   installGatewayTestHooks,
@@ -43,7 +39,6 @@ it(
   { timeout: 120_000 },
   async () => {
     const coordinator = installInstanceBindingProbeCoordinator();
-    coordinator.reportReloadSettlement = true;
     const bundledRoot = tempDirs.make("openclaw-startup-error-");
     await writeInstanceBindingProbePlugin(bundledRoot, coordinator.channelName);
     const brokenDir = path.join(bundledRoot, "startup-broken");
@@ -100,13 +95,6 @@ it(
     try {
       await server.startupSettled;
       socket = await connectWebchatClient({ port, scopes: ["operator.admin"] });
-      // Sidecar startup does not settle config reloads, which own the same
-      // fail-fast lifecycle lease as the mutations exercised below.
-      const { runtime } = await requireBoundRuntime(
-        coordinator.runtimes,
-        "startup-error lifecycle",
-      );
-      await requestSettledInstanceBindingProbe(runtime);
       const initial = getActivePluginRegistry();
       assert(initial);
       const broken = initial.plugins.find((record) => record.id === "startup-broken");
