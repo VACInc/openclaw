@@ -30,7 +30,7 @@ export async function readBeforeResetMessages(params: {
   sessionKey?: string;
   storePath?: string;
 }): Promise<BeforeResetHookMessages> {
-  return readBeforeResetHookMessages(params);
+  return readBeforeResetHookMessages(params, "raw");
 }
 
 export async function emitResetCommandHooks(params: {

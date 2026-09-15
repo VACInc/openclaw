@@ -1,7 +1,8 @@
+import { readSessionTranscriptHookMessages } from "../config/sessions/session-accessor.sqlite-hook-messages.js";
 // Bounded transcript snapshot delivered to `before_reset` plugin hooks.
 import type { SessionEntry } from "../config/sessions/types.js";
 import { logVerbose } from "../globals.js";
-import { readSessionMessagesWithSourceAsync } from "./session-transcript-readers.js";
+import { readSessionMessagesPageWithStatsAsync } from "./session-transcript-readers.js";
 
 /**
  * Newest messages handed to `before_reset` observers. Mirrors the bounded
@@ -9,8 +10,8 @@ import { readSessionMessagesWithSourceAsync } from "./session-transcript-readers
  * a 1.6M-message session previously took ~118 s and ~15 GiB of heap to build
  * this payload, freezing the Gateway on every `/new`.
  */
-export const BEFORE_RESET_HOOK_MAX_MESSAGES = 4_096;
-export const BEFORE_RESET_HOOK_MAX_BYTES = 8 * 1024 * 1024;
+const BEFORE_RESET_HOOK_MAX_MESSAGES = 4_096;
+const BEFORE_RESET_HOOK_MAX_BYTES = 8 * 1024 * 1024;
 
 export type BeforeResetHookMessages = {
   /** Newest transcript messages, oldest first, bounded by count and bytes. */
@@ -21,11 +22,9 @@ export type BeforeResetHookMessages = {
   truncated: boolean;
 };
 
-const EMPTY_BEFORE_RESET_HOOK_MESSAGES: BeforeResetHookMessages = Object.freeze({
-  messages: [],
-  totalMessages: 0,
-  truncated: false,
-});
+function emptyBeforeResetHookMessages(): BeforeResetHookMessages {
+  return { messages: [], totalMessages: 0, truncated: false };
+}
 
 export type BeforeResetHookMessagesScope = {
   agentId?: string;
@@ -42,42 +41,57 @@ export type BeforeResetHookMessagesScope = {
  */
 export async function readBeforeResetHookMessages(
   scope: BeforeResetHookMessagesScope,
+  selection: "display" | "raw" = "display",
 ): Promise<BeforeResetHookMessages> {
   const sessionId = typeof scope.sessionId === "string" ? scope.sessionId.trim() : "";
   const sessionKey = typeof scope.sessionKey === "string" ? scope.sessionKey.trim() : "";
   const storePath = typeof scope.storePath === "string" ? scope.storePath.trim() : "";
   if (!sessionId || !sessionKey || !storePath) {
     logVerbose("before_reset: no session identity available, firing hook with empty messages");
-    return EMPTY_BEFORE_RESET_HOOK_MESSAGES;
+    return emptyBeforeResetHookMessages();
   }
   try {
-    const result = await readSessionMessagesWithSourceAsync(
-      {
-        ...(scope.agentId ? { agentId: scope.agentId } : {}),
-        ...(scope.sessionEntry ? { sessionEntry: scope.sessionEntry } : {}),
-        sessionId,
-        sessionKey,
-        storePath,
-      },
-      {
-        mode: "recent",
-        maxMessages: BEFORE_RESET_HOOK_MAX_MESSAGES,
-        maxBytes: BEFORE_RESET_HOOK_MAX_BYTES,
-      },
-    );
+    const target = {
+      ...(scope.agentId ? { agentId: scope.agentId } : {}),
+      ...(scope.sessionEntry ? { sessionEntry: scope.sessionEntry } : {}),
+      sessionId,
+      sessionKey,
+      storePath,
+    };
+    const limits = {
+      maxMessages: BEFORE_RESET_HOOK_MAX_MESSAGES,
+      maxBytes: BEFORE_RESET_HOOK_MAX_BYTES,
+    };
+    const result =
+      selection === "raw"
+        ? await readSessionTranscriptHookMessages(target, limits)
+        : await readSessionMessagesPageWithStatsAsync(target, { ...limits, offset: 0 });
+    // Projection metadata can enlarge display messages. Bound the public array
+    // too, after the storage reader has enforced its pre-hydration byte ceiling.
+    let bytes = 2;
+    let start = result.messages.length;
+    for (let index = result.messages.length - 1; index >= 0; index -= 1) {
+      const size = Buffer.byteLength(JSON.stringify(result.messages[index]), "utf8") + 1;
+      if (bytes + size > BEFORE_RESET_HOOK_MAX_BYTES) {
+        break;
+      }
+      bytes += size;
+      start = index;
+    }
+    const messages = result.messages.slice(start);
     const totalMessages = Math.max(
       result.totalMessages ?? result.messages.length,
       result.messages.length,
     );
     return {
-      messages: result.messages,
+      messages,
       totalMessages,
-      truncated: totalMessages > result.messages.length,
+      truncated: totalMessages > messages.length,
     };
   } catch (err: unknown) {
     logVerbose(
       `before_reset: failed to read session messages for ${sessionKey}/${sessionId}; firing hook with empty messages (${String(err)})`,
     );
-    return EMPTY_BEFORE_RESET_HOOK_MESSAGES;
+    return emptyBeforeResetHookMessages();
   }
 }

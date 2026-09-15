@@ -1,16 +1,21 @@
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
-import { replaceTranscriptEvents } from "../config/sessions/session-accessor.js";
+import {
+  loadTranscriptEvents,
+  replaceTranscriptEvents,
+} from "../config/sessions/session-accessor.js";
 import { waitForSessionTranscriptProjection } from "../config/sessions/session-transcript-reconcile.js";
+import { selectSessionTranscriptLeafControlledPath } from "../config/sessions/transcript-tree.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
-import {
-  BEFORE_RESET_HOOK_MAX_BYTES,
-  BEFORE_RESET_HOOK_MAX_MESSAGES,
-  readBeforeResetHookMessages,
-} from "./session-reset-hook-messages.js";
+import { readBeforeResetHookMessages } from "./session-reset-hook-messages.js";
+
+// Public hook limits are asserted independently of production constants.
+const BEFORE_RESET_HOOK_MAX_MESSAGES = 4096;
+const BEFORE_RESET_HOOK_MAX_BYTES = 8 * 1024 * 1024;
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
@@ -50,11 +55,12 @@ describe("readBeforeResetHookMessages", () => {
     const events = Array.from({ length: count }, (_, index) => ({
       type: "message" as const,
       id: `m${index + 1}`,
+      parentId: index === 0 ? null : `m${index}`,
       message: { role: index % 2 === 0 ? "user" : "assistant", content: content(index + 1) },
     }));
     await replaceTranscriptEvents(scope, [
       { type: "session", version: 3, id: sessionId },
-      ...events.map((event, index) => ({ ...event, parentId: events[index - 1]?.id ?? null })),
+      ...events,
     ]);
     // Large replacements rebuild the transcript projection asynchronously.
     await waitForSessionTranscriptProjection(scope);
@@ -88,8 +94,8 @@ describe("readBeforeResetHookMessages", () => {
     const payload = await readBeforeResetHookMessages(scope);
     expect(payload.messages.length).toBeGreaterThan(0);
     expect(payload.messages.length).toBeLessThan(count);
-    expect(JSON.stringify(payload.messages).length).toBeLessThanOrEqual(
-      BEFORE_RESET_HOOK_MAX_BYTES + count * 1024,
+    expect(Buffer.byteLength(JSON.stringify(payload.messages), "utf8")).toBeLessThanOrEqual(
+      BEFORE_RESET_HOOK_MAX_BYTES,
     );
     expect(messageIds(payload.messages).at(-1)).toBe(`m${count}`);
     expect(payload.totalMessages).toBe(count);
@@ -113,5 +119,138 @@ describe("readBeforeResetHookMessages", () => {
       storePath,
     });
     expect(payload).toEqual({ messages: [], totalMessages: 0, truncated: false });
+  });
+
+  test.each(["display", "raw"] as const)(
+    "rejects an oversized newest %s row before parsing",
+    async (selection) => {
+      const scope = await writeTranscript("oversized", 1, () =>
+        "x".repeat(BEFORE_RESET_HOOK_MAX_BYTES + 1),
+      );
+      const parse = JSON.parse;
+      const oversizedReads: number[] = [];
+      const spy = vi.spyOn(JSON, "parse").mockImplementation((text, reviver) => {
+        if (Buffer.byteLength(text, "utf8") > BEFORE_RESET_HOOK_MAX_BYTES) {
+          oversizedReads.push(text.length);
+        }
+        return parse(text, reviver);
+      });
+      try {
+        expect(await readBeforeResetHookMessages(scope, selection)).toEqual({
+          messages: [],
+          totalMessages: 1,
+          truncated: true,
+        });
+        expect(oversizedReads).toEqual([]);
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
+
+  test("does not share mutable empty payloads between observers", async () => {
+    const first = await readBeforeResetHookMessages({});
+    first.messages.push({ private: "previous observer" });
+    expect(await readBeforeResetHookMessages({})).toEqual({
+      messages: [],
+      totalMessages: 0,
+      truncated: false,
+    });
+  });
+
+  test.each([false, true])(
+    "preserves raw command membership across reset, compaction and custom records (leaf=%s)",
+    async (withLeaf) => {
+      const scope = await writeTranscript("membership", 0);
+      const message = (id: string, parentId: string | null) => ({
+        type: "message",
+        id,
+        parentId,
+        message: { role: "user", content: id },
+      });
+      const events = [
+        { type: "session", version: 3, id: scope.sessionId },
+        message("before", null),
+        { type: "reset", id: "reset", parentId: "before", reason: "new" },
+        message("after", "reset"),
+        {
+          type: "compaction",
+          id: "compact",
+          parentId: "after",
+          summary: "summary",
+          firstKeptEntryId: "after",
+          tokensBefore: 10,
+        },
+        {
+          type: "custom_message",
+          id: "custom",
+          parentId: "compact",
+          customType: "notice",
+          display: true,
+          content: "custom",
+        },
+        message("latest", "custom"),
+        ...(withLeaf
+          ? [
+              message("discarded", "latest"),
+              { type: "leaf", id: "leaf", parentId: "discarded", targetId: "latest" },
+            ]
+          : []),
+      ];
+      await replaceTranscriptEvents(scope, events);
+      await waitForSessionTranscriptProjection(scope);
+      const raw = await loadTranscriptEvents(scope);
+      const expected = (selectSessionTranscriptLeafControlledPath(raw) ?? raw).flatMap((row) => {
+        const entry = asOptionalRecord(row);
+        return entry?.type === "message" && entry.message ? [entry.message] : [];
+      });
+      const result = await readBeforeResetHookMessages(scope, "raw");
+      expect(result.messages).toEqual(expected);
+      expect(result.messages).toEqual(
+        ["before", "after", "latest"].map((content) => ({ role: "user", content })),
+      );
+      expect(result.totalMessages).toBe(expected.length);
+      expect(result.truncated).toBe(false);
+    },
+  );
+
+  test("preserves flat storage membership without leaf controls", async () => {
+    const scope = await writeTranscript("flat", 0);
+    const messages = ["root", "branch-a", "branch-b"].map((content) => ({ role: "user", content }));
+    await replaceTranscriptEvents(scope, [
+      { type: "session", version: 3, id: scope.sessionId },
+      { type: "message", id: "root", parentId: null, message: messages[0] },
+      { type: "message", id: "a", parentId: "root", message: messages[1] },
+      { type: "message", id: "b", parentId: "root", message: messages[2] },
+    ]);
+    await waitForSessionTranscriptProjection(scope);
+    expect(await readBeforeResetHookMessages(scope, "raw")).toEqual({
+      messages,
+      totalMessages: 3,
+      truncated: false,
+    });
+  });
+  test("excludes missing and falsy raw payloads before counting and limiting", async () => {
+    const scope = await writeTranscript("falsy", 0);
+    const valid = { role: "user", content: "keep me" };
+    await replaceTranscriptEvents(scope, [
+      { type: "session", version: 3, id: scope.sessionId },
+      { type: "message", id: "valid", message: valid },
+      ...Array.from({ length: 4100 }, (_, i) => ({
+        type: "message",
+        id: "null-" + i,
+        message: null,
+      })),
+      { type: "message", id: "missing" },
+      { type: "message", id: "empty", message: "" },
+      { type: "message", id: "false", message: false },
+      { type: "message", id: "zero", message: 0 },
+    ]);
+    await waitForSessionTranscriptProjection(scope);
+    expect(await readBeforeResetHookMessages(scope, "raw")).toEqual({
+      messages: [valid],
+      totalMessages: 1,
+      truncated: false,
+    });
   });
 });

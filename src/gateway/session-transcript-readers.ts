@@ -60,8 +60,6 @@ export type ReadRecentSessionMessagesResult = {
 type ReadSessionMessagesResult = {
   messages: unknown[];
   transcriptPath?: string;
-  /** Visible message count before `recent` bounding; absent for full reads. */
-  totalMessages?: number;
 };
 
 type ReadSessionMessageByIdResult = {
@@ -155,28 +153,22 @@ export async function readSessionMessagesWithSourceAsync(
   opts: ReadSessionMessagesAsyncOptions & { readOnly?: boolean },
 ): Promise<ReadSessionMessagesResult> {
   const target = await resolveTranscriptReadTarget(scope);
-  const read = await readRestoredSessionTranscript(
+  const messages = await readRestoredSessionTranscript(
     toTranscriptReadScope(target),
-    (): { messages: unknown[]; totalMessages?: number } => {
-      if (opts.mode === "recent") {
-        const page = readRecentSqliteMessageRecords(target, opts);
-        return { messages: page.messages, totalMessages: page.totalMessages };
-      }
-      return {
-        messages: projectSqliteHistoryEvents(
-          readSessionTranscriptHistoryEvents(toTranscriptReadScope(target), opts),
-        ),
-      };
-    },
+    () =>
+      opts.mode === "recent"
+        ? readRecentSqliteMessageRecords(target, opts).messages
+        : projectSqliteHistoryEvents(
+            readSessionTranscriptHistoryEvents(toTranscriptReadScope(target), opts),
+          ),
     opts,
   );
-  if (read.messages.length === 0 && opts.allowResetArchiveFallback === true) {
+  if (messages.length === 0 && opts.allowResetArchiveFallback === true) {
     return await archivedTranscriptReader(target).read({ ...opts, resetArchiveOnly: true });
   }
   return {
-    messages: read.messages,
+    messages,
     transcriptPath: target.sessionFile,
-    ...(read.totalMessages !== undefined ? { totalMessages: read.totalMessages } : {}),
   };
 }
 

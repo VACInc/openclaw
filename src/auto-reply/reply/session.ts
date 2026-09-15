@@ -1,3 +1,4 @@
+// Manages reply session records, labels, ids, and route persistence.
 import crypto from "node:crypto";
 import {
   normalizeOptionalLowercaseString,
@@ -58,7 +59,6 @@ import {
   forgetActiveSessionForShutdown,
   noteActiveSessionForShutdown,
 } from "../../gateway/active-sessions-shutdown-tracker.js";
-// Manages reply session records, labels, ids, and route persistence.
 import type { BeforeResetHookMessages } from "../../gateway/session-reset-hook-messages.js";
 import {
   captureSessionMemoryTranscript,
