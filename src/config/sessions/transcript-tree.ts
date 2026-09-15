@@ -189,6 +189,20 @@ export function scanSessionTranscriptTree<T>(entries: Iterable<T>): SessionTrans
   return { nodes, byId, ...navigation };
 }
 
+/** Detect accepted navigation, not merely a syntactically valid leaf record. */
+export function hasAcceptedSessionTranscriptLeafControl(entries: Iterable<unknown>): boolean {
+  return scanSessionTranscriptNavigation(
+    entries,
+    {
+      byId: new Map<string, SessionTranscriptTreeNode<unknown>>(),
+      addNode: () => {},
+      resetDescendantIds: new Set(),
+      invalidLeafControlIds: new Set(),
+    },
+    { stopAfterFirstLeafControl: true },
+  ).hasLeafControl;
+}
+
 /** Resolves the active branch leaf from the same transcript tree used by branch listing. */
 export function resolveSessionTranscriptActiveLeafEntryId(
   events: readonly unknown[],
@@ -199,6 +213,7 @@ export function resolveSessionTranscriptActiveLeafEntryId(
 export function scanSessionTranscriptNavigation<T>(
   entries: Iterable<T>,
   storage: SessionTranscriptNavigationStorage<T>,
+  options: { stopAfterFirstLeafControl?: boolean } = {},
 ): Omit<SessionTranscriptTree<T>, "nodes" | "byId"> {
   const { byId, resetDescendantIds, invalidLeafControlIds } = storage;
   let leafId: string | null = null;
@@ -309,6 +324,9 @@ export function scanSessionTranscriptNavigation<T>(
     }
     if (isSessionTranscriptLeafControl(entry)) {
       hasLeafControl = true;
+      if (options.stopAfterFirstLeafControl) {
+        break;
+      }
     }
   }
 

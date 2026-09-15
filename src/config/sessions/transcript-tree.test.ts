@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  hasAcceptedSessionTranscriptLeafControl,
   isSessionTranscriptLeafControl,
   mergeSessionTranscriptVisiblePathWithOpaqueAppendPath,
   parseSessionTranscriptTreeEntry,
@@ -421,6 +422,9 @@ describe("session transcript tree helpers", () => {
     expect(tree.leafId).toBe("child");
     expect(tree.appendParentId).toBe("child");
     expect(tree.hasLeafControl).toBe(false);
+    expect(
+      hasAcceptedSessionTranscriptLeafControl([root, missingTarget, child, missingAppendParent]),
+    ).toBe(false);
     expect(tree.byId.get("missing-target")?.parentId).toBe("root");
     expect(tree.byId.get("child")?.parentId).toBe("root");
     expect(selectSessionTranscriptTreePathNodes(tree, tree.leafId).map((node) => node.id)).toEqual([
@@ -428,5 +432,20 @@ describe("session transcript tree helpers", () => {
       "child",
     ]);
     expect(selectSessionTranscriptLeafControlledPath([root, missingTarget])).toBeUndefined();
+  });
+  it("stops and closes navigation input at the first accepted control", () => {
+    let closed = false;
+    function* entries() {
+      try {
+        yield { type: "custom", id: "root", parentId: null };
+        yield { type: "leaf", id: "dangling", parentId: "root", targetId: "missing" };
+        yield { type: "leaf", id: "valid", parentId: "root", targetId: "root" };
+        throw new Error("Read past the first accepted navigation control");
+      } finally {
+        closed = true;
+      }
+    }
+    expect(hasAcceptedSessionTranscriptLeafControl(entries())).toBe(true);
+    expect(closed).toBe(true);
   });
 });
