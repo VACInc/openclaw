@@ -13,7 +13,7 @@ import type { SessionTranscriptReadScope } from "./session-accessor.sqlite-contr
 import { readRestoredSessionTranscript } from "./session-cold-storage-read.js";
 import { projectTranscriptNavigationSql } from "./session-model-context-projection.js";
 import { resolveSqliteSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
-import { isSessionTranscriptLeafControl } from "./transcript-tree.js";
+import { hasAcceptedSessionTranscriptLeafControl } from "./transcript-tree.js";
 
 /**
  * Preserve the command hook's raw message membership: flat storage until leaf
@@ -30,31 +30,57 @@ export async function readSessionTranscriptHookMessages(
       const { database, resolved } = projection;
       const db = getActiveTranscriptKysely(database);
       const fence = resolveSqliteSessionTranscriptReadFence({ database, ...resolved });
-      let hasLeafControl = false;
-      const leaves = iterateSqliteQuerySync(
+      // Avoid a navigation scan for the common leaf-free transcript. The
+      // identity index can omit earlier duplicate IDs, so inspect unindexed
+      // types too, just as the raw message query does below.
+      const lastLeaf = executeSqliteQueryTakeFirstSync(
         database.db,
         db
-          .selectFrom("transcript_event_identities as identity")
-          .innerJoin("transcript_events as event", (join) =>
+          .selectFrom("transcript_events as event")
+          .leftJoin("transcript_event_identities as identity", (join) =>
             join
-              .onRef("event.session_id", "=", "identity.session_id")
-              .onRef("event.seq", "=", "identity.seq"),
+              .onRef("identity.session_id", "=", "event.session_id")
+              .onRef("identity.seq", "=", "event.seq"),
           )
-          .select((eb) =>
-            projectTranscriptNavigationSql(eb.ref("event.event_json")).as("navigation"),
+          .select("event.seq")
+          .where("event.session_id", "=", resolved.sessionId)
+          .where((eb) =>
+            eb(
+              eb.fn.coalesce(
+                "identity.event_type",
+                eb.fn<string>("json_extract", ["event.event_json", eb.val("$.type")]),
+              ),
+              "=",
+              "leaf",
+            ),
           )
-          .where("identity.session_id", "=", resolved.sessionId)
-          .where("identity.event_type", "=", "leaf")
-          .$if(fence !== undefined, (query) =>
-            query.where("identity.seq", "<", fence!.beforeRawSeq),
-          ),
+          .$if(fence !== undefined, (query) => query.where("event.seq", "<", fence!.beforeRawSeq))
+          .orderBy("event.seq", "desc")
+          .limit(1),
       );
-      for (const row of leaves) {
-        if (isSessionTranscriptLeafControl(JSON.parse(row.navigation))) {
-          hasLeafControl = true;
-          break;
-        }
-      }
+      const hasLeafControl =
+        lastLeaf !== undefined &&
+        hasAcceptedSessionTranscriptLeafControl(
+          (function* () {
+            // Only navigation fields cross this boundary, never message bodies.
+            // The canonical owner stops at its first accepted control; dangling,
+            // forward and invalid-control references must not switch membership.
+            const rows = iterateSqliteQuerySync(
+              database.db,
+              db
+                .selectFrom("transcript_events")
+                .select((eb) =>
+                  projectTranscriptNavigationSql(eb.ref("event_json")).as("navigation"),
+                )
+                .where("session_id", "=", resolved.sessionId)
+                .where("seq", "<=", lastLeaf.seq)
+                .orderBy("seq", "asc"),
+            );
+            for (const row of rows) {
+              yield JSON.parse(row.navigation);
+            }
+          })(),
+        );
       const source = db
         .selectFrom("transcript_events as event")
         .leftJoin("transcript_event_identities as identity", (join) =>

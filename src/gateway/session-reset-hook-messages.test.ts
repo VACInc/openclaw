@@ -253,4 +253,37 @@ describe("readBeforeResetHookMessages", () => {
       truncated: false,
     });
   });
+  test.each([
+    { name: "missing target", targetId: "missing" },
+    { name: "missing append parent", targetId: "root", appendParentId: "missing" },
+    { name: "future target", targetId: "future" },
+  ])(
+    "ignores an unaccepted leaf control ($name) when selecting raw hook messages",
+    async (control) => {
+      const scope = await writeTranscript("dangling-leaf", 0);
+      const events = [
+        { type: "session", version: 3, id: scope.sessionId },
+        { type: "message", id: "root", parentId: null, message: { role: "user", content: "root" } },
+        { type: "message", id: "a", parentId: "root", message: { role: "user", content: "a" } },
+        { type: "message", id: "b", parentId: "root", message: { role: "user", content: "b" } },
+        {
+          type: "leaf",
+          id: "invalid",
+          parentId: "b",
+          targetId: control.targetId,
+          ...("appendParentId" in control ? { appendParentId: control.appendParentId } : {}),
+        },
+        { type: "custom", id: "future", parentId: "b" },
+      ];
+      await replaceTranscriptEvents(scope, events);
+      await waitForSessionTranscriptProjection(scope);
+      const raw = await loadTranscriptEvents(scope);
+      expect(selectSessionTranscriptLeafControlledPath(raw)).toBeUndefined();
+      expect(await readBeforeResetHookMessages(scope, "raw")).toEqual({
+        messages: ["root", "a", "b"].map((content) => ({ role: "user", content })),
+        totalMessages: 3,
+        truncated: false,
+      });
+    },
+  );
 });
