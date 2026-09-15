@@ -32,9 +32,12 @@ Closed Terminal, Browser, and Desktop panels initialize when you open them rathe
 Hidden retained chats defer command and model metadata refreshes until you return to them. Repeated background changes share the current metadata read and refresh once more after it finishes, instead of issuing overlapping requests.
 
 Subagent activity rows lead with the child task's display title, using its configured
-`label` when present. Status and the latest activity appear separately, so parallel
-children remain easy to identify as they finish or fail. Tasks without a display
-title keep the generic **Subagent** label. Select a row to open its details.
+`label` when present, followed by the latest activity. The leading claw moves only
+while running; queued and cancelled tasks stay still, and completion briefly turns
+the claw green. Failed tasks have a warning badge and timed-out tasks a clock badge.
+Hover the row or focus it with the keyboard for a tooltip explaining the exact
+status. Reduced motion keeps the claw still. Tasks without a display title keep
+the generic **Subagent** label. Select a row to open its details.
 
 Choose **New agent** in the sidebar or Agents home to open the custodian chat.
 It recommends a chief of staff, researcher, writer, reviewer, or a small team
@@ -153,6 +156,7 @@ is absent from the window, its agent's most recent session supplies the preview.
 
 - [Connect and pair](/web/control-ui/connect-and-pair) — pair a browser or phone, reach the UI over Tailscale, and fix a blank page.
 - [Sessions and sidebar](/web/control-ui/sessions-and-sidebar) — sidebar zones, session menus, and the New session page.
+- [Systems workspace](/web/control-ui/sessions-and-sidebar#systems-workspace) — contextual machine navigation and a desktop-first workspace.
 - [Chat](/web/control-ui/chat) — composer controls, the session rail, transcript rendering, and hosted embeds.
 - [Panels and docks](/web/control-ui/panels) — Ask OpenClaw, the Home dock, the operator terminal, and the browser panel.
 - [Settings](/web/control-ui/settings) — identity, appearance, plugins, updates, MCP, activity, and meetings.
