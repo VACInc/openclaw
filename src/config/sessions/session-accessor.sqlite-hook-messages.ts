@@ -1,19 +1,31 @@
 // Raw command-hook snapshots are not reset-relative display history.
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
+import { sql } from "kysely";
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
   iterateSqliteQuerySync,
+  sqliteStringSet,
 } from "../../infra/kysely-sync.js";
-import {
-  getActiveTranscriptKysely,
-  withCurrentProjectionSnapshot,
-} from "./session-accessor.sqlite-active-projection.js";
+import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
+import { withCurrentProjectionSnapshot } from "./session-accessor.sqlite-active-projection.js";
 import type { SessionTranscriptReadScope } from "./session-accessor.sqlite-contract.js";
-import { readRestoredSessionTranscript } from "./session-cold-storage-read.js";
+import {
+  getSessionKysely,
+  resolveSqliteTranscriptReadScope,
+  toDatabaseOptions,
+} from "./session-accessor.sqlite-scope.js";
+import {
+  readHotSessionTranscriptSnapshot,
+  readRestoredSessionTranscript,
+} from "./session-cold-storage-read.js";
 import { projectTranscriptNavigationSql } from "./session-model-context-projection.js";
+import { isSessionTranscriptProjectionUnavailableError } from "./session-transcript-projection-error.js";
 import { resolveSqliteSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
-import { hasAcceptedSessionTranscriptLeafControl } from "./transcript-tree.js";
+import {
+  hasAcceptedSessionTranscriptLeafControl,
+  selectSessionTranscriptLeafControlledPath,
+} from "./transcript-tree.js";
 
 /**
  * Preserve the command hook's raw message membership: flat storage until leaf
@@ -25,10 +37,20 @@ export async function readSessionTranscriptHookMessages(
   scope: SessionTranscriptReadScope,
   limits: { maxMessages: number; maxBytes: number },
 ): Promise<{ messages: unknown[]; totalMessages: number }> {
-  return readRestoredSessionTranscript(scope, () =>
-    withCurrentProjectionSnapshot(scope, (projection) => {
-      const { database, resolved } = projection;
-      const db = getActiveTranscriptKysely(database);
+  return readRestoredSessionTranscript(scope, () => {
+    const resolved = resolveSqliteTranscriptReadScope(scope);
+    const database = openOpenClawAgentDatabase(toDatabaseOptions(resolved));
+    return readHotSessionTranscriptSnapshot(database, resolved.sessionId, "events", () => {
+      const db = getSessionKysely(database.db);
+      const identity = db
+        .selectFrom("transcript_event_identities")
+        .select(["session_id", "seq", "event_type"])
+        .modifyEnd(
+          // The covering type index otherwise scans the session per joined row.
+          /* kysely-allow-raw: pin the existing sequence index to avoid quadratic raw-history joins. */
+          sql`INDEXED BY idx_agent_transcript_event_identity_sequence`,
+        )
+        .as("identity");
       const fence = resolveSqliteSessionTranscriptReadFence({ database, ...resolved });
       // Avoid a navigation scan for the common leaf-free transcript. The
       // identity index can omit earlier duplicate IDs, so inspect unindexed
@@ -37,7 +59,7 @@ export async function readSessionTranscriptHookMessages(
         database.db,
         db
           .selectFrom("transcript_events as event")
-          .leftJoin("transcript_event_identities as identity", (join) =>
+          .leftJoin(identity, (join) =>
             join
               .onRef("identity.session_id", "=", "event.session_id")
               .onRef("identity.seq", "=", "event.seq"),
@@ -81,9 +103,42 @@ export async function readSessionTranscriptHookMessages(
             }
           })(),
         );
+      let authoritativeSeqs: number[] | undefined;
+      if (hasLeafControl) {
+        try {
+          // Reuse the active-path index only when it belongs to this snapshot.
+          withCurrentProjectionSnapshot(scope, () => undefined);
+        } catch (error) {
+          if (!isSessionTranscriptProjectionUnavailableError(error)) {
+            throw error;
+          }
+          // Reset preparation can hold writer admission. Waiting for the index
+          // worker here would deadlock its publication. Resolve raw navigation
+          // in the same read snapshot instead; never fetch its message bodies.
+          const navigation: Array<Record<string, unknown> & { seq: number }> = [];
+          for (const row of iterateSqliteQuerySync(
+            database.db,
+            db
+              .selectFrom("transcript_events")
+              .select((eb) => [
+                "seq",
+                projectTranscriptNavigationSql(eb.ref("event_json")).as("navigation"),
+              ])
+              .where("session_id", "=", resolved.sessionId)
+              .$if(fence !== undefined, (query) => query.where("seq", "<", fence!.beforeRawSeq))
+              .orderBy("seq", "asc"),
+          )) {
+            navigation.push(
+              Object.assign({}, asOptionalRecord(JSON.parse(row.navigation)), { seq: row.seq }),
+            );
+          }
+          const selected = selectSessionTranscriptLeafControlledPath(navigation) ?? navigation;
+          authoritativeSeqs = selected.map((entry) => entry.seq);
+        }
+      }
       const source = db
         .selectFrom("transcript_events as event")
-        .leftJoin("transcript_event_identities as identity", (join) =>
+        .leftJoin(identity, (join) =>
           join
             .onRef("identity.session_id", "=", "event.session_id")
             .onRef("identity.seq", "=", "event.seq"),
@@ -115,7 +170,7 @@ export async function readSessionTranscriptHookMessages(
           ]);
         })
         .$if(fence !== undefined, (query) => query.where("event.seq", "<", fence!.beforeRawSeq))
-        .$if(hasLeafControl, (query) =>
+        .$if(hasLeafControl && authoritativeSeqs === undefined, (query) =>
           query.where((eb) =>
             eb.exists(
               eb
@@ -123,6 +178,15 @@ export async function readSessionTranscriptHookMessages(
                 .select("active.event_seq")
                 .whereRef("active.session_id", "=", "event.session_id")
                 .whereRef("active.event_seq", "=", "event.seq"),
+            ),
+          ),
+        )
+        .$if(authoritativeSeqs !== undefined, (query) =>
+          query.where((eb) =>
+            eb(
+              eb.cast<string>("event.seq", "text"),
+              "in",
+              sqliteStringSet(authoritativeSeqs!.map(String)),
             ),
           ),
         );
@@ -170,6 +234,6 @@ export async function readSessionTranscriptHookMessages(
               return event?.message ? [event.message] : [];
             });
       return { messages, totalMessages };
-    }),
-  );
+    });
+  });
 }

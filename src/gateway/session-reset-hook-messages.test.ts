@@ -6,9 +6,17 @@ import {
   loadTranscriptEvents,
   replaceTranscriptEvents,
 } from "../config/sessions/session-accessor.js";
+import {
+  resolveSqliteTranscriptReadScope,
+  toDatabaseOptions,
+} from "../config/sessions/session-accessor.sqlite-scope.js";
 import { waitForSessionTranscriptProjection } from "../config/sessions/session-transcript-reconcile.js";
 import { selectSessionTranscriptLeafControlledPath } from "../config/sessions/transcript-tree.js";
-import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
+import {
+  closeOpenClawAgentDatabasesForTest,
+  openOpenClawAgentDatabase,
+} from "../state/openclaw-agent-db.js";
+import { runOpenClawAgentWriteAdmission } from "../state/openclaw-agent-write-admission.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
 import { readBeforeResetHookMessages } from "./session-reset-hook-messages.js";
@@ -286,4 +294,99 @@ describe("readBeforeResetHookMessages", () => {
       });
     },
   );
+  test.each([
+    { state: "dirty", leaf: false },
+    { state: "missing", leaf: false },
+    { state: "lagging", leaf: false },
+    { state: "dirty", leaf: true },
+    { state: "missing", leaf: true },
+    { state: "lagging", leaf: true },
+  ])(
+    "captures raw command preparation with a $state projection (leaf=$leaf)",
+    async ({ state, leaf }) => {
+      const scope = await writeTranscript("pending-index", 3);
+      if (leaf) {
+        const raw = await loadTranscriptEvents(scope);
+        await replaceTranscriptEvents(scope, [
+          ...raw,
+          { type: "leaf", id: "selected", parentId: "m3", targetId: "m1" },
+        ]);
+      }
+      const options = toDatabaseOptions(resolveSqliteTranscriptReadScope(scope));
+      const database = openOpenClawAgentDatabase(options);
+      if (state === "missing") {
+        database.db
+          .prepare("DELETE FROM session_transcript_index_state WHERE session_id = ?")
+          .run(scope.sessionId);
+      } else if (state === "lagging") {
+        database.db
+          .prepare(
+            "UPDATE session_transcript_index_state SET indexed_seq = -1 WHERE session_id = ?",
+          )
+          .run(scope.sessionId);
+      } else {
+        database.db
+          .prepare(
+            "UPDATE session_transcript_index_state SET needs_rebuild = 1 WHERE session_id = ?",
+          )
+          .run(scope.sessionId);
+      }
+      const { readBeforeResetMessages } =
+        await import("../auto-reply/reply/commands-reset-hooks.js");
+      try {
+        // Mirror reset preparation's writer admission. No readiness wait precedes
+        // capture, and an attempted wait inside this callback would deadlock.
+        const payload = await runOpenClawAgentWriteAdmission(options, () =>
+          readBeforeResetMessages(scope),
+        );
+        expect(payload).toEqual({
+          messages: Array.from({ length: leaf ? 1 : 3 }, (_, index) => ({
+            role: index % 2 ? "assistant" : "user",
+            content: "turn " + (index + 1),
+          })),
+          totalMessages: leaf ? 1 : 3,
+          truncated: false,
+        });
+      } finally {
+        // Drain only after the preparation reader has returned and released its
+        // writer admission; this is cleanup, not fixture readiness for the test.
+        await waitForSessionTranscriptProjection(scope);
+      }
+    },
+  );
+  test("uses a session-and-sequence identity lookup without ANALYZE", async () => {
+    const scope = await writeTranscript("raw-query-plan", 20);
+    const database = openOpenClawAgentDatabase(
+      toDatabaseOptions(resolveSqliteTranscriptReadScope(scope)),
+    );
+    const prepare = vi.spyOn(database.db, "prepare");
+    let countSql: string | undefined;
+    try {
+      expect((await readBeforeResetHookMessages(scope, "raw")).messages).toHaveLength(20);
+      countSql = prepare.mock.calls
+        .map(([statement]) => statement)
+        .find((statement) =>
+          statement.startsWith('select count(*) as "count" from "transcript_events" as "event"'),
+        );
+    } finally {
+      prepare.mockRestore();
+    }
+    expect(countSql).toBeDefined();
+    if (!countSql) {
+      throw new Error("Missing raw hook count query");
+    }
+    const plan = database.db
+      .prepare("EXPLAIN QUERY PLAN " + countSql)
+      .all(...Array.from({ length: countSql.match(/\?/g)?.length ?? 0 }, () => null));
+    expect(
+      plan.some((row) => {
+        const detail = asOptionalRecord(row)?.detail;
+        return (
+          typeof detail === "string" &&
+          detail.includes("idx_agent_transcript_event_identity_sequence") &&
+          detail.includes("session_id=? AND seq=?")
+        );
+      }),
+    ).toBe(true);
+  });
 });
