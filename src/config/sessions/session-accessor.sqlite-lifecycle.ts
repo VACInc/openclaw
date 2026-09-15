@@ -79,6 +79,7 @@ import {
   collectAdmissionProtectedSessionIds,
   kickSessionHistoryDiskBudgetMaintenance,
 } from "./session-history-eviction.js";
+import { prepareSessionTranscriptNavigation } from "./session-transcript-reconcile.js";
 import type { InternalSessionEntry as SessionEntry } from "./types.js";
 
 // Single-target lifecycle owner: cleanup, reset, guarded delete, and trusted rollback.
@@ -231,8 +232,7 @@ export async function resetSessionEntryLifecycle(
       toDatabaseOptions(resolved),
     );
     if (source.found && source.value) {
-      const { restoreSessionColdTranscript } = await import("./session-cold-storage.js");
-      await restoreSessionColdTranscript({
+      await prepareSessionTranscriptNavigation({
         agentId: resolved.agentId,
         env: resolved.env,
         storePath: params.storePath,

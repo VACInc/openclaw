@@ -93,6 +93,8 @@ const AGENT_SCHEMA_COMPATIBILITY = {
   allowedMissingColumns: [
     "session_pending_inputs.consumed_event_id",
     "session_transcript_active_events.context_eligible",
+    "transcript_events.navigation_json",
+    "transcript_rewrite_watermarks.navigation_generation",
     "session_conversations.route_context_json",
     "standing_intents.creator_sender",
     ...FIRST_USE_ADDITIVE_AGENT_COLUMN_DEFINITIONS.map(
@@ -102,7 +104,11 @@ const AGENT_SCHEMA_COMPATIBILITY = {
   allowedColumnDefinitions: {
     "conversations.delivery_target": ["delivery_target TEXT NOT NULL DEFAULT ''"],
   },
-  allowedMissingIndexes: ["idx_agent_transcript_context_pending", "idx_agent_session_nodes_label"],
+  allowedMissingIndexes: [
+    "idx_agent_transcript_context_pending",
+    "idx_agent_session_nodes_label",
+    "idx_agent_transcript_navigation_pending",
+  ],
   optionalCanonicalTriggerGroups: [
     {
       tableName: MEMORY_INDEX_SOURCES_TABLE,

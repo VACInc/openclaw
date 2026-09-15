@@ -36,6 +36,10 @@ import {
   readSessionColdTranscript,
   type SessionColdArchive,
 } from "./session-cold-storage-state.js";
+import {
+  encodeTranscriptNavigation,
+  certifyTranscriptNavigationInTransaction,
+} from "./session-transcript-navigation.js";
 
 // FTS5 has no type affinity: deployed writers persist timestamps as numbers or text.
 type ColdArchiveDatabase = Omit<DB, "session_transcript_fts"> & {
@@ -539,7 +543,11 @@ export function mutateSessionColdTranscriptInWorker(
             case "event":
               executeSqliteQuerySync(
                 database.db,
-                db.insertInto("transcript_events").values({ session_id, ...record.row }),
+                db.insertInto("transcript_events").values({
+                  session_id,
+                  ...record.row,
+                  navigation_json: encodeTranscriptNavigation(record.row.event_json),
+                }),
               );
               break;
             case "identity":
@@ -576,6 +584,7 @@ export function mutateSessionColdTranscriptInWorker(
           database.db,
           db.deleteFrom("session_transcript_cold_archives").where("session_id", "=", session_id),
         );
+        certifyTranscriptNavigationInTransaction(database.db, session_id);
         result.restored = true;
       }
       onCommit(database);

@@ -56,5 +56,6 @@ export type SqliteSessionWriteOperation =
   | "sessions.transcript-index.delete-chunk"
   | "sessions.transcript-index.finalize"
   | "sessions.transcript-index.fts-chunk"
+  | "sessions.transcript-index.navigation"
   | "sessions.transcript-index.orphan-sweep"
   | "sessions.transcript-index.preflight";

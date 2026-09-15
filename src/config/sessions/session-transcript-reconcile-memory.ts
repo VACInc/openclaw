@@ -23,6 +23,7 @@ export type MemoryTranscriptProjectionFrame =
   | { type: "source-end"; snapshot: MemoryTranscriptSnapshot }
   | {
       type: "source-frame";
+      snapshot: MemoryTranscriptSnapshot;
       seq: number;
       createdAt: number;
       bytes: Uint8Array<ArrayBuffer>;
@@ -145,6 +146,7 @@ export function createMemoryTranscriptProjectionSource(
           offset += bytes.byteLength;
           const frame = {
             type: "source-frame" as const,
+            snapshot: snapshot!,
             seq: row.seq,
             createdAt: row.created_at,
             bytes,

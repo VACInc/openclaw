@@ -98,7 +98,7 @@ export function copyRetainedTranscriptPayload(
     database.db,
     db
       .insertInto("transcript_events")
-      .columns(["session_id", "seq", "event_json", "created_at"])
+      .columns(["session_id", "seq", "event_json", "created_at", "navigation_json"])
       .expression(
         db
           .selectFrom("transcript_events")
@@ -112,6 +112,11 @@ export function copyRetainedTranscriptPayload(
               eb.val(destinationSeq).as("seq"),
               eventJson.as("event_json"),
               "created_at",
+              // Exact copies keep their header; SQL reparenting invalidates it until
+              // the repair owner parses the actual resulting JSON (including duplicate keys).
+              parentId === undefined
+                ? eb.ref("navigation_json").as("navigation_json")
+                : eb.val(null).as("navigation_json"),
             ];
           })
           .where("session_id", "=", sessionId)

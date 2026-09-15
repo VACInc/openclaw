@@ -40,6 +40,7 @@ type TranscriptIndexDatabase = Omit<
     | "session_transcript_fts"
     | "session_transcript_index_state"
     | "transcript_events"
+    | "transcript_rewrite_watermarks"
   >,
   "session_transcript_fts"
 > & {
@@ -589,10 +590,24 @@ function selectSessionsNeedingTranscriptIndexReconcile(db: DatabaseSync) {
         "st.session_id",
         "session_windows.session_id",
       )
+      .leftJoin(
+        "transcript_rewrite_watermarks as rewrite",
+        "rewrite.session_id",
+        "session_windows.session_id",
+      )
       .select("session_windows.session_id")
       .where((eb) =>
         eb.or([
           eb(eb.fn.coalesce("st.needs_rebuild", eb.val(1)), "!=", 0),
+          eb("rewrite.navigation_generation", "is", null),
+          eb("rewrite.navigation_generation", "!=", eb.ref("rewrite.generation")),
+          eb.exists(
+            eb
+              .selectFrom("transcript_events as missing")
+              .select("missing.seq")
+              .whereRef("missing.session_id", "=", "session_windows.session_id")
+              .where("missing.navigation_json", "is", null),
+          ),
           eb("latest.seq", ">", eb.fn.coalesce("st.indexed_seq", eb.val(-1))),
           eb.exists(
             eb

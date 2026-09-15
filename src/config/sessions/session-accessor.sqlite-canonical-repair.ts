@@ -31,6 +31,10 @@ import {
   deleteSessionTranscriptIndexInTransaction,
   reconcileSessionTranscriptIndexInTransaction,
 } from "./session-transcript-index.js";
+import {
+  encodeTranscriptNavigation,
+  certifyTranscriptNavigationInTransaction,
+} from "./session-transcript-navigation.js";
 import { normalizeStoreSessionKey } from "./store-entry.js";
 import type { SessionEntry } from "./types.js";
 
@@ -575,7 +579,9 @@ function copySqliteSessionGenerationRows(params: {
   for (const row of transcriptEvents) {
     executeSqliteQuerySync(
       params.destination.db,
-      destinationDb.insertInto("transcript_events").values(row),
+      destinationDb
+        .insertInto("transcript_events")
+        .values({ ...row, navigation_json: encodeTranscriptNavigation(row.event_json) }),
     );
   }
   for (const row of transcriptIdentities) {
@@ -590,6 +596,7 @@ function copySqliteSessionGenerationRows(params: {
       destinationDb.insertInto("transcript_rewrite_watermarks").values(row),
     );
   }
+  certifyTranscriptNavigationInTransaction(params.destination.db, params.sessionId);
   for (const row of trajectoryEvents) {
     executeSqliteQuerySync(
       params.destination.db,

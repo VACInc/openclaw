@@ -1,5 +1,5 @@
-// Transcript projection reconciliation owner. Gateway startup awaits it;
-// request paths may only schedule it and return a bounded retryable response.
+// Transcript reconciliation owner. Ordinary reads schedule retryable repair;
+// reset preparation joins the required work before entering its guarded write.
 import { randomInt, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { Worker, type WorkerOptions } from "node:worker_threads";
@@ -31,12 +31,20 @@ import {
   runExclusiveSqliteSessionWrite,
   toDatabaseOptions,
 } from "./session-accessor.sqlite-scope.js";
+import { ensureTranscriptGenerationInTransaction } from "./session-accessor.sqlite-transcript-state.js";
 import type { SqliteSessionWriteOperation } from "./session-accessor.sqlite-write-operation.js";
 import {
   deleteOrphanedTranscriptIndexRowsInTransaction,
   listSessionsNeedingTranscriptIndexReconcile,
   sessionTranscriptIndexNeedsReconcile,
 } from "./session-transcript-index.js";
+import {
+  applyTranscriptNavigationChunkInTransaction,
+  certifyTranscriptNavigationInTransaction,
+  hasCertifiedTranscriptNavigation,
+  readTranscriptNavigationSnapshot,
+  transcriptNavigationSnapshotMatches,
+} from "./session-transcript-navigation.js";
 import {
   appendPreparedSessionTranscriptProjectionChunkInTransaction,
   claimPreparedSessionTranscriptProjectionInTransaction,
@@ -293,6 +301,8 @@ async function reconcilePreparedTranscriptIndexes(
   let releaseDatabase: (() => void) | undefined;
   const memorySource = captureMemorySource(databaseOptions);
   let memorySessionIds: string[] = [];
+  let memoryProjectionSessionIds: string[] = [];
+  let memoryNavigationSessionIds: string[] = [];
   try {
     // The SQLite owner can cheaply prove a clean projection before paying for a
     // Worker. Keep the post-worker sweep too, because request-time writers may race.
@@ -302,10 +312,19 @@ async function reconcilePreparedTranscriptIndexes(
       (database) => {
         deleteOrphanedTranscriptIndexRowsInTransaction(database.db);
         const sessionIds = listSessionsNeedingTranscriptIndexReconcile(database.db);
+        for (const sessionId of sessionIds) {
+          ensureTranscriptGenerationInTransaction(database, sessionId);
+        }
         if (sessionIds.length > 0) {
           // Retain this verified handle across worker awaits; explicit disposal still revokes it.
           releaseDatabase = borrowOpenClawAgentDatabase(databaseOptions).release;
           if (memorySource) {
+            memoryNavigationSessionIds = sessionIds.filter(
+              (sessionId) => !hasCertifiedTranscriptNavigation(database.db, sessionId),
+            );
+            memoryProjectionSessionIds = sessionIds.filter((sessionId) =>
+              sessionTranscriptIndexNeedsReconcile(database.db, sessionId),
+            );
             const preferred = params.preferredSessionId;
             memorySessionIds =
               preferred && sessionIds.includes(preferred)
@@ -324,7 +343,12 @@ async function reconcilePreparedTranscriptIndexes(
       ? ["--import", "tsx"]
       : undefined;
     const input: SessionTranscriptReconcileWorkerInput = memorySource
-      ? { mode: "memory", sessionIds: memorySessionIds }
+      ? {
+          mode: "memory",
+          sessionIds: memorySessionIds,
+          projectionSessionIds: memoryProjectionSessionIds,
+          navigationSessionIds: memoryNavigationSessionIds,
+        }
       : {
           mode: "disk",
           leaseId: randomUUID(),
@@ -391,6 +415,30 @@ async function reconcilePreparedTranscriptIndexes(
             return;
           }
           try {
+            if (message.type === "navigation-chunk" || message.type === "navigation-finish") {
+              const accepted = await runProjectionWrite(
+                databaseOptions,
+                "sessions.transcript-index.navigation",
+                (database) => {
+                  if (message.type === "navigation-chunk") {
+                    return applyTranscriptNavigationChunkInTransaction(
+                      database.db,
+                      message.snapshot,
+                      message.rows,
+                    );
+                  }
+                  if (!transcriptNavigationSnapshotMatches(database.db, message.snapshot)) {
+                    return false;
+                  }
+                  certifyTranscriptNavigationInTransaction(database.db, message.snapshot.sessionId);
+                  return true;
+                },
+                memorySource,
+              );
+              await yieldToGateway();
+              continueProjectionWorker(worker, accepted);
+              return;
+            }
             if (message.type === "source-read") {
               if (!memorySource || !memorySessionIds.includes(message.sessionId)) {
                 throw new Error("session transcript worker requested an unavailable memory source");
@@ -635,6 +683,40 @@ export async function waitForSessionTranscriptIndexReconcilesInStateDir(
     }
     // Handoffs and other fixture databases may register owners while this batch settles.
     await Promise.all(owners);
+  }
+}
+
+/** Reset preparation joins the existing repair owner before entering its write transaction. */
+export async function prepareSessionTranscriptNavigation(
+  scope: SessionTranscriptReadScope,
+): Promise<void> {
+  const resolved = resolveSqliteTranscriptReadScope(scope);
+  const params = { ...toDatabaseOptions(resolved), sessionId: resolved.sessionId };
+  const { restoreSessionColdTranscript } = await import("./session-cold-storage.js");
+  await restoreSessionColdTranscript(scope);
+  const ready = () =>
+    withOpenClawAgentDatabaseReadOnly(
+      ({ db }) =>
+        !readTranscriptNavigationSnapshot(db, params.sessionId) ||
+        hasCertifiedTranscriptNavigation(db, params.sessionId),
+      params,
+      { throwOnMissingTable: true },
+    );
+  const initial = ready();
+  if (initial.found && initial.value) {
+    return;
+  }
+  startSessionTranscriptIndexReconcile({ ...params, preferredSessionId: params.sessionId });
+  while (isSessionTranscriptIndexReconcileRunning(params)) {
+    await delay(PROJECTION_READY_POLL_MS);
+    const current = ready();
+    if (current.found && current.value) {
+      return;
+    }
+  }
+  const final = ready();
+  if (final.found && !final.value) {
+    throw new Error("Transcript navigation repair did not complete; retry reset");
   }
 }
 

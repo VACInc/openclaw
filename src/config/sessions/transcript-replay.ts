@@ -12,11 +12,15 @@ type SessionRecord = {
 };
 type KeptParsedRecord = { role: "user" | "assistant"; record: unknown };
 
-function isValidReplayTimestamp(value: unknown): boolean {
+export function isValidReplayTimestamp(value: unknown): boolean {
   if (typeof value === "number") {
     return Number.isFinite(value);
   }
   return typeof value === "string" && value.trim().length > 0;
+}
+
+export function isUserAssistantReplayRole(value: unknown): value is "user" | "assistant" {
+  return value === "user" || value === "assistant";
 }
 
 function replayableTranscriptRole(record: SessionRecord | null): "user" | "assistant" | undefined {
@@ -35,7 +39,7 @@ function replayableTranscriptRole(record: SessionRecord | null): "user" | "assis
     return undefined;
   }
   const role = record.message?.role;
-  return role === "user" || role === "assistant" ? role : undefined;
+  return isUserAssistantReplayRole(role) ? role : undefined;
 }
 
 export function selectRecentUserAssistantReplayRecords(

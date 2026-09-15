@@ -217,6 +217,11 @@ describe("reset boundary concurrency", () => {
     );
     events.forEach((event, seq) => insert.run(sessionId, seq, JSON.stringify(event), seq));
 
+    expect(() =>
+      loadTranscriptEventsFromDatabase(database, sessionId, { projection: "reset-boundary" }),
+    ).toThrow("navigation unavailable");
+    const { reconcileSessionTranscriptIndexes } = await import("./session-transcript-reconcile.js");
+    await reconcileSessionTranscriptIndexes({ agentId: "main", path: database.path });
     const projected = loadTranscriptEventsFromDatabase(database, sessionId, {
       projection: "reset-boundary",
     });
@@ -230,17 +235,18 @@ describe("reset boundary concurrency", () => {
     expect(projected[1]).not.toHaveProperty("appendParentId");
     expect(projected[2]).toMatchObject(navigationEvents[2]);
     expect(projected[3]).toMatchObject(navigationEvents[3]);
-    expect(projected.slice(4)).toEqual(events.slice(4));
+    // Non-record rows have no navigation; unknown type text stays invalid and
+    // bounded. Full canonical history below retains every original value.
+    expect(projected.slice(4)).toEqual([null, null, null, { type: false }]);
     expect(loadTranscriptEventsFromDatabase(database, sessionId)).toEqual(events);
     expect(loadTranscriptEventsFromDatabase(database, sessionId, { beforeEventSeq: 2 })).toEqual(
       events.slice(0, 2),
     );
 
     insert.run(sessionId, events.length, "{", events.length);
-    for (const projection of [undefined, "reset-boundary"] as const) {
-      expect(() => loadTranscriptEventsFromDatabase(database, sessionId, { projection })).toThrow(
-        SyntaxError,
-      );
-    }
+    expect(() => loadTranscriptEventsFromDatabase(database, sessionId)).toThrow(SyntaxError);
+    expect(() =>
+      loadTranscriptEventsFromDatabase(database, sessionId, { projection: "reset-boundary" }),
+    ).toThrow("navigation unavailable");
   });
 });

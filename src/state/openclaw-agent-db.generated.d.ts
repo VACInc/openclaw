@@ -533,12 +533,14 @@ export interface TranscriptEventIdentities {
 export interface TranscriptEvents {
   created_at: number;
   event_json: string;
+  navigation_json: string | null;
   seq: number;
   session_id: string;
 }
 
 export interface TranscriptRewriteWatermarks {
   generation: string;
+  navigation_generation: string | null;
   session_id: string;
   updated_at: number;
 }

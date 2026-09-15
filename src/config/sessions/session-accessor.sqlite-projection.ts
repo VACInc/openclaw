@@ -79,6 +79,7 @@ import {
   toDatabaseOptions,
   withSqliteSessionDatabase,
 } from "./session-accessor.sqlite-scope.js";
+import { prepareSessionTranscriptNavigation } from "./session-transcript-reconcile.js";
 import { resolveMaintenanceConfig } from "./store-maintenance-runtime.js";
 import type { ResolvedSessionMaintenanceConfig } from "./store-maintenance.js";
 import type { SessionEntry } from "./types.js";
@@ -315,10 +316,8 @@ export async function applySessionEntryLifecycleMutation(params: {
           ? {
               beforeCommit: async () => {
                 if (resetSources.length > 0) {
-                  const { restoreSessionColdTranscript } =
-                    await import("./session-cold-storage.js");
                   for (const sessionId of new Set(resetSources)) {
-                    await restoreSessionColdTranscript({
+                    await prepareSessionTranscriptNavigation({
                       agentId: resolved.agentId,
                       env: resolved.env,
                       storePath: params.storePath,

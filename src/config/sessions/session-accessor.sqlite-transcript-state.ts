@@ -18,6 +18,7 @@ import {
   assertSessionTranscriptHot,
   readSessionColdTranscript,
 } from "./session-cold-storage-state.js";
+import { hasCurrentTranscriptNavigationGeneration } from "./session-transcript-navigation.js";
 import {
   foldedSessionKeyAliasCandidates,
   normalizeStoreSessionKey,
@@ -84,12 +85,32 @@ export function ensureTranscriptGenerationInTransaction(
 ): void {
   const db = getSessionKysely(database.db);
   const generation = createTranscriptGeneration();
+  const empty =
+    executeSqliteQueryTakeFirstSync(
+      database.db,
+      db.selectFrom("transcript_events").select("seq").where("session_id", "=", sessionId).limit(1),
+    ) === undefined;
   executeSqliteQuerySync(
     database.db,
     db
       .insertInto("transcript_rewrite_watermarks")
-      .values({ session_id: sessionId, generation, updated_at: Date.now() })
-      .onConflict((conflict) => conflict.column("session_id").doNothing()),
+      .values({
+        session_id: sessionId,
+        generation,
+        updated_at: Date.now(),
+        // A newly created empty transcript is fully covered; legacy rows are not.
+        navigation_generation: empty ? generation : null,
+      })
+      .onConflict((conflict) => {
+        const existing = conflict.column("session_id");
+        // Empty coverage is vacuous, including after an older writer cleared
+        // history. Keep its raw generation while certifying the next append.
+        return empty
+          ? existing.doUpdateSet((eb) => ({
+              navigation_generation: eb.ref("transcript_rewrite_watermarks.generation"),
+            }))
+          : existing.doNothing();
+      }),
   );
 }
 
@@ -97,16 +118,34 @@ export function ensureTranscriptGenerationInTransaction(
 export function rotateTranscriptGenerationInTransaction(
   database: OpenClawAgentDatabase,
   sessionId: string,
+  options: { navigationMaintained?: boolean } = {},
 ): string {
   const db = getSessionKysely(database.db);
   const generation = createTranscriptGeneration();
+  // Only writers that maintained every changed row may carry coverage forward.
+  // Older writers omit the additive certificate, so their new generation revokes it.
+  const navigationGeneration =
+    options.navigationMaintained &&
+    (hasCurrentTranscriptNavigationGeneration(database.db, sessionId) ||
+      readNextTranscriptSeq(database, sessionId) === 0)
+      ? generation
+      : null;
   executeSqliteQuerySync(
     database.db,
     db
       .insertInto("transcript_rewrite_watermarks")
-      .values({ session_id: sessionId, generation, updated_at: Date.now() })
+      .values({
+        session_id: sessionId,
+        generation,
+        navigation_generation: navigationGeneration,
+        updated_at: Date.now(),
+      })
       .onConflict((conflict) =>
-        conflict.column("session_id").doUpdateSet({ generation, updated_at: Date.now() }),
+        conflict.column("session_id").doUpdateSet({
+          generation,
+          navigation_generation: navigationGeneration,
+          updated_at: Date.now(),
+        }),
       ),
   );
   return generation;

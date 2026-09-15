@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import type { ColumnType, Generated, InferResult } from "kysely";
 import {
@@ -161,6 +162,27 @@ export function transcriptEventContextEligibility(event: unknown): 0 | 1 {
   return isRecord(event) && isRecord(event.message) && event.message.excludeFromContext === true
     ? 0
     : 1;
+}
+
+/** Decides whether an exact raw rewrite can retain the current derived projection. */
+export function transcriptRewritePreservesProjection(
+  beforeJson: string,
+  afterJson: string,
+): boolean {
+  const before: unknown = JSON.parse(beforeJson);
+  const after: unknown = JSON.parse(afterJson);
+  if (!isRecord(before) || !isRecord(after)) {
+    return false;
+  }
+  const { message: _beforeMessage, ...beforeEnvelope } = before;
+  const { message: _afterMessage, ...afterEnvelope } = after;
+  // Exact rewrites retain created_at, so the fallback timestamp remains identical.
+  return (
+    isDeepStrictEqual(beforeEnvelope, afterEnvelope) &&
+    hasTranscriptMessage(before) === hasTranscriptMessage(after) &&
+    transcriptEventContextEligibility(before) === transcriptEventContextEligibility(after) &&
+    isDeepStrictEqual(extractTranscriptIndexEntry(before, 0), extractTranscriptIndexEntry(after, 0))
+  );
 }
 
 /** Older same-version writers can leave a current watermark over unclassified rows. */

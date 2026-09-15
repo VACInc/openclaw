@@ -41,7 +41,7 @@ import {
   readRestoredSessionTranscript,
 } from "./session-cold-storage-read.js";
 import { assertSessionTranscriptHot } from "./session-cold-storage-state.js";
-import { projectResetBoundaryNavigationSql } from "./session-model-context-projection.js";
+import { readTranscriptNavigationInTransaction } from "./session-transcript-navigation.js";
 import { resolveSqliteSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
 
 export type SqliteTranscriptSnapshotRow = {
@@ -320,15 +320,14 @@ export function loadTranscriptEventsFromDatabase(
   return readHotSessionTranscriptSnapshot(database, sessionId, "events", () => {
     const { beforeEventSeq } = options;
     const db = getSessionKysely(database.db);
+    if (options.projection === "reset-boundary") {
+      return readTranscriptNavigationInTransaction(database.db, sessionId, beforeEventSeq);
+    }
     const rows = iterateSqliteQuerySync(
       database.db,
       db
         .selectFrom("transcript_events")
-        .select((eb) => [
-          options.projection === "reset-boundary"
-            ? projectResetBoundaryNavigationSql(eb.ref("event_json")).as("event_json")
-            : "event_json",
-        ])
+        .select("event_json")
         .where("session_id", "=", sessionId)
         .$if(beforeEventSeq !== undefined, (query) => query.where("seq", "<", beforeEventSeq!))
         .orderBy("seq", "asc"),

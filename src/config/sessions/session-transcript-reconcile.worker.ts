@@ -1,4 +1,5 @@
 /** Worker entrypoint for transcript parsing and active-branch resolution only. */
+import { isUtf8 } from "node:buffer";
 import { parentPort, workerData } from "node:worker_threads";
 import {
   claimOpenClawAgentDatabaseLease,
@@ -6,7 +7,16 @@ import {
 } from "../../state/openclaw-agent-db-lease.js";
 import { openOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-db-readonly-open.js";
 import { closeOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
-import { listSessionsNeedingTranscriptIndexReconcile } from "./session-transcript-index.js";
+import {
+  listSessionsNeedingTranscriptIndexReconcile,
+  sessionTranscriptIndexNeedsReconcile,
+} from "./session-transcript-index.js";
+import {
+  encodeTranscriptNavigation,
+  repairTranscriptNavigation,
+  type TranscriptNavigationSnapshot,
+  type PreparedTranscriptNavigationRow,
+} from "./session-transcript-navigation.js";
 import {
   prepareSessionTranscriptProjection,
   prepareMemorySessionTranscriptProjection,
@@ -34,7 +44,12 @@ type ReconcileWorkerPlanInput = ReconcileWorkerOwner & {
 
 export type SessionTranscriptReconcileWorkerInput =
   | (ReconcileWorkerPlanInput & { mode: "disk"; leaseId: string })
-  | { mode: "memory"; sessionIds: string[] }
+  | {
+      mode: "memory";
+      sessionIds: string[];
+      projectionSessionIds: string[];
+      navigationSessionIds: string[];
+    }
   | (ReconcileWorkerOwner & { mode: "release"; leaseId: string });
 
 export type EncodedTranscriptFtsChunk = {
@@ -49,6 +64,12 @@ export type EncodedTranscriptFtsChunk = {
 };
 
 export type SessionTranscriptReconcileWorkerMessage =
+  | {
+      type: "navigation-chunk";
+      snapshot: TranscriptNavigationSnapshot;
+      rows: PreparedTranscriptNavigationRow[];
+    }
+  | { type: "navigation-finish"; snapshot: TranscriptNavigationSnapshot }
   | {
       type: "active-chunk";
       rows: PreparedSessionTranscriptProjection["activeRows"];
@@ -75,7 +96,20 @@ function parseWorkerInput(value: unknown): SessionTranscriptReconcileWorkerInput
     Array.isArray(input.sessionIds) &&
     input.sessionIds.every((sessionId) => typeof sessionId === "string")
   ) {
-    return { mode: "memory", sessionIds: input.sessionIds };
+    return {
+      mode: "memory",
+      sessionIds: input.sessionIds,
+      navigationSessionIds:
+        Array.isArray(input.navigationSessionIds) &&
+        input.navigationSessionIds.every((id) => typeof id === "string")
+          ? input.navigationSessionIds
+          : input.sessionIds,
+      projectionSessionIds:
+        Array.isArray(input.projectionSessionIds) &&
+        input.projectionSessionIds.every((id) => typeof id === "string")
+          ? input.projectionSessionIds
+          : input.sessionIds,
+    };
   }
   if (typeof input.stateDir !== "string" || typeof input.externallySupervised !== "boolean") {
     return undefined;
@@ -226,10 +260,16 @@ async function streamPreparedProjection(plan: PreparedSessionTranscriptProjectio
   await postAndWait({ type: "plan-finish", sessionId: plan.sessionId });
 }
 
-async function prepareMemoryProjection(sessionId: string) {
+async function prepareMemoryProjection(
+  sessionId: string,
+  project: boolean,
+  repairNavigation: boolean,
+) {
   const rows = new Map<number, SessionTranscriptProjectionRow>();
-  const decoder = new TextDecoder();
+  // Transport decoding must not turn a BOM-prefixed raw record into valid JSON.
+  const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
   let fragments: string[] = [];
+  let sourceFragments: Uint8Array[] = [];
   while (true) {
     const pending = new Promise<MemoryTranscriptProjectionFrame>((resolve) => {
       port.once("message", resolve);
@@ -242,23 +282,52 @@ async function prepareMemoryProjection(sessionId: string) {
     if (frame.type === "source-unavailable") {
       return undefined;
     }
+    const snapshot = {
+      sessionId,
+      generation: frame.snapshot.generation,
+      maxSeq: frame.snapshot.maxSeq,
+      updatedAt: frame.snapshot.transcriptUpdatedAt,
+    };
     if (frame.type === "source-end") {
-      const plan = prepareMemorySessionTranscriptProjection(
-        sessionId,
-        frame.snapshot.transcriptUpdatedAt,
-        rows,
-      );
-      rows.clear();
-      return plan;
+      if (repairNavigation && !(await postAndWait({ type: "navigation-finish", snapshot }))) {
+        return undefined;
+      }
+      return project
+        ? prepareMemorySessionTranscriptProjection(
+            sessionId,
+            frame.snapshot.transcriptUpdatedAt,
+            rows,
+          )
+        : undefined;
+    }
+    if (repairNavigation) {
+      sourceFragments.push(frame.bytes);
     }
     fragments.push(decoder.decode(frame.bytes, { stream: !frame.final }));
     if (frame.final) {
-      rows.set(frame.seq, {
-        seq: frame.seq,
-        created_at: frame.createdAt,
-        event_json: fragments.join(""),
-      });
+      const eventJson = fragments.join("");
       fragments = [];
+      // Only the existing full FTS rebuild needs the raw map. Navigation-only
+      // repair retains one row, reusing the owner's bounded source framing.
+      if (project) {
+        rows.set(frame.seq, { seq: frame.seq, created_at: frame.createdAt, event_json: eventJson });
+      }
+      if (repairNavigation) {
+        // Compare the original BLOB, never replacement characters re-encoded
+        // after malformed UTF-8. Only one raw row is retained.
+        const sourceBytes = Buffer.concat(sourceFragments);
+        sourceFragments = [];
+        const navigationJson = isUtf8(sourceBytes) ? encodeTranscriptNavigation(eventJson) : "[1]";
+        if (
+          !(await postAndWait({
+            type: "navigation-chunk",
+            snapshot,
+            rows: [{ seq: frame.seq, sourceBytes, navigationJson }],
+          }))
+        ) {
+          return undefined;
+        }
+      }
     }
   }
 }
@@ -301,9 +370,27 @@ async function run(): Promise<void> {
             reconcileInput.preferredSessionId,
           );
     for (const sessionId of sessionIds) {
+      if (database) {
+        if (
+          !(await repairTranscriptNavigation(database.db, sessionId, {
+            chunk: (snapshot, rows) => postAndWait({ type: "navigation-chunk", snapshot, rows }),
+            finish: (snapshot) => postAndWait({ type: "navigation-finish", snapshot }),
+          }))
+        ) {
+          continue;
+        }
+        // Missing raw headers alone must not rebuild an already current FTS/tree projection.
+        if (!sessionTranscriptIndexNeedsReconcile(database.db, sessionId)) {
+          continue;
+        }
+      }
       const plan =
         reconcileInput.mode === "memory"
-          ? await prepareMemoryProjection(sessionId)
+          ? await prepareMemoryProjection(
+              sessionId,
+              reconcileInput.projectionSessionIds.includes(sessionId),
+              reconcileInput.navigationSessionIds.includes(sessionId),
+            )
           : prepareSessionTranscriptProjection(database!.db, sessionId);
       if (plan) {
         await streamPreparedProjection(plan);

@@ -398,10 +398,14 @@ CREATE TABLE IF NOT EXISTS transcript_events (
   session_id TEXT NOT NULL,
   seq INTEGER NOT NULL,
   event_json TEXT NOT NULL,
+  navigation_json TEXT,
   created_at INTEGER NOT NULL,
   PRIMARY KEY (session_id, seq),
   FOREIGN KEY (session_id) REFERENCES "session_windows"(session_id) ON DELETE CASCADE
 ) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_agent_transcript_navigation_pending
+  ON transcript_events(session_id, seq) WHERE navigation_json IS NULL;
 
 -- Canonical cold-tier owner for reclaimed transcript generations. The derived
 -- .deleted/.reset file may be recreated from this row after a crash.
@@ -450,6 +454,7 @@ CREATE TABLE IF NOT EXISTS session_transcript_cold_archives (
 CREATE TABLE IF NOT EXISTS transcript_rewrite_watermarks (
   session_id TEXT NOT NULL PRIMARY KEY,
   generation TEXT NOT NULL,
+  navigation_generation TEXT,
   updated_at INTEGER NOT NULL,
   FOREIGN KEY (session_id) REFERENCES "session_windows"(session_id) ON DELETE CASCADE
 ) STRICT;

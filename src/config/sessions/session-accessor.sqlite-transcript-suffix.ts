@@ -605,7 +605,9 @@ export function replaceSqliteTranscriptSuffixInTransaction(
 
   // Destructive suffix rewrites may reuse removed sequence positions. Rotate the raw and visible
   // cursor generation in the same transaction so a resumed reader cannot silently skip replacements.
-  rotateTranscriptGenerationInTransaction(database, resolved.sessionId);
+  rotateTranscriptGenerationInTransaction(database, resolved.sessionId, {
+    navigationMaintained: true,
+  });
   if (projectionIsHealthy) {
     replaceSessionTranscriptIndexSuffixInTransaction(database.db, resolved.sessionId, {
       unchangedBeforeSeq: plan.startSeq,

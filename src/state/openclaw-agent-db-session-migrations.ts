@@ -9,7 +9,10 @@ import { normalizeAccountId } from "../routing/account-id.js";
 import { buildConversationRef, normalizeConversationPeerId } from "../routing/conversation-ref.js";
 import { deriveSessionChatTypeFromKey } from "../sessions/session-chat-type-shared.js";
 import { migrateLegacySessionCreator } from "./creator-namespace-migration.js";
-import { ensurePendingInputConsumptionColumn } from "./openclaw-agent-pending-inputs-schema.js";
+import {
+  ensurePendingInputConsumptionColumn,
+  hasPendingInputConsumptionColumnMigration,
+} from "./openclaw-agent-pending-inputs-schema.js";
 import { tableExists } from "./openclaw-state-db-schema-helpers.js";
 
 type MigratedConversationEntry = Record<string, unknown>;
@@ -291,6 +294,15 @@ export function readSqliteTableColumns(db: DatabaseSync, tableName: string): Set
 /** Installs same-version session projections on first updated-binary open. */
 export function ensureSessionAdditiveColumns(db: DatabaseSync): void {
   ensurePendingInputConsumptionColumn(db);
+  for (const [table, column] of [
+    ["transcript_events", "navigation_json"],
+    ["transcript_rewrite_watermarks", "navigation_generation"],
+  ] as const) {
+    const columns = readSqliteTableColumns(db, table);
+    if (columns && !columns.has(column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT;`);
+    }
+  }
   if (hasPendingSessionTranscriptContextEligibilityColumn(db)) {
     // NULL records an older writer's unclassified projection; the transcript
     // reconcile owner fills it without parsing payloads during schema open.
@@ -322,17 +334,38 @@ export function ensureSessionAdditiveColumns(db: DatabaseSync): void {
   }
 }
 
-export function hasPendingSessionConversationRouteContextColumn(db: DatabaseSync): boolean {
+/** Reports the same-version column work installed by this migration owner. */
+export function hasPendingSessionAdditiveColumns(db: DatabaseSync): boolean {
+  return (
+    hasPendingSessionConversationRouteContextColumn(db) ||
+    hasPendingSessionTranscriptContextEligibilityColumn(db) ||
+    hasPendingTranscriptNavigationColumns(db) ||
+    hasPendingInputConsumptionColumnMigration(db) ||
+    hasPendingSessionProjectColumn(db)
+  );
+}
+
+function hasPendingSessionConversationRouteContextColumn(db: DatabaseSync): boolean {
   const columns = readSqliteTableColumns(db, "session_conversations");
   return Boolean(columns && !columns.has("route_context_json"));
 }
 
-export function hasPendingSessionProjectColumn(db: DatabaseSync): boolean {
+function hasPendingSessionProjectColumn(db: DatabaseSync): boolean {
   const columns = readSqliteTableColumns(db, "session_nodes");
   return Boolean(columns && !columns.has("project_id"));
 }
 
-export function hasPendingSessionTranscriptContextEligibilityColumn(db: DatabaseSync): boolean {
+function hasPendingTranscriptNavigationColumns(db: DatabaseSync): boolean {
+  return [
+    ["transcript_events", "navigation_json"],
+    ["transcript_rewrite_watermarks", "navigation_generation"],
+  ].some(([table, column]) => {
+    const columns = readSqliteTableColumns(db, table!);
+    return Boolean(columns && !columns.has(column!));
+  });
+}
+
+function hasPendingSessionTranscriptContextEligibilityColumn(db: DatabaseSync): boolean {
   const columns = readSqliteTableColumns(db, "session_transcript_active_events");
   return Boolean(columns && !columns.has("context_eligible"));
 }

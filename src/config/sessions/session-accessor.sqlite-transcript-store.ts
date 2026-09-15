@@ -1,4 +1,3 @@
-import { isDeepStrictEqual } from "node:util";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import type { AgentMessage } from "../../agents/runtime/index.js";
 import { getCodeModeSourceAppend } from "../../agents/transcript-code-mode-source.js";
@@ -47,10 +46,10 @@ import {
   shouldRebuildSessionTranscriptIndexSynchronously,
 } from "./session-transcript-index.js";
 import {
-  extractTranscriptIndexEntry,
-  hasTranscriptMessage,
-  transcriptEventContextEligibility,
-} from "./session-transcript-projection-rebuild.js";
+  encodeTranscriptNavigation,
+  hasCertifiedTranscriptNavigation,
+} from "./session-transcript-navigation.js";
+import { transcriptRewritePreservesProjection } from "./session-transcript-projection-rebuild.js";
 import { startSessionTranscriptIndexReconcile } from "./session-transcript-reconcile.js";
 import { copyRetainedTranscriptPayload } from "./session-transcript-retained-data.js";
 import { createSessionTranscriptHeader } from "./transcript-header.js";
@@ -83,6 +82,7 @@ export function createTranscriptEventInserter(database: OpenClawAgentDatabase, s
           session_id: sessionId,
           seq: parameter((row) => row.seq),
           event_json: parameter((row) => row.eventJson),
+          navigation_json: parameter((row) => encodeTranscriptNavigation(row.eventJson)),
           created_at: parameter((row) => row.createdAt),
         }),
   );
@@ -253,7 +253,10 @@ export function scheduleTranscriptProjectionReconcile(
   projectionNeedsRebuild: boolean,
   options: { scheduleProjectionReconcile?: boolean },
 ): void {
-  if (!projectionNeedsRebuild || options.scheduleProjectionReconcile === false) {
+  if (
+    options.scheduleProjectionReconcile === false ||
+    (!projectionNeedsRebuild && hasCertifiedTranscriptNavigation(database.db, sessionId))
+  ) {
     return;
   }
   // Dirty state is durable: a missed post-commit kick is recovered by startup/search reconciliation.
@@ -405,7 +408,9 @@ export function replaceSqliteTranscriptEventsInTransaction(
   if (events.length === 0) {
     deleteSessionTranscriptIndexInTransaction(database.db, resolved.sessionId);
     if (deleted || previousGeneration) {
-      rotateTranscriptGenerationInTransaction(database, resolved.sessionId);
+      rotateTranscriptGenerationInTransaction(database, resolved.sessionId, {
+        navigationMaintained: true,
+      });
       recordTranscriptReplacementMutation(
         database,
         resolved.sessionId,
@@ -418,7 +423,9 @@ export function replaceSqliteTranscriptEventsInTransaction(
     ensureTranscriptSessionRoot(database, resolved, readEventTimestamp(events[0]) ?? Date.now());
   }
   if (deleted || previousGeneration) {
-    rotateTranscriptGenerationInTransaction(database, resolved.sessionId);
+    rotateTranscriptGenerationInTransaction(database, resolved.sessionId, {
+      navigationMaintained: true,
+    });
   } else {
     ensureTranscriptGenerationInTransaction(database, resolved.sessionId);
   }
@@ -504,7 +511,10 @@ export function rewriteSqliteTranscriptEventRowsInTransaction(
   const rewrite = prepareSqliteQuerySync<(typeof rewrites)[number]>(database.db, (parameter) =>
     db
       .updateTable("transcript_events")
-      .set({ event_json: parameter((row) => row.eventJson) })
+      .set({
+        event_json: parameter((row) => row.eventJson),
+        navigation_json: parameter((row) => encodeTranscriptNavigation(row.eventJson)),
+      })
       .where("session_id", "=", resolved.sessionId)
       .where(
         "seq",
@@ -525,29 +535,13 @@ export function rewriteSqliteTranscriptEventRowsInTransaction(
       );
     }
   }
-  rotateTranscriptGenerationInTransaction(database, resolved.sessionId);
+  rotateTranscriptGenerationInTransaction(database, resolved.sessionId, {
+    navigationMaintained: true,
+  });
   touchTranscriptMutationInTransaction(database, resolved.sessionId);
   if (!projectionUnchanged) {
     reconcileRewrittenTranscriptIndex(database, resolved.sessionId, rebuildSynchronously);
   }
-}
-
-function transcriptRewritePreservesProjection(beforeJson: string, afterJson: string): boolean {
-  const before: unknown = JSON.parse(beforeJson);
-  const after: unknown = JSON.parse(afterJson);
-  if (!isRecord(before) || !isRecord(after)) {
-    return false;
-  }
-  const { message: _beforeMessage, ...beforeEnvelope } = before;
-  const { message: _afterMessage, ...afterEnvelope } = after;
-  // Equal envelopes preserve tree topology and timestamp; exact rewrites retain created_at,
-  // so the index extractor's fallback timestamp is identical for both versions as well.
-  return (
-    isDeepStrictEqual(beforeEnvelope, afterEnvelope) &&
-    hasTranscriptMessage(before) === hasTranscriptMessage(after) &&
-    transcriptEventContextEligibility(before) === transcriptEventContextEligibility(after) &&
-    isDeepStrictEqual(extractTranscriptIndexEntry(before, 0), extractTranscriptIndexEntry(after, 0))
-  );
 }
 
 function reconcileRewrittenTranscriptIndex(
@@ -583,7 +577,10 @@ export function updateSqliteTranscriptEventJsonInTransaction(
   const update = prepareSqliteQuerySync<(typeof updates)[number]>(database.db, (parameter) =>
     db
       .updateTable("transcript_events")
-      .set({ event_json: parameter((row) => row.eventJson) })
+      .set({
+        event_json: parameter((row) => row.eventJson),
+        navigation_json: parameter((row) => encodeTranscriptNavigation(row.eventJson)),
+      })
       .where("session_id", "=", sessionId)
       .where(
         "seq",
@@ -594,7 +591,7 @@ export function updateSqliteTranscriptEventJsonInTransaction(
   for (const row of updates) {
     update(row);
   }
-  rotateTranscriptGenerationInTransaction(database, sessionId);
+  rotateTranscriptGenerationInTransaction(database, sessionId, { navigationMaintained: true });
   reconcileRewrittenTranscriptIndex(database, sessionId, rebuildSynchronously);
   recordTranscriptReplacementMutation(
     database,

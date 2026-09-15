@@ -81,6 +81,36 @@ describe("incognito transcript reconciliation", () => {
     expect(fs.readdirSync(explicit.stateDir, { recursive: true })).toEqual([]);
   }
 
+  it("keeps original malformed UTF-8 bytes while committing terminal navigation poison", async () => {
+    const { scope, options } = target(explicit.env);
+    await replaceTranscriptEvents(scope, [message("root", "before")]);
+    await waitForSessionTranscriptIndexReconcile(options);
+    const database = openOpenClawAgentDatabase(options);
+    const parts = JSON.stringify(message("root", "INVALID_BYTE_MARKER")).split(
+      "INVALID_BYTE_MARKER",
+    );
+    const raw = Buffer.concat([
+      Buffer.from(parts[0]!),
+      Buffer.from([0xff]),
+      Buffer.from(parts[1]!),
+    ]);
+    database.db
+      .prepare(
+        "UPDATE transcript_events SET event_json=CAST(? AS TEXT),navigation_json=NULL WHERE session_id=?",
+      )
+      .run(raw, sessionId);
+    await reconcileSessionTranscriptIndexes(options);
+    const row = database.db
+      .prepare(
+        "SELECT navigation_json,CAST(event_json AS BLOB) AS raw FROM transcript_events WHERE session_id=?",
+      )
+      .get(sessionId);
+    expect(row?.navigation_json).toBe("[1]");
+    expect(row?.raw).toEqual(Uint8Array.from(raw));
+    expect(await reconcileSessionTranscriptIndexes(options)).toEqual({ reconciledSessions: 0 });
+    expectNoDiskState();
+  });
+
   it.each(["ambient", "explicit"] as const)(
     "repairs a supported branch through the scheduled worker (%s environment)",
     async (environment) => {
