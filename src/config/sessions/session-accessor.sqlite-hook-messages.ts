@@ -1,6 +1,5 @@
 // Raw command-hook snapshots are not reset-relative display history.
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
-import { sql, type Expression, type RawBuilder } from "kysely";
 import { boundedParsedJsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
 import {
   executeSqliteQuerySync,
@@ -22,31 +21,15 @@ import {
 } from "./session-cold-storage-read.js";
 import {
   projectTranscriptNavigation,
-  projectTranscriptNavigationSql,
+  projectRawHookNavigationSql,
+  projectTranscriptRawMessageEligibilitySql,
+  projectTranscriptRawTypeSql,
 } from "./session-model-context-projection.js";
 import { resolveSqliteSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
 import {
   scanSessionTranscriptTree,
   selectSessionTranscriptActiveEntries,
 } from "./transcript-tree.js";
-
-function rawTypeSql(event: Expression<string>): RawBuilder<string | null> {
-  // json_extract selects the first duplicate. JSON.parse, the raw owner, keeps the last.
-  /* kysely-allow-raw: ordered root members preserve JSON.parse duplicate-member semantics. */
-  return sql<string | null>`CASE WHEN json_valid(${event}) THEN
-    (SELECT atom FROM json_each(${event}) WHERE key = 'type' ORDER BY id DESC LIMIT 1)
-    ELSE NULL END`;
-}
-
-function messageEligibilitySql(event: Expression<string>): RawBuilder<number | null> {
-  /* kysely-allow-raw: CASE protects SQLite-overdepth JSON; last root members match the raw parser without returning bodies. */
-  return sql<number | null>`CASE WHEN json_valid(${event}) THEN
-    CASE WHEN ${rawTypeSql(event)} = 'message' THEN COALESCE(
-      (SELECT CASE type WHEN 'object' THEN 1 WHEN 'array' THEN 1 WHEN 'true' THEN 1
-        WHEN 'text' THEN atom <> '' WHEN 'integer' THEN atom <> 0 WHEN 'real' THEN atom <> 0
-        ELSE 0 END FROM json_each(${event}) WHERE key = 'message' ORDER BY id DESC LIMIT 1), 0)
-      ELSE 0 END ELSE NULL END`;
-}
 
 /** Count/classify in SQLite where compatible; decode exceptional rows only inside a fixed budget. */
 export async function readSessionTranscriptHookMessages(
@@ -116,7 +99,7 @@ export async function readSessionTranscriptHookMessages(
           .select("seq")
           .where((eb) =>
             eb.or([
-              eb(rawTypeSql(eb.ref("event_json")), "=", "leaf"),
+              eb(projectTranscriptRawTypeSql(eb.ref("event_json")), "=", "leaf"),
               eb(eb.cast<string>("seq", "text"), "in", sqliteStringSet(compatibleLeaves)),
             ]),
           )
@@ -134,27 +117,34 @@ export async function readSessionTranscriptHookMessages(
         navigationBytes += measured.bytes + 1;
       };
       function* navigationRows(): Generator<Record<string, unknown> & { seq: number }> {
-        const facts = projectTranscriptNavigationSql(sql.ref<string>("event_json"), {
-          includeResetBoundary: true,
-        });
-        /* kysely-allow-raw: sequence is owned metadata and included in its pre-transfer size. */
-        const projected = sql<string>`json_set(${facts}, '$.seq', seq)`;
-        /* kysely-allow-raw: size metadata before transfer; incompatible rows are already byte-bounded. */
-        const size = sql<number>`CASE WHEN json_valid(event_json)
-          THEN octet_length(${projected}) ELSE octet_length(event_json) END`;
+        const metadataRows = rows.select((eb) => [
+          "seq",
+          eb
+            .case()
+            .when(eb.fn<number>("json_valid", ["event_json"]), "=", 1)
+            .then(
+              eb.fn<number>("octet_length", [
+                projectRawHookNavigationSql(eb.ref("event_json"), eb.ref("seq")),
+              ]),
+            )
+            .else(eb.fn<number>("octet_length", ["event_json"]))
+            .end()
+            .as("bytes"),
+        ]);
         const readNavigation = prepareSqliteQuerySync<number, { navigation: string }>(
           database.db,
           (parameter) =>
-            rows.select(projected.as("navigation")).where(
-              "seq",
-              "=",
-              parameter((seq) => seq),
-            ),
+            rows
+              .select((eb) =>
+                projectRawHookNavigationSql(eb.ref("event_json"), eb.ref("seq")).as("navigation"),
+              )
+              .where(
+                "seq",
+                "=",
+                parameter((seq) => seq),
+              ),
         );
-        for (const row of iterateSqliteQuerySync(
-          database.db,
-          rows.select(["seq", size.as("bytes")]).orderBy("seq", "asc"),
-        )) {
+        for (const row of iterateSqliteQuerySync(database.db, metadataRows.orderBy("seq", "asc"))) {
           const fallback = compatible.get(row.seq);
           const candidateBytes = fallback
             ? boundedParsedJsonUtf8Bytes(
@@ -233,7 +223,7 @@ export async function readSessionTranscriptHookMessages(
         .where("event.session_id", "=", resolved.sessionId)
         .where((eb) =>
           eb.or([
-            eb(messageEligibilitySql(eb.ref("event.event_json")), "=", 1),
+            eb(projectTranscriptRawMessageEligibilitySql(eb.ref("event.event_json")), "=", 1),
             eb(eb.cast<string>("event.seq", "text"), "in", sqliteStringSet(compatibleMessages)),
           ]),
         )
