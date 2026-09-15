@@ -1,6 +1,6 @@
 // Raw command-hook snapshots are not reset-relative display history.
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
-import { sql } from "kysely";
+import { sql, type Expression, type RawBuilder } from "kysely";
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
@@ -19,7 +19,10 @@ import {
   readHotSessionTranscriptSnapshot,
   readRestoredSessionTranscript,
 } from "./session-cold-storage-read.js";
-import { projectTranscriptNavigationSql } from "./session-model-context-projection.js";
+import {
+  projectTranscriptNavigation,
+  projectTranscriptNavigationSql,
+} from "./session-model-context-projection.js";
 import { isSessionTranscriptProjectionUnavailableError } from "./session-transcript-projection-error.js";
 import { resolveSqliteSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
 import {
@@ -27,148 +30,164 @@ import {
   selectSessionTranscriptLeafControlledPath,
 } from "./transcript-tree.js";
 
-/**
- * Preserve the command hook's raw message membership: flat storage until leaf
- * navigation is present, then the canonical active path, spanning old resets.
- * Count/type scans stay in SQLite; only a count- and byte-bounded tail crosses
- * into JavaScript. Never fetch an oversized event to size it.
- */
+function rawTypeSql(event: Expression<string>): RawBuilder<string | null> {
+  // json_extract selects the first duplicate. JSON.parse, the raw owner, keeps the last.
+  /* kysely-allow-raw: ordered root members preserve JSON.parse duplicate-member semantics. */
+  return sql<string | null>`CASE WHEN json_valid(${event}) THEN
+    (SELECT atom FROM json_each(${event}) WHERE key = 'type' ORDER BY id DESC LIMIT 1)
+    ELSE NULL END`;
+}
+
+function messageEligibilitySql(event: Expression<string>): RawBuilder<number | null> {
+  /* kysely-allow-raw: CASE protects SQLite-overdepth JSON; last root members match the raw parser without returning bodies. */
+  return sql<number | null>`CASE WHEN json_valid(${event}) THEN
+    CASE WHEN ${rawTypeSql(event)} = 'message' THEN COALESCE(
+      (SELECT CASE type WHEN 'object' THEN 1 WHEN 'array' THEN 1 WHEN 'true' THEN 1
+        WHEN 'text' THEN atom <> '' WHEN 'integer' THEN atom <> 0 WHEN 'real' THEN atom <> 0
+        ELSE 0 END FROM json_each(${event}) WHERE key = 'message' ORDER BY id DESC LIMIT 1), 0)
+      ELSE 0 END ELSE NULL END`;
+}
+
+/** Count/classify in SQLite where compatible; decode exceptional rows only inside a fixed budget. */
 export async function readSessionTranscriptHookMessages(
   scope: SessionTranscriptReadScope,
   limits: { maxMessages: number; maxBytes: number },
-): Promise<{ messages: unknown[]; totalMessages: number }> {
+): Promise<{ messages: unknown[]; totalMessages?: number; truncated: boolean }> {
   return readRestoredSessionTranscript(scope, () => {
     const resolved = resolveSqliteTranscriptReadScope(scope);
     const database = openOpenClawAgentDatabase(toDatabaseOptions(resolved));
     return readHotSessionTranscriptSnapshot(database, resolved.sessionId, "events", () => {
       const db = getSessionKysely(database.db);
-      const identity = db
-        .selectFrom("transcript_event_identities")
-        .select(["session_id", "seq", "event_type"])
-        .modifyEnd(
-          // The covering type index otherwise scans the session per joined row.
-          /* kysely-allow-raw: pin the existing sequence index to avoid quadratic raw-history joins. */
-          sql`INDEXED BY idx_agent_transcript_event_identity_sequence`,
-        )
-        .as("identity");
+      const maxMessages = Math.max(0, Math.floor(limits.maxMessages));
+      const maxBytes = Math.max(0, Math.floor(limits.maxBytes));
+      const incomplete = () => ({ messages: [], truncated: true });
       const fence = resolveSqliteSessionTranscriptReadFence({ database, ...resolved });
-      // Avoid a navigation scan for the common leaf-free transcript. The
-      // identity index can omit earlier duplicate IDs, so inspect unindexed
-      // types too, just as the raw message query does below.
+      const rows = db
+        .selectFrom("transcript_events")
+        .where("session_id", "=", resolved.sessionId)
+        .$if(fence !== undefined, (query) => query.where("seq", "<", fence!.beforeRawSeq));
+      const readBoundedRow = (seq: number, bytes: number): unknown => {
+        const row = executeSqliteQueryTakeFirstSync(
+          database.db,
+          rows
+            .select("event_json")
+            .where("seq", "=", seq)
+            .where((eb) => eb(eb.fn<number>("octet_length", ["event_json"]), "<=", bytes)),
+        );
+        if (!row) {
+          throw new Error("Raw hook row exceeded its pre-hydration budget");
+        }
+        return JSON.parse(row.event_json);
+      };
+      const compatible = new Map<
+        number,
+        { navigation: Record<string, unknown>; message?: unknown }
+      >();
+      let compatibilityBytes = 2;
+      for (const row of iterateSqliteQuerySync(
+        database.db,
+        rows
+          .select((eb) => ["seq", eb.fn<number>("octet_length", ["event_json"]).as("bytes")])
+          .where((eb) => eb(eb.fn<number>("json_valid", ["event_json"]), "=", 0))
+          .orderBy("seq", "desc"),
+      )) {
+        // Classification must not smuggle an oversized body past the payload cap.
+        // If its bounded fallback cannot establish membership/topology, say unknown.
+        if (compatible.size >= maxMessages || compatibilityBytes + row.bytes + 1 > maxBytes) {
+          return incomplete();
+        }
+        const event = readBoundedRow(row.seq, maxBytes - compatibilityBytes - 1);
+        compatibilityBytes += row.bytes + 1;
+        const record = asOptionalRecord(event);
+        compatible.set(row.seq, {
+          navigation: projectTranscriptNavigation(event, { includeResetBoundary: true }),
+          ...(record?.type === "message" && record.message ? { message: record.message } : {}),
+        });
+      }
+      const compatibleLeaves = [...compatible]
+        .filter(([, row]) => row.navigation.type === "leaf")
+        .map(([seq]) => String(seq));
+      const compatibleMessages = [...compatible]
+        .filter(([, row]) => row.message !== undefined)
+        .map(([seq]) => String(seq));
       const lastLeaf = executeSqliteQueryTakeFirstSync(
         database.db,
-        db
-          .selectFrom("transcript_events as event")
-          .leftJoin(identity, (join) =>
-            join
-              .onRef("identity.session_id", "=", "event.session_id")
-              .onRef("identity.seq", "=", "event.seq"),
-          )
-          .select("event.seq")
-          .where("event.session_id", "=", resolved.sessionId)
+        rows
+          .select("seq")
           .where((eb) =>
-            eb(
-              eb.fn.coalesce(
-                "identity.event_type",
-                eb.fn<string>("json_extract", ["event.event_json", eb.val("$.type")]),
-              ),
-              "=",
-              "leaf",
-            ),
+            eb.or([
+              eb(rawTypeSql(eb.ref("event_json")), "=", "leaf"),
+              eb(eb.cast<string>("seq", "text"), "in", sqliteStringSet(compatibleLeaves)),
+            ]),
           )
-          .$if(fence !== undefined, (query) => query.where("event.seq", "<", fence!.beforeRawSeq))
-          .orderBy("event.seq", "desc")
+          .orderBy("seq", "desc")
           .limit(1),
       );
+      let metadataComplete = true;
+      function* navigationRows(lastSeq?: number) {
+        const projected = projectTranscriptNavigationSql(sql.ref<string>("event_json"), {
+          includeResetBoundary: true,
+        });
+        // Preserve duplicate navigation fields until JSON.parse resolves them.
+        /* kysely-allow-raw: metadata is projected and byte-gated before transfer; incompatible JSON was decoded in the bounded owner fallback. */
+        const navigation = sql<string | null>`CASE WHEN json_valid(event_json) THEN
+          CASE WHEN octet_length(${projected}) <= ${maxBytes} THEN ${projected} ELSE NULL END
+          ELSE NULL END`;
+        for (const row of iterateSqliteQuerySync(
+          database.db,
+          rows
+            .select(["seq", navigation.as("navigation")])
+            .$if(lastSeq !== undefined, (query) => query.where("seq", "<=", lastSeq!))
+            .orderBy("seq", "asc"),
+        )) {
+          const fallback = compatible.get(row.seq);
+          if (!fallback && row.navigation === null) {
+            metadataComplete = false;
+            return;
+          }
+          yield Object.assign(
+            {},
+            fallback?.navigation ??
+              projectTranscriptNavigation(JSON.parse(row.navigation!), {
+                includeResetBoundary: true,
+              }),
+            { seq: row.seq },
+          );
+        }
+      }
       const hasLeafControl =
         lastLeaf !== undefined &&
-        hasAcceptedSessionTranscriptLeafControl(
-          (function* () {
-            // Only navigation fields cross this boundary, never message bodies.
-            // The canonical owner stops at its first accepted control; dangling,
-            // forward and invalid-control references must not switch membership.
-            const rows = iterateSqliteQuerySync(
-              database.db,
-              db
-                .selectFrom("transcript_events")
-                .select((eb) =>
-                  projectTranscriptNavigationSql(eb.ref("event_json")).as("navigation"),
-                )
-                .where("session_id", "=", resolved.sessionId)
-                .where("seq", "<=", lastLeaf.seq)
-                .orderBy("seq", "asc"),
-            );
-            for (const row of rows) {
-              yield JSON.parse(row.navigation);
-            }
-          })(),
-        );
+        hasAcceptedSessionTranscriptLeafControl(navigationRows(lastLeaf.seq));
+      if (!metadataComplete) {
+        return incomplete();
+      }
       let authoritativeSeqs: number[] | undefined;
       if (hasLeafControl) {
         try {
-          // Reuse the active-path index only when it belongs to this snapshot.
           withCurrentProjectionSnapshot(scope, () => undefined);
         } catch (error) {
           if (!isSessionTranscriptProjectionUnavailableError(error)) {
             throw error;
           }
-          // Reset preparation can hold writer admission. Waiting for the index
-          // worker here would deadlock its publication. Resolve raw navigation
-          // in the same read snapshot instead; never fetch its message bodies.
-          const navigation: Array<Record<string, unknown> & { seq: number }> = [];
-          for (const row of iterateSqliteQuerySync(
-            database.db,
-            db
-              .selectFrom("transcript_events")
-              .select((eb) => [
-                "seq",
-                projectTranscriptNavigationSql(eb.ref("event_json")).as("navigation"),
-              ])
-              .where("session_id", "=", resolved.sessionId)
-              .$if(fence !== undefined, (query) => query.where("seq", "<", fence!.beforeRawSeq))
-              .orderBy("seq", "asc"),
-          )) {
-            navigation.push(
-              Object.assign({}, asOptionalRecord(JSON.parse(row.navigation)), { seq: row.seq }),
-            );
+          // Reset preparation holds writer admission; waiting for rebuild publication deadlocks.
+          const navigation = [...navigationRows()];
+          if (!metadataComplete) {
+            return incomplete();
           }
-          const selected = selectSessionTranscriptLeafControlledPath(navigation) ?? navigation;
-          authoritativeSeqs = selected.map((entry) => entry.seq);
+          authoritativeSeqs = (
+            selectSessionTranscriptLeafControlledPath(navigation) ?? navigation
+          ).map((entry) => entry.seq);
         }
       }
       const source = db
         .selectFrom("transcript_events as event")
-        .leftJoin(identity, (join) =>
-          join
-            .onRef("identity.session_id", "=", "event.session_id")
-            .onRef("identity.seq", "=", "event.seq"),
-        )
         .where("event.session_id", "=", resolved.sessionId)
         .where((eb) =>
-          eb(
-            eb.fn.coalesce(
-              "identity.event_type",
-              eb.fn<string>("json_extract", ["event.event_json", eb.val("$.type")]),
-            ),
-            "=",
-            "message",
-          ),
+          eb.or([
+            eb(messageEligibilitySql(eb.ref("event.event_json")), "=", 1),
+            eb(eb.cast<string>("event.seq", "text"), "in", sqliteStringSet(compatibleMessages)),
+          ]),
         )
-        // Match the old raw parser before counting or taking the tail. SQLite
-        // evaluates eligibility without transferring message bodies to JS. This
-        // count is O(retained source bytes), not a constant-time reset claim.
-        .where((eb) => {
-          const type = eb.fn<string>("json_type", ["event.event_json", eb.val("$.message")]);
-          const value = eb.fn<string | number>("json_extract", [
-            "event.event_json",
-            eb.val("$.message"),
-          ]);
-          return eb.or([
-            eb(type, "in", ["object", "array", "true"]),
-            eb.and([eb(type, "=", "text"), eb(value, "!=", "")]),
-            eb.and([eb(type, "in", ["integer", "real"]), eb(value, "!=", 0)]),
-          ]);
-        })
         .$if(fence !== undefined, (query) => query.where("event.seq", "<", fence!.beforeRawSeq))
         .$if(hasLeafControl && authoritativeSeqs === undefined, (query) =>
           query.where((eb) =>
@@ -195,8 +214,6 @@ export async function readSessionTranscriptHookMessages(
           database.db,
           source.select((eb) => eb.fn.countAll<number>().as("count")),
         )?.count ?? 0;
-      const maxMessages = Math.max(0, Math.floor(limits.maxMessages));
-      const maxBytes = Math.max(0, Math.floor(limits.maxBytes));
       const metadata = executeSqliteQuerySync(
         database.db,
         source
@@ -208,8 +225,6 @@ export async function readSessionTranscriptHookMessages(
           .limit(maxMessages),
       ).rows;
       const selected: number[] = [];
-      // Include array punctuation as well as the stored event envelope. The raw
-      // message is smaller than that envelope, so this is a conservative budget.
       let bytes = 2;
       for (const row of metadata) {
         if (bytes + row.bytes + 1 > maxBytes) {
@@ -218,22 +233,28 @@ export async function readSessionTranscriptHookMessages(
         selected.push(row.seq);
         bytes += row.bytes + 1;
       }
-      const messages =
-        selected.length === 0
-          ? []
-          : executeSqliteQuerySync(
-              database.db,
-              db
-                .selectFrom("transcript_events")
-                .select("event_json")
-                .where("session_id", "=", resolved.sessionId)
-                .where("seq", "in", selected)
-                .orderBy("seq", "asc"),
-            ).rows.flatMap((row) => {
-              const event = asOptionalRecord(JSON.parse(row.event_json));
-              return event?.message ? [event.message] : [];
-            });
-      return { messages, totalMessages };
+      const selectedSet = new Set(selected);
+      // Discard unselected fallback bodies before hydrating ordinary selected rows.
+      for (const seq of compatible.keys()) {
+        if (!selectedSet.has(seq)) {
+          compatible.delete(seq);
+        }
+      }
+      const ordinary = selected.filter((seq) => !compatible.has(seq));
+      const messagesBySeq = new Map<number, unknown>();
+      if (ordinary.length > 0) {
+        for (const row of executeSqliteQuerySync(
+          database.db,
+          rows.select(["seq", "event_json"]).where("seq", "in", ordinary),
+        ).rows) {
+          const event = asOptionalRecord(JSON.parse(row.event_json));
+          messagesBySeq.set(row.seq, event?.message);
+        }
+      }
+      const messages = selected
+        .toReversed()
+        .map((seq) => compatible.get(seq)?.message ?? messagesBySeq.get(seq));
+      return { messages, totalMessages, truncated: totalMessages > messages.length };
     });
   });
 }

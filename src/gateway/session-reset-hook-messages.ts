@@ -1,7 +1,8 @@
-import { readSessionTranscriptHookMessages } from "../config/sessions/session-accessor.sqlite-hook-messages.js";
 // Bounded transcript snapshot delivered to `before_reset` plugin hooks.
+import { readSessionTranscriptHookMessages } from "../config/sessions/session-accessor.sqlite-hook-messages.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import { logVerbose } from "../globals.js";
+import { boundedParsedJsonUtf8Bytes } from "../infra/json-utf8-bytes.js";
 import { readSessionMessagesPageWithStatsAsync } from "./session-transcript-readers.js";
 
 /**
@@ -16,9 +17,9 @@ const BEFORE_RESET_HOOK_MAX_BYTES = 8 * 1024 * 1024;
 export type BeforeResetHookMessages = {
   /** Newest transcript messages, oldest first, bounded by count and bytes. */
   messages: unknown[];
-  /** Visible message count before bounding; equals `messages.length` when complete. */
-  totalMessages: number;
-  /** True when older messages were omitted from `messages`. */
+  /** Message count before bounding, omitted when bounded classification cannot establish it. */
+  totalMessages?: number;
+  /** True when history was omitted or bounded classification could not establish completeness. */
   truncated: boolean;
 };
 
@@ -62,7 +63,7 @@ export async function readBeforeResetHookMessages(
       maxMessages: BEFORE_RESET_HOOK_MAX_MESSAGES,
       maxBytes: BEFORE_RESET_HOOK_MAX_BYTES,
     };
-    const result =
+    const result: { messages: unknown[]; totalMessages?: number; truncated?: boolean } =
       selection === "raw"
         ? await readSessionTranscriptHookMessages(target, limits)
         : await readSessionMessagesPageWithStatsAsync(target, { ...limits, offset: 0 });
@@ -71,22 +72,29 @@ export async function readBeforeResetHookMessages(
     let bytes = 2;
     let start = result.messages.length;
     for (let index = result.messages.length - 1; index >= 0; index -= 1) {
-      const size = Buffer.byteLength(JSON.stringify(result.messages[index]), "utf8") + 1;
-      if (bytes + size > BEFORE_RESET_HOOK_MAX_BYTES) {
+      // Measure an array slot so omitted values have JSON array semantics too.
+      const measured = boundedParsedJsonUtf8Bytes(
+        [result.messages[index]],
+        BEFORE_RESET_HOOK_MAX_BYTES - bytes + 1,
+      );
+      if (!measured.complete) {
         break;
       }
-      bytes += size;
+      bytes += measured.bytes - 2 + 1;
       start = index;
     }
     const messages = result.messages.slice(start);
-    const totalMessages = Math.max(
-      result.totalMessages ?? result.messages.length,
-      result.messages.length,
-    );
+    const totalMessages =
+      result.totalMessages === undefined
+        ? undefined
+        : Math.max(result.totalMessages, result.messages.length);
     return {
       messages,
-      totalMessages,
-      truncated: totalMessages > messages.length,
+      ...(totalMessages !== undefined ? { totalMessages } : {}),
+      truncated:
+        result.truncated === true ||
+        start > 0 ||
+        (totalMessages !== undefined && totalMessages > messages.length),
     };
   } catch (err: unknown) {
     logVerbose(

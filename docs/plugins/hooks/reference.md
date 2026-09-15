@@ -183,9 +183,16 @@ To short-circuit an agent turn with a synthetic reply or silence, use
 8 MiB of serialized UTF-8 JSON, oldest first), not a complete-history export.
 Selection stops at the first message that would exceed the byte budget; an
 oversized newest message can therefore produce an empty, truncated snapshot.
-`totalMessages` reports the source message count before bounding; `truncated`
-indicates omitted history. Missing identity or a failed read still produces an
-empty snapshot, so `truncated: false` alone does not establish successful capture.
+`totalMessages`, when present, reports the source message count before bounding;
+`truncated` indicates omitted or incompletely classified history. Raw snapshots
+preserve `JSON.parse` semantics, including last duplicate members and deeply
+nested JSON. Parser-compatible fallback classification is itself limited to
+4,096 rows and 8 MiB of stored JSON. If classification or navigation cannot fit
+its safety budget, the snapshot is empty with `truncated: true` and
+`totalMessages` omitted rather than an invented zero. Stored bytes and emitted
+JSON bytes are checked separately because parsing can expand numeric spellings.
+Missing identity or a failed read still produces an empty snapshot, so
+`truncated: false` alone does not establish successful capture.
 
 Each entry point preserves its existing selection: chat reset commands observe
 raw message records (including earlier reset intervals), with leaf navigation

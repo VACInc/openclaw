@@ -1,3 +1,4 @@
+import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { sql, type Expression, type RawBuilder } from "kysely";
 import {
   DEFAULT_MISSING_TOOL_RESULT_TEXT,
@@ -50,8 +51,35 @@ const TRANSCRIPT_NAVIGATION_KEYS = [
 ] as const;
 
 /** Cursor resolution needs only tree facts, even when a row has an opaque body. */
-export function projectTranscriptNavigationSql(event: Expression<string>): RawBuilder<string> {
-  return pickJsonObject(event, TRANSCRIPT_NAVIGATION_KEYS);
+export function projectTranscriptNavigationSql(
+  event: Expression<string>,
+  options?: { includeResetBoundary?: boolean },
+): RawBuilder<string> {
+  return pickJsonObject(
+    event,
+    options?.includeResetBoundary
+      ? [...TRANSCRIPT_NAVIGATION_KEYS, "firstKeptEntryId"]
+      : TRANSCRIPT_NAVIGATION_KEYS,
+  );
+}
+
+/** JSON.parse owns fallback semantics, including duplicate members and deep JSON. */
+export function projectTranscriptNavigation(
+  event: unknown,
+  options?: { includeResetBoundary?: boolean },
+): Record<string, unknown> {
+  const record = asOptionalRecord(event);
+  const navigation: Record<string, unknown> = {};
+  if (record) {
+    for (const key of options?.includeResetBoundary
+      ? [...TRANSCRIPT_NAVIGATION_KEYS, "firstKeptEntryId"]
+      : TRANSCRIPT_NAVIGATION_KEYS) {
+      if (Object.hasOwn(record, key)) {
+        navigation[key] = record[key];
+      }
+    }
+  }
+  return navigation;
 }
 
 /** Reset boundaries select ancestry and replay roles without loading message bodies. */

@@ -6,6 +6,7 @@ import {
   loadTranscriptEvents,
   replaceTranscriptEvents,
 } from "../config/sessions/session-accessor.js";
+import { importSqliteSessionRows } from "../config/sessions/session-accessor.sqlite-import.js";
 import {
   resolveSqliteTranscriptReadScope,
   toDatabaseOptions,
@@ -72,6 +73,22 @@ describe("readBeforeResetHookMessages", () => {
     ]);
     // Large replacements rebuild the transcript projection asynchronously.
     await waitForSessionTranscriptProjection(scope);
+    return scope;
+  }
+
+  async function writeExact(sessionId: string, events: string[]) {
+    const scope = { agentId: "main", sessionId, sessionKey: "agent:main:" + sessionId, storePath };
+    await importSqliteSessionRows({
+      ...scope,
+      entry: { sessionId, updatedAt: 1 },
+      readExactTranscriptRows: (append) => {
+        append({
+          createdAt: 0,
+          eventJson: JSON.stringify({ type: "session", version: 3, id: sessionId }),
+        });
+        events.forEach((eventJson, index) => append({ createdAt: index + 1, eventJson }));
+      },
+    });
     return scope;
   }
 
@@ -354,7 +371,7 @@ describe("readBeforeResetHookMessages", () => {
       }
     },
   );
-  test("uses a session-and-sequence identity lookup without ANALYZE", async () => {
+  test("counts raw messages without a per-row identity join", async () => {
     const scope = await writeTranscript("raw-query-plan", 20);
     const database = openOpenClawAgentDatabase(
       toDatabaseOptions(resolveSqliteTranscriptReadScope(scope)),
@@ -381,12 +398,210 @@ describe("readBeforeResetHookMessages", () => {
     expect(
       plan.some((row) => {
         const detail = asOptionalRecord(row)?.detail;
-        return (
-          typeof detail === "string" &&
-          detail.includes("idx_agent_transcript_event_identity_sequence") &&
-          detail.includes("session_id=? AND seq=?")
-        );
+        return typeof detail === "string" && detail.includes("transcript_event_identities");
       }),
-    ).toBe(true);
+    ).toBe(false);
+  });
+  test.each([
+    '{"type":"message","message":null,"message":{"role":"user","content":"last"}}',
+    '{"type":"message","message":{"role":"user","content":"first"},"message":null}',
+    '{"type":"opaque","type":"message","message":{"role":"user","content":"last type"}}',
+    '{"type":"message","type":"opaque","message":{"role":"user","content":"not a message"}}',
+    '{"type":"message","message":"","message":"last string"}',
+  ])("parser compatibility keeps the last duplicate member %#", async (raw) => {
+    const scope = await writeExact("duplicates", [raw]);
+    const parsed = asOptionalRecord(JSON.parse(raw));
+    const expected = parsed?.type === "message" && parsed.message ? [parsed.message] : [];
+    expect(await readBeforeResetHookMessages(scope, "raw")).toEqual({
+      messages: expected,
+      totalMessages: expected.length,
+      truncated: false,
+    });
+  });
+
+  test.each([
+    { name: "SQLite overdepth array", json: "[".repeat(1001) + "0" + "]".repeat(1001) },
+    { name: "deep integer-key object", json: '{"0":'.repeat(10000) + "0" + "}".repeat(10000) },
+    {
+      name: "non-callable toJSON and deep array",
+      json: '{"toJSON":null,"value":' + "[".repeat(10000) + "0" + "]".repeat(10000) + "}",
+    },
+  ])("parser compatibility retains $name below the byte limit", async ({ json }) => {
+    const raw =
+      '{"type":"message","id":"deep","parentId":"root","message":{"role":"user","content":' +
+      json +
+      "}}";
+    const scope = await writeExact("deep", [
+      '{"type":"message","id":"root","parentId":null,"message":{"role":"user","content":"root"}}',
+      raw,
+    ]);
+    expect(Buffer.byteLength(raw)).toBeLessThan(BEFORE_RESET_HOOK_MAX_BYTES);
+    const payload = await readBeforeResetHookMessages(scope, "raw");
+    expect(payload.messages).toHaveLength(2);
+    expect(payload.totalMessages).toBe(2);
+    expect(payload.truncated).toBe(false);
+    expect(asOptionalRecord(payload.messages[1])?.role).toBe("user");
+  });
+
+  test("parser compatibility enforces emitted bytes after numeric expansion", async () => {
+    const raw =
+      '{"type":"message","message":{"role":"user","content":[' +
+      Array.from({ length: 390000 }, () => "1e20").join(",") +
+      "]}}";
+    expect(Buffer.byteLength(raw)).toBeLessThan(BEFORE_RESET_HOOK_MAX_BYTES);
+    expect(Buffer.byteLength(JSON.stringify(JSON.parse(raw).message))).toBeGreaterThan(
+      BEFORE_RESET_HOOK_MAX_BYTES,
+    );
+    const scope = await writeExact("numeric-expansion", [raw]);
+    expect(await readBeforeResetHookMessages(scope, "raw")).toEqual({
+      messages: [],
+      totalMessages: 1,
+      truncated: true,
+    });
+  });
+
+  test("parser compatibility does not hydrate oversized deep JSON or invent a count", async () => {
+    const raw =
+      '{"type":"message","message":{"content":' +
+      "[".repeat(1001) +
+      '"' +
+      "x".repeat(BEFORE_RESET_HOOK_MAX_BYTES) +
+      '"' +
+      "]".repeat(1001) +
+      "}}";
+    const scope = await writeExact("deep-oversized", [raw]);
+    const parse = vi.spyOn(JSON, "parse");
+    try {
+      expect(await readBeforeResetHookMessages(scope, "raw")).toEqual({
+        messages: [],
+        truncated: true,
+      });
+      expect(
+        parse.mock.calls.some(
+          ([value]) =>
+            typeof value === "string" && Buffer.byteLength(value) > BEFORE_RESET_HOOK_MAX_BYTES,
+        ),
+      ).toBe(false);
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
+  test("parser compatibility preserves deep bodies and duplicate leaf targets during rebuild", async () => {
+    const deep = "[".repeat(1001) + "0" + "]".repeat(1001);
+    const scope = await writeExact("deep-leaf", [
+      '{"type":"message","id":"wrong","id":"root","parentId":null,"message":{"role":"user","content":"root"}}',
+      '{"type":"message","id":"side","parentId":"root","message":{"role":"user","content":"side"}}',
+      '{"type":"message","id":"deep","parentId":"root","message":{"role":"user","content":' +
+        deep +
+        "}}",
+      '{"type":"leaf","id":"nav","parentId":"deep","targetId":"side","targetId":"deep"}',
+    ]);
+    try {
+      const payload = await readBeforeResetHookMessages(scope, "raw");
+      expect(payload.messages).toHaveLength(2);
+      expect(asOptionalRecord(payload.messages[0])?.content).toBe("root");
+      expect(Array.isArray(asOptionalRecord(payload.messages[1])?.content)).toBe(true);
+      expect(payload.totalMessages).toBe(2);
+      expect(payload.truncated).toBe(false);
+    } finally {
+      await waitForSessionTranscriptProjection(scope);
+    }
+    expect((await readBeforeResetHookMessages(scope, "raw")).messages).toHaveLength(2);
+  });
+  test("parser compatibility restores exact duplicate and deep JSON from cold storage", async () => {
+    const { createSessionColdStorageFixture, maintenanceConfig } =
+      await import("../config/sessions/session-cold-storage.test-support.js");
+    const { runSessionColdStorageMaintenance } =
+      await import("../config/sessions/session-cold-storage.js");
+    const fixture = await createSessionColdStorageFixture(
+      path.join(tempDir, "cold", "agents", "main", "agent", "openclaw-agent.sqlite"),
+    );
+    const row = asOptionalRecord(
+      fixture
+        .database()
+        .prepare("SELECT event_json FROM transcript_events WHERE session_id = ? AND seq = 1")
+        .get(fixture.scope.sessionId),
+    );
+    if (typeof row?.event_json !== "string") {
+      throw new Error("Missing cold fixture message");
+    }
+    const raw =
+      '{"message":null,' +
+      row.event_json.slice(1, -1) +
+      ',"opaque":' +
+      "[".repeat(1001) +
+      "0" +
+      "]".repeat(1001) +
+      "}";
+    fixture
+      .database()
+      .prepare("UPDATE transcript_events SET event_json = ? WHERE session_id = ? AND seq = 1")
+      .run(raw, fixture.scope.sessionId);
+    expect(
+      await runSessionColdStorageMaintenance({
+        config: maintenanceConfig(fixture.scope.storePath),
+      }),
+    ).toMatchObject({ archivedTranscripts: 1 });
+    expect(
+      fixture
+        .database()
+        .prepare("SELECT count(*) AS count FROM transcript_events WHERE session_id = ?")
+        .get(fixture.scope.sessionId),
+    ).toEqual({ count: 0 });
+    const payload = await readBeforeResetHookMessages(fixture.scope, "raw");
+    expect(payload.messages).toHaveLength(2);
+    expect(payload.totalMessages).toBe(2);
+    expect(payload.truncated).toBe(false);
+    expect(
+      fixture
+        .database()
+        .prepare("SELECT event_json FROM transcript_events WHERE session_id = ? AND seq = 1")
+        .get(fixture.scope.sessionId),
+    ).toEqual({ event_json: raw });
+  });
+
+  test("parser compatibility excludes later oversized rows before fallback classification", async () => {
+    const scope = await writeTranscript("parser-fence", 3);
+    const database = openOpenClawAgentDatabase(
+      toDatabaseOptions(resolveSqliteTranscriptReadScope(scope)),
+    );
+    const { readActiveTranscriptEntryAnchor } =
+      await import("../config/sessions/session-accessor.sqlite-transcript-anchor.js");
+    const { runWithSessionTranscriptReadFence } =
+      await import("../config/sessions/session-transcript-read-fence.js");
+    const anchor = readActiveTranscriptEntryAnchor({
+      ...scope,
+      storePath: database.path,
+      entryId: "m3",
+    });
+    if (!anchor) {
+      throw new Error("Missing admitted fixture anchor");
+    }
+    const raw =
+      '{"type":"message","message":' +
+      "[".repeat(1001) +
+      '"' +
+      "x".repeat(BEFORE_RESET_HOOK_MAX_BYTES) +
+      '"' +
+      "]".repeat(1001) +
+      "}";
+    database.db
+      .prepare(
+        "INSERT INTO transcript_events (session_id, seq, event_json, created_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(scope.sessionId, anchor.rawSeq + 1, raw, 10);
+    const payload = await runWithSessionTranscriptReadFence(
+      { ...anchor, logicalTurnId: "parser-fence", role: "user" },
+      () => readBeforeResetHookMessages(scope, "raw"),
+    );
+    expect(payload).toEqual({
+      messages: [
+        { role: "user", content: "turn 1" },
+        { role: "assistant", content: "turn 2" },
+      ],
+      totalMessages: 2,
+      truncated: false,
+    });
   });
 });

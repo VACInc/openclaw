@@ -496,9 +496,9 @@ type PluginHookBeforeResetEvent = {
   sessionFile?: string;
   /** Newest pre-reset messages, bounded by count and bytes; oldest first. */
   messages?: unknown[];
-  /** Visible message count before bounding. */
+  /** Source message count before bounding, when bounded classification can establish it. */
   totalMessages?: number;
-  /** True when older messages were omitted from `messages`. */
+  /** True when history is omitted or bounded classification cannot establish completeness. */
   truncated?: boolean;
   reason?: string;
 };
