@@ -699,6 +699,7 @@ describe("scoped vitest configs", () => {
     );
     expect(productionBoundaryConfig.fileParallelism).toBe(false);
     expect(productionBoundaryConfig.isolate).toBe(true);
+    expect(productionBoundaryConfig.pool).toBe("forks");
     expect(productionBoundaryConfig.runner).toBeUndefined();
   });
 
@@ -1167,6 +1168,10 @@ describe("scoped vitest configs", () => {
     const testConfig = requireTestConfig(defaultLoggingConfig);
     expect(testConfig.dir).toBe(path.join(process.cwd(), "src"));
     expect(testConfig.include).toEqual(["logging/**/*.test.ts"]);
+    expect(testConfig.exclude).toContain("logging/diagnostic-session-context.test.ts");
+    expect(testConfig.exclude).toContain(
+      "logging/diagnostic-stuck-session-recovery.runtime.test.ts",
+    );
   });
 
   it("normalizes plugin-sdk include patterns relative to the scoped dir", () => {
