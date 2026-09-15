@@ -259,6 +259,8 @@ export function boundedParsedJsonUtf8Bytes(value: unknown, maxBytes: number): Bo
           continue;
         case "bigint":
           throw new Error("json_byte_length_unsupported");
+        case "object":
+          break;
       }
       if (seen.has(entry)) {
         throw new Error("json_byte_length_circular");

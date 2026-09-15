@@ -187,8 +187,11 @@ oversized newest message can therefore produce an empty, truncated snapshot.
 `truncated` indicates omitted or incompletely classified history. Raw snapshots
 preserve `JSON.parse` semantics, including last duplicate members and deeply
 nested JSON. Parser-compatible fallback classification is itself limited to
-4,096 rows and 8 MiB of stored JSON. Each navigation pass also has a cumulative
-4,096-row and 8 MiB metadata budget, checked before transfer. If classification
+4,096 rows and 8 MiB of stored JSON. Navigation uses a separate
+8 MiB encoded-structure budget, not the 4,096-message payload count. The canonical
+owner accounts for retained nodes (including entry, identity, cursor, and index
+fields) and other retained records before accepting more data; metadata is sized
+before transfer. This is not an 8 MiB total-heap guarantee. If classification
 or navigation cannot fit its safety budget, the snapshot is empty with `truncated: true` and
 `totalMessages` omitted rather than an invented zero. Stored bytes and emitted
 JSON bytes are checked separately because parsing can expand numeric spellings.

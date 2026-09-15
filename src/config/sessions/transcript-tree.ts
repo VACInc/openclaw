@@ -177,30 +177,22 @@ export type SessionTranscriptNavigationStorage<T> = {
   invalidLeafControlIds: TranscriptNavigationSet;
 };
 
-export function scanSessionTranscriptTree<T>(entries: Iterable<T>): SessionTranscriptTree<T> {
+export function scanSessionTranscriptTree<T>(
+  entries: Iterable<T>,
+  options?: { beforeRetainNode?: (node: Readonly<SessionTranscriptTreeNode<T>>) => void },
+): SessionTranscriptTree<T> {
   const nodes: SessionTranscriptTreeNode<T>[] = [];
   const byId = new Map<string, SessionTranscriptTreeNode<T>>();
   const navigation = scanSessionTranscriptNavigation(entries, {
     byId,
-    addNode: (node) => nodes.push(node),
+    addNode: (node) => {
+      options?.beforeRetainNode?.(node);
+      nodes.push(node);
+    },
     resetDescendantIds: new Set(),
     invalidLeafControlIds: new Set(),
   });
   return { nodes, byId, ...navigation };
-}
-
-/** Detect accepted navigation, not merely a syntactically valid leaf record. */
-export function hasAcceptedSessionTranscriptLeafControl(entries: Iterable<unknown>): boolean {
-  return scanSessionTranscriptNavigation(
-    entries,
-    {
-      byId: new Map<string, SessionTranscriptTreeNode<unknown>>(),
-      addNode: () => {},
-      resetDescendantIds: new Set(),
-      invalidLeafControlIds: new Set(),
-    },
-    { stopAfterFirstLeafControl: true },
-  ).hasLeafControl;
 }
 
 /** Resolves the active branch leaf from the same transcript tree used by branch listing. */
@@ -213,7 +205,6 @@ export function resolveSessionTranscriptActiveLeafEntryId(
 export function scanSessionTranscriptNavigation<T>(
   entries: Iterable<T>,
   storage: SessionTranscriptNavigationStorage<T>,
-  options: { stopAfterFirstLeafControl?: boolean } = {},
 ): Omit<SessionTranscriptTree<T>, "nodes" | "byId"> {
   const { byId, resetDescendantIds, invalidLeafControlIds } = storage;
   let leafId: string | null = null;
@@ -324,9 +315,6 @@ export function scanSessionTranscriptNavigation<T>(
     }
     if (isSessionTranscriptLeafControl(entry)) {
       hasLeafControl = true;
-      if (options.stopAfterFirstLeafControl) {
-        break;
-      }
     }
   }
 

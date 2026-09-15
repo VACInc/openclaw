@@ -689,7 +689,7 @@ describe("readBeforeResetHookMessages", () => {
     ]);
     expect(
       contents(
-        (await readSessionTranscriptHookMessages(scope, { maxMessages: 4096, maxBytes: 1200 }))
+        (await readSessionTranscriptHookMessages(scope, { maxMessages: 4096, maxBytes: 1800 }))
           .messages,
       ),
     ).toEqual(["current turn"]);
@@ -699,7 +699,7 @@ describe("readBeforeResetHookMessages", () => {
     try {
       const fallback = await runOpenClawAgentWriteAdmission(
         toDatabaseOptions(resolveSqliteTranscriptReadScope(scope)),
-        () => readSessionTranscriptHookMessages(scope, { maxMessages: 4096, maxBytes: 1200 }),
+        () => readSessionTranscriptHookMessages(scope, { maxMessages: 4096, maxBytes: 1800 }),
       );
       expect(contents(fallback.messages)).toEqual(["current turn"]);
     } finally {
@@ -718,27 +718,27 @@ describe("readBeforeResetHookMessages", () => {
       truncated: false,
     });
   });
-  test.each([
-    { maxMessages: 2, maxBytes: BEFORE_RESET_HOOK_MAX_BYTES },
-    { maxMessages: 100, maxBytes: 100 },
-  ])("navigation detection has cumulative row and byte budgets %#", async (limits) => {
-    const scope = await writeTranscript("navigation-budget", 0);
-    await replaceTranscriptEvents(scope, [
-      { type: "session", version: 3, id: scope.sessionId },
-      { type: "message", id: "a", parentId: null, message: { role: "user", content: "a" } },
-      { type: "message", id: "b", parentId: "a", message: { role: "user", content: "b" } },
-      { type: "leaf", id: "leaf", parentId: "b", targetId: "b" },
-    ]);
-    await waitForSessionTranscriptProjection(scope);
-    const { readSessionTranscriptHookMessages } =
-      await import("../config/sessions/session-accessor.sqlite-hook-messages.js");
-    expect(await readSessionTranscriptHookMessages(scope, limits)).toEqual({
-      messages: [],
-      truncated: true,
-    });
-  });
+  test.each([{ maxMessages: 100, maxBytes: 100 }])(
+    "canonical navigation storage has a cumulative byte budget %#",
+    async (limits) => {
+      const scope = await writeTranscript("navigation-budget", 0);
+      await replaceTranscriptEvents(scope, [
+        { type: "session", version: 3, id: scope.sessionId },
+        { type: "message", id: "a", parentId: null, message: { role: "user", content: "a" } },
+        { type: "message", id: "b", parentId: "a", message: { role: "user", content: "b" } },
+        { type: "leaf", id: "leaf", parentId: "b", targetId: "b" },
+      ]);
+      await waitForSessionTranscriptProjection(scope);
+      const { readSessionTranscriptHookMessages } =
+        await import("../config/sessions/session-accessor.sqlite-hook-messages.js");
+      expect(await readSessionTranscriptHookMessages(scope, limits)).toEqual({
+        messages: [],
+        truncated: true,
+      });
+    },
+  );
 
-  test("fenced navigation reconstruction has its own cumulative budget", async () => {
+  test("fenced navigation does not confuse metadata rows with the message count limit", async () => {
     const scope = await writeTranscript("fenced-navigation-budget", 0);
     await replaceTranscriptEvents(scope, [
       { type: "session", version: 3, id: scope.sessionId },
@@ -779,6 +779,143 @@ describe("readBeforeResetHookMessages", () => {
             maxBytes: BEFORE_RESET_HOOK_MAX_BYTES,
           }),
       ),
-    ).toEqual({ messages: [], truncated: true });
+    ).toEqual({
+      messages: [
+        { role: "user", content: "a" },
+        { role: "user", content: "b" },
+      ],
+      totalMessages: 2,
+      truncated: false,
+    });
+  });
+  test.each(["early", "late", "branched", "fenced"])(
+    "retains the useful tail of a 20k %s leaf-controlled history",
+    async (placement) => {
+      const scope = await writeTranscript("large-leaf-" + placement, 0);
+      const id = (i: number) =>
+        placement === "branched" || placement === "fenced"
+          ? "00000000-0000-0000-0000-" + String(i).padStart(12, "0")
+          : "m" + i;
+      const events = Array.from({ length: 20000 }, (_, i) => ({
+        type: "message",
+        id: id(i),
+        parentId: i === 0 ? null : id(i - 1),
+        message: { role: i % 2 ? "assistant" : "user", content: "turn " + i },
+      }));
+      const leaf = {
+        type: "leaf",
+        id: "noop",
+        parentId: placement === "late" ? id(19999) : id(0),
+        targetId: placement === "late" ? id(19999) : id(0),
+      };
+      const rows: unknown[] = [{ type: "session", version: 3, id: scope.sessionId }, ...events];
+      if (placement === "branched") {
+        rows.splice(2, 0, {
+          type: "message",
+          id: "discarded",
+          parentId: id(0),
+          message: { role: "assistant", content: "inactive branch" },
+        });
+        rows.splice(3, 0, { ...leaf, parentId: "discarded" });
+      } else {
+        rows.splice(placement === "late" ? rows.length : 2, 0, leaf);
+      }
+      if (placement === "fenced") {
+        rows.push({
+          type: "message",
+          id: "admitted",
+          parentId: id(19999),
+          message: { role: "user", content: "current command" },
+        });
+      }
+      await replaceTranscriptEvents(scope, rows);
+      await waitForSessionTranscriptProjection(scope);
+      let result;
+      if (placement === "fenced") {
+        const database = openOpenClawAgentDatabase(
+          toDatabaseOptions(resolveSqliteTranscriptReadScope(scope)),
+        );
+        const { readActiveTranscriptEntryAnchor } =
+          await import("../config/sessions/session-accessor.sqlite-transcript-anchor.js");
+        const { runWithSessionTranscriptReadFence } =
+          await import("../config/sessions/session-transcript-read-fence.js");
+        const anchor = readActiveTranscriptEntryAnchor({
+          ...scope,
+          storePath: database.path,
+          entryId: "admitted",
+        });
+        if (!anchor) {
+          throw new Error("Missing large fenced anchor");
+        }
+        result = await runWithSessionTranscriptReadFence(
+          { ...anchor, logicalTurnId: "large-leaf", role: "user" },
+          () => readBeforeResetHookMessages(scope, "raw"),
+        );
+      } else {
+        result = await readBeforeResetHookMessages(scope, "raw");
+      }
+      console.log(
+        "LARGE_LEAF",
+        placement,
+        JSON.stringify({
+          count: result.messages.length,
+          totalMessages: result.totalMessages,
+          truncated: result.truncated,
+        }),
+      );
+      expect(result.messages).toHaveLength(4096);
+      expect(result.totalMessages).toBe(20000);
+      expect(result.truncated).toBe(true);
+      expect(asOptionalRecord(result.messages[0])?.content).toBe("turn 15904");
+      expect(asOptionalRecord(result.messages.at(-1))?.content).toBe("turn 19999");
+    },
+  );
+  test("charges only retained navigation for an already bounded deep fallback body", async () => {
+    const rows = Array.from({ length: 12 }, (_, i) =>
+      JSON.stringify({
+        type: "message",
+        id: "m" + i,
+        parentId: i ? "m" + (i - 1) : null,
+        message: { role: "user", content: "turn " + i },
+      }),
+    );
+    rows[11] =
+      '{"type":"message","id":"m11","parentId":"m10","message":{"role":"user","content":' +
+      "[".repeat(1001) +
+      "0" +
+      "]".repeat(1001) +
+      "}}";
+    rows.splice(1, 0, '{"type":"leaf","id":"leaf","parentId":"m0","targetId":"m0"}');
+    const scope = await writeExact("retained-deep-budget", rows);
+    const { readSessionTranscriptHookMessages } =
+      await import("../config/sessions/session-accessor.sqlite-hook-messages.js");
+    const result = await readSessionTranscriptHookMessages(scope, {
+      maxMessages: 4096,
+      maxBytes: 3500,
+    });
+    expect(result.totalMessages).toBe(12);
+    expect(result.messages.length).toBeGreaterThan(0);
+    expect(Array.isArray(asOptionalRecord(result.messages.at(-1))?.content)).toBe(true);
+  });
+  test("an early rejected leaf does not force navigation of a 50k flat suffix", async () => {
+    const scope = await writeTranscript("large-rejected-leaf", 0);
+    const rows: unknown[] = [
+      { type: "session", version: 3, id: scope.sessionId },
+      ...Array.from({ length: 50000 }, (_, i) => ({
+        type: "message",
+        id: "m" + i,
+        parentId: i ? "m" + (i - 1) : null,
+        message: { role: "user", content: "turn " + i },
+      })),
+    ];
+    rows.splice(2, 0, { type: "leaf", id: "dangling", parentId: "m0", targetId: "absent" });
+    await replaceTranscriptEvents(scope, rows);
+    await waitForSessionTranscriptProjection(scope);
+    const result = await readBeforeResetHookMessages(scope, "raw");
+    expect(result.messages).toHaveLength(4096);
+    expect(result.totalMessages).toBe(50000);
+    expect(result.truncated).toBe(true);
+    expect(asOptionalRecord(result.messages[0])?.content).toBe("turn 45904");
+    expect(asOptionalRecord(result.messages.at(-1))?.content).toBe("turn 49999");
   });
 });

@@ -1,6 +1,7 @@
 // Raw command-hook snapshots are not reset-relative display history.
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { sql, type Expression, type RawBuilder } from "kysely";
+import { boundedParsedJsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
@@ -25,8 +26,8 @@ import {
 } from "./session-model-context-projection.js";
 import { resolveSqliteSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
 import {
-  hasAcceptedSessionTranscriptLeafControl,
-  selectSessionTranscriptLeafControlledPath,
+  scanSessionTranscriptTree,
+  selectSessionTranscriptActiveEntries,
 } from "./transcript-tree.js";
 
 function rawTypeSql(event: Expression<string>): RawBuilder<string | null> {
@@ -123,11 +124,22 @@ export async function readSessionTranscriptHookMessages(
           .limit(1),
       );
       let metadataComplete = true;
-      function* navigationRows(lastSeq?: number) {
-        const projected = projectTranscriptNavigationSql(sql.ref<string>("event_json"), {
+      let navigationBytes = 2;
+      const navigationBudgetExceeded = new Error("Raw hook navigation budget exhausted");
+      const retainNavigation = (value: unknown) => {
+        const measured = boundedParsedJsonUtf8Bytes(value, maxBytes - navigationBytes - 1);
+        if (!measured.complete) {
+          throw navigationBudgetExceeded;
+        }
+        navigationBytes += measured.bytes + 1;
+      };
+      function* navigationRows(): Generator<Record<string, unknown> & { seq: number }> {
+        const facts = projectTranscriptNavigationSql(sql.ref<string>("event_json"), {
           includeResetBoundary: true,
         });
-        /* kysely-allow-raw: size only metadata before transferring it; incompatible rows already belong to the bounded fallback. */
+        /* kysely-allow-raw: sequence is owned metadata and included in its pre-transfer size. */
+        const projected = sql<string>`json_set(${facts}, '$.seq', seq)`;
+        /* kysely-allow-raw: size metadata before transfer; incompatible rows are already byte-bounded. */
         const size = sql<number>`CASE WHEN json_valid(event_json)
           THEN octet_length(${projected}) ELSE octet_length(event_json) END`;
         const readNavigation = prepareSqliteQuerySync<number, { navigation: string }>(
@@ -139,24 +151,23 @@ export async function readSessionTranscriptHookMessages(
               parameter((seq) => seq),
             ),
         );
-        let count = 0;
-        let bytes = 2;
         for (const row of iterateSqliteQuerySync(
           database.db,
-          rows
-            .select(["seq", size.as("bytes")])
-            .$if(lastSeq !== undefined, (query) => query.where("seq", "<=", lastSeq!))
-            .orderBy("seq", "asc")
-            .limit(maxMessages + 1),
+          rows.select(["seq", size.as("bytes")]).orderBy("seq", "asc"),
         )) {
-          // Bound both the leaf detector and the canonical fallback graph, not just each row.
-          if (count >= maxMessages || bytes + row.bytes + 1 > maxBytes) {
+          const fallback = compatible.get(row.seq);
+          const candidateBytes = fallback
+            ? boundedParsedJsonUtf8Bytes(
+                { ...fallback.navigation, seq: row.seq },
+                maxBytes - navigationBytes - 1,
+              )
+            : { bytes: row.bytes, complete: true };
+          // Fallback bodies were already bounded before hydration; only their
+          // retained navigation participates in this separate structural budget.
+          if (!candidateBytes.complete || navigationBytes + candidateBytes.bytes + 1 > maxBytes) {
             metadataComplete = false;
             return;
           }
-          count += 1;
-          bytes += row.bytes + 1;
-          const fallback = compatible.get(row.seq);
           const navigation =
             fallback?.navigation ??
             projectTranscriptNavigation(JSON.parse(readNavigation(row.seq).rows[0]!.navigation), {
@@ -165,23 +176,57 @@ export async function readSessionTranscriptHookMessages(
           yield { ...navigation, seq: row.seq };
         }
       }
-      const hasLeafControl =
-        lastLeaf !== undefined &&
-        hasAcceptedSessionTranscriptLeafControl(navigationRows(lastLeaf.seq));
-      if (!metadataComplete) {
-        return incomplete();
-      }
       let authoritativeSeqs: number[] | undefined;
-      if (hasLeafControl) {
-        // The display index cannot establish raw reset-prefix membership or a
-        // fenced historical branch. Use the same bounded canonical owner in every state.
-        const navigation = [...navigationRows()];
-        if (!metadataComplete) {
-          return incomplete();
+      if (lastLeaf !== undefined) {
+        // The message-count ceiling bounds delivered bodies, not history needed
+        // to establish a branch. Budget the canonical retained structure instead:
+        // nodes include their entry and identity/cursor/index bookkeeping; records
+        // not retained as nodes are charged with their array index. No row-count
+        // bump, current-index shortcut, or second tree construction is required.
+        const entries: Array<Record<string, unknown> & { seq: number }> = [];
+        let retainedAsNode = false;
+        let hasAcceptedLeaf = false;
+        const finalLeafSeq = lastLeaf.seq;
+        function* captureNavigation() {
+          for (const entry of navigationRows()) {
+            retainedAsNode = false;
+            entries.push(entry);
+            yield entry;
+            // Later non-leaf rows cannot retroactively accept a rejected control.
+            if (entry.seq >= finalLeafSeq && !hasAcceptedLeaf) {
+              return;
+            }
+            if (!retainedAsNode) {
+              retainNavigation({ entry, index: entries.length - 1 });
+            }
+          }
         }
-        authoritativeSeqs = (
-          selectSessionTranscriptLeafControlledPath(navigation) ?? navigation
-        ).map((entry) => entry.seq);
+        try {
+          const tree = scanSessionTranscriptTree(captureNavigation(), {
+            beforeRetainNode: (node) => {
+              retainNavigation(node);
+              retainedAsNode = true;
+              if (node.entry.type === "leaf" && node.leafId !== undefined) {
+                hasAcceptedLeaf = true;
+              }
+            },
+          });
+          if (!metadataComplete) {
+            return incomplete();
+          }
+          if (tree.hasLeafControl) {
+            authoritativeSeqs = selectSessionTranscriptActiveEntries({
+              entries,
+              recordOf: (entry) => entry,
+              tree,
+            }).map((entry) => entry.seq);
+          }
+        } catch (error) {
+          if (error === navigationBudgetExceeded) {
+            return incomplete();
+          }
+          throw error;
+        }
       }
       const source = db
         .selectFrom("transcript_events as event")

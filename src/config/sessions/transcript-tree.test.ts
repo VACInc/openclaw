@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  hasAcceptedSessionTranscriptLeafControl,
   isSessionTranscriptLeafControl,
   mergeSessionTranscriptVisiblePathWithOpaqueAppendPath,
   parseSessionTranscriptTreeEntry,
@@ -422,9 +421,6 @@ describe("session transcript tree helpers", () => {
     expect(tree.leafId).toBe("child");
     expect(tree.appendParentId).toBe("child");
     expect(tree.hasLeafControl).toBe(false);
-    expect(
-      hasAcceptedSessionTranscriptLeafControl([root, missingTarget, child, missingAppendParent]),
-    ).toBe(false);
     expect(tree.byId.get("missing-target")?.parentId).toBe("root");
     expect(tree.byId.get("child")?.parentId).toBe("root");
     expect(selectSessionTranscriptTreePathNodes(tree, tree.leafId).map((node) => node.id)).toEqual([
@@ -433,19 +429,28 @@ describe("session transcript tree helpers", () => {
     ]);
     expect(selectSessionTranscriptLeafControlledPath([root, missingTarget])).toBeUndefined();
   });
-  it("stops and closes navigation input at the first accepted control", () => {
+  it("closes navigation input when the owner rejects a node before retention", () => {
     let closed = false;
+    let visited = 0;
     function* entries() {
       try {
         yield { type: "custom", id: "root", parentId: null };
-        yield { type: "leaf", id: "dangling", parentId: "root", targetId: "missing" };
-        yield { type: "leaf", id: "valid", parentId: "root", targetId: "root" };
-        throw new Error("Read past the first accepted navigation control");
+        yield { type: "custom", id: "child", parentId: "root" };
+        throw new Error("Read past the retained structure budget");
       } finally {
         closed = true;
       }
     }
-    expect(hasAcceptedSessionTranscriptLeafControl(entries())).toBe(true);
+    expect(() =>
+      scanSessionTranscriptTree(entries(), {
+        beforeRetainNode: () => {
+          if (++visited > 1) {
+            throw new Error("navigation budget");
+          }
+        },
+      }),
+    ).toThrow("navigation budget");
+    expect(visited).toBe(2);
     expect(closed).toBe(true);
   });
 });
