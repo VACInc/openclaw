@@ -12,6 +12,7 @@ import { resetTaskRegistryForTests } from "../../../tasks/task-registry.test-sup
 import { captureEnv, setTestEnvValue } from "../../../test-utils/env.js";
 import { cleanupSessionStateForTest } from "../../../test-utils/session-state-cleanup.js";
 import { testing as schedulerTesting } from "../swarm/swarm-scheduler.test-support.js";
+import type { SubagentRegistryDeps } from "./subagent-registry-deps.js";
 import { persistSubagentRunsToDiskOrThrow } from "./subagent-registry-state.js";
 import { settleSubagentRegistryPersistenceWork } from "./subagent-registry.persistence.test-support.js";
 import { resetSubagentRegistryForTests, testing } from "./subagent-registry.test-helpers.js";
@@ -20,11 +21,13 @@ export function useSubagentControlFixture() {
   const env = captureEnv(["OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH"]);
   let stateDir = "";
   const persist = vi.fn(persistSubagentRunsToDiskOrThrow);
-  const gateway = vi.fn(async (request: { method: string }) => {
+  const gateway = vi.fn<SubagentRegistryDeps["callGateway"]>();
+  gateway.mockImplementation(async (request) => {
     if (request.method !== "agent.wait") {
       throw new Error(`Unexpected registry RPC ${request.method}`);
     }
-    return await new Promise<never>(() => {});
+    // A nonterminal reply leaves lifecycle events in control without leaking a root.
+    return { status: "pending" };
   });
   beforeEach(async () => {
     stateDir = await realpath(

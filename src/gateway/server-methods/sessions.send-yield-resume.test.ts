@@ -1,5 +1,6 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import { setSubagentAnnounceDeliveryDepsForTest } from "../../agents/subagents/announce/subagent-announce-delivery.runtime.js";
 import { dispatchGatewayMethodInProcess } from "../../agents/subagents/announce/subagent-announce.runtime.js";
 import { useSubagentControlFixture } from "../../agents/subagents/registry/subagent-control.test-support.js";
@@ -18,6 +19,7 @@ import {
 import { testing as registryTesting } from "../../agents/subagents/registry/subagent-registry.test-helpers.js";
 import { getRuntimeConfig } from "../../config/config.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
+import { runWithGatewayIndependentRootWorkAdmission } from "../../process/gateway-work-admission.js";
 import { findTaskByRunId, getTaskById } from "../../tasks/runtime-internal.js";
 import { sessionMessagingHandlers } from "./sessions-messaging.js";
 import { sessionSharingTestContext, soloClient } from "./sessions-sharing.test-support.js";
@@ -30,6 +32,21 @@ const fixture = useSubagentControlFixture();
 afterEach(() => {
   setSubagentAnnounceDeliveryDepsForTest();
   vi.useRealTimers();
+});
+
+it("settles nonterminal fixture wait probes without retaining gateway roots", async () => {
+  const cleanup = createDeferred<{ status: "pending" }>();
+  const probe = runWithGatewayIndependentRootWorkAdmission(
+    () => Promise.race([fixture.gateway({ method: "agent.wait" }), cleanup.promise]),
+    "test:registry-wait-probe",
+  );
+  try {
+    await settleSubagentRegistryPersistenceWork();
+    await expect(probe).resolves.toEqual({ status: "pending" });
+  } finally {
+    cleanup.resolve({ status: "pending" });
+    await probe;
+  }
 });
 
 it("resumes a yielded child through sessions.send and wakes its original parent after the same batch settles", async () => {
