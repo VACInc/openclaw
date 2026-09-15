@@ -4,13 +4,20 @@ import { sql } from "kysely";
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
+  getNodeSqliteKysely,
   iterateSqliteQuerySync,
   prepareSqliteQuerySync,
 } from "../../infra/kysely-sync.js";
 import { runSqliteDeferredTransactionSync } from "../../infra/sqlite-transaction.js";
-import { getSessionKysely } from "./session-accessor.sqlite-scope.js";
+import type { DB as AgentDatabase } from "../../state/openclaw-agent-db.generated.js";
 import { isUserAssistantReplayRole, isValidReplayTimestamp } from "./transcript-replay.js";
 import { isCanonicalSessionTranscriptEntry } from "./transcript-tree.js";
+
+function getNavigationKysely(db: DatabaseSync) {
+  return getNodeSqliteKysely<
+    Pick<AgentDatabase, "transcript_events" | "transcript_rewrite_watermarks" | "session_windows">
+  >(db);
+}
 
 const NAVIGATION_KEYS = [
   "type",
@@ -110,7 +117,7 @@ function hasMissingTranscriptNavigation(db: DatabaseSync, sessionId: string): bo
   return (
     executeSqliteQueryTakeFirstSync(
       db,
-      getSessionKysely(db)
+      getNavigationKysely(db)
         .selectFrom("transcript_events")
         .select("seq")
         .where("session_id", "=", sessionId)
@@ -127,7 +134,7 @@ export function hasCurrentTranscriptNavigationGeneration(
   return (
     executeSqliteQueryTakeFirstSync(
       db,
-      getSessionKysely(db)
+      getNavigationKysely(db)
         .selectFrom("transcript_rewrite_watermarks")
         .select("session_id")
         .where("session_id", "=", sessionId)
@@ -171,7 +178,7 @@ export function readTranscriptNavigationInTransaction(
   }
   const rows = iterateSqliteQuerySync(
     db,
-    getSessionKysely(db)
+    getNavigationKysely(db)
       .selectFrom("transcript_events")
       .select("navigation_json")
       .where("session_id", "=", sessionId)
@@ -190,7 +197,7 @@ export function certifyTranscriptNavigationInTransaction(
   }
   executeSqliteQuerySync(
     db,
-    getSessionKysely(db)
+    getNavigationKysely(db)
       .updateTable("transcript_rewrite_watermarks")
       .set((eb) => ({ navigation_generation: eb.ref("generation") }))
       .where("session_id", "=", sessionId),
@@ -210,7 +217,7 @@ export function readTranscriptNavigationSnapshot(
 ): TranscriptNavigationSnapshot | undefined {
   const row = executeSqliteQueryTakeFirstSync(
     db,
-    getSessionKysely(db)
+    getNavigationKysely(db)
       .selectFrom("session_windows as window")
       .leftJoin(
         "transcript_rewrite_watermarks as rewrite",
@@ -268,7 +275,7 @@ export function applyTranscriptNavigationChunkInTransaction(
     return false;
   }
   const update = prepareSqliteQuerySync<PreparedTranscriptNavigationRow>(db, (parameter) =>
-    getSessionKysely(db)
+    getNavigationKysely(db)
       .updateTable("transcript_events")
       .set({ navigation_json: parameter((row) => row.navigationJson) })
       .where("session_id", "=", snapshot.sessionId)
@@ -328,7 +335,7 @@ export async function repairTranscriptNavigation(
         if (!transcriptNavigationSnapshotMatches(db, snapshot)) {
           return undefined;
         }
-        const kysely = getSessionKysely(db);
+        const kysely = getNavigationKysely(db);
         const candidates = executeSqliteQuerySync(
           db,
           kysely

@@ -49,6 +49,12 @@ export function historicalV15AgentSchemaSql(): string {
     .replace("  project_id TEXT,\n", "")
     .replace("  route_context_json TEXT,\n", "")
     .replace("  context_eligible INTEGER,\n", "")
+    .replace("  navigation_json TEXT,\n", "")
+    .replace("  navigation_generation TEXT,\n", "")
+    .replace(
+      "CREATE INDEX IF NOT EXISTS idx_agent_transcript_navigation_pending\n  ON transcript_events(session_id, seq) WHERE navigation_json IS NULL;\n\n",
+      "",
+    )
     .replace(
       "CREATE INDEX IF NOT EXISTS idx_agent_session_nodes_active\n  ON session_nodes(session_key)\n  WHERE archived_at IS NULL;\n\n",
       "",

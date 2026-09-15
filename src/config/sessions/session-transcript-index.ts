@@ -564,7 +564,10 @@ export function reconcileSessionTranscriptIndexInTransaction(
   return true;
 }
 
-function selectSessionsNeedingTranscriptIndexReconcile(db: DatabaseSync) {
+function selectSessionsNeedingTranscriptIndexReconcile(
+  db: DatabaseSync,
+  includeNavigation: boolean,
+) {
   const kysely = getIndexKysely(db);
   return (
     kysely
@@ -590,24 +593,30 @@ function selectSessionsNeedingTranscriptIndexReconcile(db: DatabaseSync) {
         "st.session_id",
         "session_windows.session_id",
       )
-      .leftJoin(
-        "transcript_rewrite_watermarks as rewrite",
-        "rewrite.session_id",
-        "session_windows.session_id",
-      )
       .select("session_windows.session_id")
       .where((eb) =>
         eb.or([
           eb(eb.fn.coalesce("st.needs_rebuild", eb.val(1)), "!=", 0),
-          eb("rewrite.navigation_generation", "is", null),
-          eb("rewrite.navigation_generation", "!=", eb.ref("rewrite.generation")),
-          eb.exists(
-            eb
-              .selectFrom("transcript_events as missing")
-              .select("missing.seq")
-              .whereRef("missing.session_id", "=", "session_windows.session_id")
-              .where("missing.navigation_json", "is", null),
-          ),
+          ...(includeNavigation
+            ? [
+                eb.not(
+                  eb.exists(
+                    eb
+                      .selectFrom("transcript_rewrite_watermarks as rewrite")
+                      .select("rewrite.session_id")
+                      .whereRef("rewrite.session_id", "=", "session_windows.session_id")
+                      .whereRef("rewrite.navigation_generation", "=", "rewrite.generation"),
+                  ),
+                ),
+                eb.exists(
+                  eb
+                    .selectFrom("transcript_events as missing")
+                    .select("missing.seq")
+                    .whereRef("missing.session_id", "=", "session_windows.session_id")
+                    .where("missing.navigation_json", "is", null),
+                ),
+              ]
+            : []),
           eb("latest.seq", ">", eb.fn.coalesce("st.indexed_seq", eb.val(-1))),
           eb.exists(
             eb
@@ -624,12 +633,12 @@ function selectSessionsNeedingTranscriptIndexReconcile(db: DatabaseSync) {
   );
 }
 
-/** Search needs only one pending session; the reconcile owner selects its complete work list. */
+/** Search needs only its active/FTS projection, even before writable navigation migration. */
 export function hasSessionsNeedingTranscriptIndexReconcile(db: DatabaseSync): boolean {
   return (
     executeSqliteQueryTakeFirstSync(
       db,
-      selectSessionsNeedingTranscriptIndexReconcile(db).limit(1),
+      selectSessionsNeedingTranscriptIndexReconcile(db, false).limit(1),
     ) !== undefined
   );
 }
@@ -637,10 +646,14 @@ export function hasSessionsNeedingTranscriptIndexReconcile(db: DatabaseSync): bo
 /**
  * Sessions whose index needs reconcile work: flagged rebuilds, transcripts
  * that gained rows without index state (doctor imports), and watermarks
- * behind the newest row. Ordered for deterministic reconcile passes.
+ * behind the newest row, plus navigation gaps after writable schema preparation.
+ * Ordered for deterministic reconcile passes.
  */
 export function listSessionsNeedingTranscriptIndexReconcile(db: DatabaseSync): string[] {
-  const rows = executeSqliteQuerySync(db, selectSessionsNeedingTranscriptIndexReconcile(db)).rows;
+  const rows = executeSqliteQuerySync(
+    db,
+    selectSessionsNeedingTranscriptIndexReconcile(db, true),
+  ).rows;
   return rows.flatMap((row) => (typeof row.session_id === "string" ? [row.session_id] : []));
 }
 

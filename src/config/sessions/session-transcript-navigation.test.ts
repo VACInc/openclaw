@@ -1,6 +1,7 @@
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { trackSqliteStatementExecutions } from "../../../test/helpers/sqlite-statement-execution-counter.js";
 import { captureSessionMemoryTranscript } from "../../hooks/bundled/session-memory/capture.js";
 import { executeSqliteQuerySync } from "../../infra/kysely-sync.js";
 import {
@@ -669,5 +670,37 @@ it.each([" ", "meaningful"])(
     const ids = (entries: unknown[]) =>
       selectRecentUserAssistantReplayRecords(entries).map((entry) => (entry as { id: string }).id);
     expect(ids([root, projected])).toEqual(ids([root, event]));
+  },
+);
+
+it.each([false, true])(
+  "certifies empty navigation without a separate transcript probe (legacy: %s)",
+  async (legacy) => {
+    await withTranscript(async ({ scope, database, options }) => {
+      if (legacy) {
+        database.db
+          .prepare(
+            "INSERT INTO transcript_rewrite_watermarks(session_id,generation,navigation_generation,updated_at) VALUES(?,?,NULL,?) ON CONFLICT(session_id) DO UPDATE SET navigation_generation=NULL",
+          )
+          .run(scope.sessionId, "legacy-empty", 1);
+      }
+      const previous = readTranscriptGenerationInTransaction(database, scope.sessionId);
+      const tracker = trackSqliteStatementExecutions(database.db, ["navigation"], (statement) =>
+        /transcript_events|transcript_rewrite_watermarks/.test(statement) ? "navigation" : null,
+      );
+      try {
+        runOpenClawAgentWriteTransaction(
+          () => ensureTranscriptGenerationInTransaction(database, scope.sessionId),
+          options,
+        );
+        expect(tracker.counts.navigation).toBe(1);
+      } finally {
+        tracker.restore();
+      }
+      expect(hasCertifiedTranscriptNavigation(database.db, scope.sessionId)).toBe(true);
+      if (previous) {
+        expect(readTranscriptGenerationInTransaction(database, scope.sessionId)).toBe(previous);
+      }
+    });
   },
 );
