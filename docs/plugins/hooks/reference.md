@@ -187,8 +187,9 @@ oversized newest message can therefore produce an empty, truncated snapshot.
 `truncated` indicates omitted or incompletely classified history. Raw snapshots
 preserve `JSON.parse` semantics, including last duplicate members and deeply
 nested JSON. Parser-compatible fallback classification is itself limited to
-4,096 rows and 8 MiB of stored JSON. If classification or navigation cannot fit
-its safety budget, the snapshot is empty with `truncated: true` and
+4,096 rows and 8 MiB of stored JSON. Each navigation pass also has a cumulative
+4,096-row and 8 MiB metadata budget, checked before transfer. If classification
+or navigation cannot fit its safety budget, the snapshot is empty with `truncated: true` and
 `totalMessages` omitted rather than an invented zero. Stored bytes and emitted
 JSON bytes are checked separately because parsing can expand numeric spellings.
 Missing identity or a failed read still produces an empty snapshot, so
@@ -196,7 +197,9 @@ Missing identity or a failed read still produces an empty snapshot, so
 
 Each entry point preserves its existing selection: chat reset commands observe
 raw message records (including earlier reset intervals), with leaf navigation
-selecting the active branch. Gateway resets observe reset-relative display
+selecting the active branch in canonical path order, including retained reset
+prefixes. Index readiness does not change raw membership or ordering. Gateway
+resets observe reset-relative display
 history, including visible reset, compaction, and custom records.
 
 Plugins must handle truncation rather than assume that a reset provides every

@@ -604,4 +604,181 @@ describe("readBeforeResetHookMessages", () => {
       truncated: false,
     });
   });
+  test("fenced raw snapshots ignore later duplicate IDs in the ready projection", async () => {
+    const scope = await writeTranscript("fenced-leaf-membership", 0);
+    await replaceTranscriptEvents(scope, [
+      { type: "session", version: 3, id: scope.sessionId },
+      {
+        type: "message",
+        id: "m1",
+        parentId: null,
+        message: { role: "user", content: "before root" },
+      },
+      {
+        type: "message",
+        id: "m2",
+        parentId: "m1",
+        message: { role: "assistant", content: "before branch" },
+      },
+      { type: "leaf", id: "initial", parentId: "m2", targetId: "m2" },
+      {
+        type: "message",
+        id: "admitted",
+        parentId: "m2",
+        message: { role: "user", content: "current turn" },
+      },
+    ]);
+    await waitForSessionTranscriptProjection(scope);
+    const database = openOpenClawAgentDatabase(
+      toDatabaseOptions(resolveSqliteTranscriptReadScope(scope)),
+    );
+    const { readActiveTranscriptEntryAnchor } =
+      await import("../config/sessions/session-accessor.sqlite-transcript-anchor.js");
+    const { runWithSessionTranscriptReadFence } =
+      await import("../config/sessions/session-transcript-read-fence.js");
+    const { reconcileSessionTranscriptIndexes } =
+      await import("../config/sessions/session-transcript-reconcile.js");
+    const anchor = readActiveTranscriptEntryAnchor({
+      ...scope,
+      storePath: database.path,
+      entryId: "admitted",
+    });
+    if (!anchor) {
+      throw new Error("Missing current admission anchor");
+    }
+    // Exact retained rows can contain duplicate IDs without append normalization.
+    const append = database.db.prepare(
+      "INSERT INTO transcript_events (session_id, seq, event_json, created_at) VALUES (?, ?, ?, ?)",
+    );
+    append.run(
+      scope.sessionId,
+      anchor.rawSeq + 1,
+      JSON.stringify({
+        type: "message",
+        id: "m2",
+        parentId: "m1",
+        appendMode: "side",
+        message: { role: "assistant", content: "future replacement" + "x".repeat(2000) },
+      }),
+      10,
+    );
+    append.run(
+      scope.sessionId,
+      anchor.rawSeq + 2,
+      JSON.stringify({ type: "leaf", id: "future", parentId: "m2", targetId: "admitted" }),
+      11,
+    );
+    await reconcileSessionTranscriptIndexes({
+      ...toDatabaseOptions(resolveSqliteTranscriptReadScope(scope)),
+      preferredSessionId: scope.sessionId,
+    });
+    expect(
+      readActiveTranscriptEntryAnchor({ ...scope, storePath: database.path, entryId: "admitted" }),
+    ).toEqual(anchor);
+    const { readSessionTranscriptHookMessages } =
+      await import("../config/sessions/session-accessor.sqlite-hook-messages.js");
+    const contents = (messages: unknown[]) =>
+      messages.map((message) => {
+        const content = asOptionalRecord(message)?.content;
+        return typeof content === "string" ? content.slice(0, 18) : content;
+      });
+    expect(contents((await readBeforeResetHookMessages(scope, "raw")).messages)).toEqual([
+      "before root",
+      "future replacement",
+      "current turn",
+    ]);
+    expect(
+      contents(
+        (await readSessionTranscriptHookMessages(scope, { maxMessages: 4096, maxBytes: 1200 }))
+          .messages,
+      ),
+    ).toEqual(["current turn"]);
+    database.db
+      .prepare("UPDATE session_transcript_index_state SET needs_rebuild = 1 WHERE session_id = ?")
+      .run(scope.sessionId);
+    try {
+      const fallback = await runOpenClawAgentWriteAdmission(
+        toDatabaseOptions(resolveSqliteTranscriptReadScope(scope)),
+        () => readSessionTranscriptHookMessages(scope, { maxMessages: 4096, maxBytes: 1200 }),
+      );
+      expect(contents(fallback.messages)).toEqual(["current turn"]);
+    } finally {
+      await waitForSessionTranscriptProjection(scope);
+    }
+    const payload = await runWithSessionTranscriptReadFence(
+      { ...anchor, logicalTurnId: "fenced-leaf-membership", role: "user" },
+      () => readBeforeResetHookMessages(scope, "raw"),
+    );
+    expect(payload).toEqual({
+      messages: [
+        { role: "user", content: "before root" },
+        { role: "assistant", content: "before branch" },
+      ],
+      totalMessages: 2,
+      truncated: false,
+    });
+  });
+  test.each([
+    { maxMessages: 2, maxBytes: BEFORE_RESET_HOOK_MAX_BYTES },
+    { maxMessages: 100, maxBytes: 100 },
+  ])("navigation detection has cumulative row and byte budgets %#", async (limits) => {
+    const scope = await writeTranscript("navigation-budget", 0);
+    await replaceTranscriptEvents(scope, [
+      { type: "session", version: 3, id: scope.sessionId },
+      { type: "message", id: "a", parentId: null, message: { role: "user", content: "a" } },
+      { type: "message", id: "b", parentId: "a", message: { role: "user", content: "b" } },
+      { type: "leaf", id: "leaf", parentId: "b", targetId: "b" },
+    ]);
+    await waitForSessionTranscriptProjection(scope);
+    const { readSessionTranscriptHookMessages } =
+      await import("../config/sessions/session-accessor.sqlite-hook-messages.js");
+    expect(await readSessionTranscriptHookMessages(scope, limits)).toEqual({
+      messages: [],
+      truncated: true,
+    });
+  });
+
+  test("fenced navigation reconstruction has its own cumulative budget", async () => {
+    const scope = await writeTranscript("fenced-navigation-budget", 0);
+    await replaceTranscriptEvents(scope, [
+      { type: "session", version: 3, id: scope.sessionId },
+      { type: "message", id: "a", parentId: null, message: { role: "user", content: "a" } },
+      { type: "leaf", id: "leaf", parentId: "a", targetId: "a" },
+      { type: "message", id: "b", parentId: "a", message: { role: "user", content: "b" } },
+      {
+        type: "message",
+        id: "admitted",
+        parentId: "b",
+        message: { role: "user", content: "current" },
+      },
+    ]);
+    await waitForSessionTranscriptProjection(scope);
+    const database = openOpenClawAgentDatabase(
+      toDatabaseOptions(resolveSqliteTranscriptReadScope(scope)),
+    );
+    const { readActiveTranscriptEntryAnchor } =
+      await import("../config/sessions/session-accessor.sqlite-transcript-anchor.js");
+    const { runWithSessionTranscriptReadFence } =
+      await import("../config/sessions/session-transcript-read-fence.js");
+    const { readSessionTranscriptHookMessages } =
+      await import("../config/sessions/session-accessor.sqlite-hook-messages.js");
+    const anchor = readActiveTranscriptEntryAnchor({
+      ...scope,
+      storePath: database.path,
+      entryId: "admitted",
+    });
+    if (!anchor) {
+      throw new Error("Missing navigation budget anchor");
+    }
+    expect(
+      await runWithSessionTranscriptReadFence(
+        { ...anchor, logicalTurnId: "navigation-budget", role: "user" },
+        () =>
+          readSessionTranscriptHookMessages(scope, {
+            maxMessages: 3,
+            maxBytes: BEFORE_RESET_HOOK_MAX_BYTES,
+          }),
+      ),
+    ).toEqual({ messages: [], truncated: true });
+  });
 });

@@ -5,10 +5,10 @@ import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
   iterateSqliteQuerySync,
+  prepareSqliteQuerySync,
   sqliteStringSet,
 } from "../../infra/kysely-sync.js";
 import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
-import { withCurrentProjectionSnapshot } from "./session-accessor.sqlite-active-projection.js";
 import type { SessionTranscriptReadScope } from "./session-accessor.sqlite-contract.js";
 import {
   getSessionKysely,
@@ -23,7 +23,6 @@ import {
   projectTranscriptNavigation,
   projectTranscriptNavigationSql,
 } from "./session-model-context-projection.js";
-import { isSessionTranscriptProjectionUnavailableError } from "./session-transcript-projection-error.js";
 import { resolveSqliteSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
 import {
   hasAcceptedSessionTranscriptLeafControl,
@@ -128,31 +127,42 @@ export async function readSessionTranscriptHookMessages(
         const projected = projectTranscriptNavigationSql(sql.ref<string>("event_json"), {
           includeResetBoundary: true,
         });
-        // Preserve duplicate navigation fields until JSON.parse resolves them.
-        /* kysely-allow-raw: metadata is projected and byte-gated before transfer; incompatible JSON was decoded in the bounded owner fallback. */
-        const navigation = sql<string | null>`CASE WHEN json_valid(event_json) THEN
-          CASE WHEN octet_length(${projected}) <= ${maxBytes} THEN ${projected} ELSE NULL END
-          ELSE NULL END`;
+        /* kysely-allow-raw: size only metadata before transferring it; incompatible rows already belong to the bounded fallback. */
+        const size = sql<number>`CASE WHEN json_valid(event_json)
+          THEN octet_length(${projected}) ELSE octet_length(event_json) END`;
+        const readNavigation = prepareSqliteQuerySync<number, { navigation: string }>(
+          database.db,
+          (parameter) =>
+            rows.select(projected.as("navigation")).where(
+              "seq",
+              "=",
+              parameter((seq) => seq),
+            ),
+        );
+        let count = 0;
+        let bytes = 2;
         for (const row of iterateSqliteQuerySync(
           database.db,
           rows
-            .select(["seq", navigation.as("navigation")])
+            .select(["seq", size.as("bytes")])
             .$if(lastSeq !== undefined, (query) => query.where("seq", "<=", lastSeq!))
-            .orderBy("seq", "asc"),
+            .orderBy("seq", "asc")
+            .limit(maxMessages + 1),
         )) {
-          const fallback = compatible.get(row.seq);
-          if (!fallback && row.navigation === null) {
+          // Bound both the leaf detector and the canonical fallback graph, not just each row.
+          if (count >= maxMessages || bytes + row.bytes + 1 > maxBytes) {
             metadataComplete = false;
             return;
           }
-          yield Object.assign(
-            {},
+          count += 1;
+          bytes += row.bytes + 1;
+          const fallback = compatible.get(row.seq);
+          const navigation =
             fallback?.navigation ??
-              projectTranscriptNavigation(JSON.parse(row.navigation!), {
-                includeResetBoundary: true,
-              }),
-            { seq: row.seq },
-          );
+            projectTranscriptNavigation(JSON.parse(readNavigation(row.seq).rows[0]!.navigation), {
+              includeResetBoundary: true,
+            });
+          yield { ...navigation, seq: row.seq };
         }
       }
       const hasLeafControl =
@@ -163,21 +173,15 @@ export async function readSessionTranscriptHookMessages(
       }
       let authoritativeSeqs: number[] | undefined;
       if (hasLeafControl) {
-        try {
-          withCurrentProjectionSnapshot(scope, () => undefined);
-        } catch (error) {
-          if (!isSessionTranscriptProjectionUnavailableError(error)) {
-            throw error;
-          }
-          // Reset preparation holds writer admission; waiting for rebuild publication deadlocks.
-          const navigation = [...navigationRows()];
-          if (!metadataComplete) {
-            return incomplete();
-          }
-          authoritativeSeqs = (
-            selectSessionTranscriptLeafControlledPath(navigation) ?? navigation
-          ).map((entry) => entry.seq);
+        // The display index cannot establish raw reset-prefix membership or a
+        // fenced historical branch. Use the same bounded canonical owner in every state.
+        const navigation = [...navigationRows()];
+        if (!metadataComplete) {
+          return incomplete();
         }
+        authoritativeSeqs = (
+          selectSessionTranscriptLeafControlledPath(navigation) ?? navigation
+        ).map((entry) => entry.seq);
       }
       const source = db
         .selectFrom("transcript_events as event")
@@ -189,17 +193,6 @@ export async function readSessionTranscriptHookMessages(
           ]),
         )
         .$if(fence !== undefined, (query) => query.where("event.seq", "<", fence!.beforeRawSeq))
-        .$if(hasLeafControl && authoritativeSeqs === undefined, (query) =>
-          query.where((eb) =>
-            eb.exists(
-              eb
-                .selectFrom("session_transcript_active_events as active")
-                .select("active.event_seq")
-                .whereRef("active.session_id", "=", "event.session_id")
-                .whereRef("active.event_seq", "=", "event.seq"),
-            ),
-          ),
-        )
         .$if(authoritativeSeqs !== undefined, (query) =>
           query.where((eb) =>
             eb(
@@ -214,16 +207,30 @@ export async function readSessionTranscriptHookMessages(
           database.db,
           source.select((eb) => eb.fn.countAll<number>().as("count")),
         )?.count ?? 0;
-      const metadata = executeSqliteQuerySync(
-        database.db,
-        source
-          .select((eb) => [
-            "event.seq",
-            eb.fn<number>("octet_length", ["event.event_json"]).as("bytes"),
-          ])
-          .orderBy("event.seq", "desc")
-          .limit(maxMessages),
-      ).rows;
+      const metadataQuery = source.select((eb) => [
+        "event.seq",
+        eb.fn<number>("octet_length", ["event.event_json"]).as("bytes"),
+      ]);
+      let metadata: Array<{ seq: number; bytes: number }>;
+      if (authoritativeSeqs !== undefined) {
+        // The navigation graph is bounded above. Preserve its order, including
+        // duplicate IDs whose current ancestors were stored after their descendants.
+        const bySeq = new Map(
+          executeSqliteQuerySync(database.db, metadataQuery).rows.map((row) => [row.seq, row]),
+        );
+        metadata = authoritativeSeqs
+          .toReversed()
+          .flatMap((seq) => {
+            const row = bySeq.get(seq);
+            return row ? [row] : [];
+          })
+          .slice(0, maxMessages);
+      } else {
+        metadata = executeSqliteQuerySync(
+          database.db,
+          metadataQuery.orderBy("event.seq", "desc").limit(maxMessages),
+        ).rows;
+      }
       const selected: number[] = [];
       let bytes = 2;
       for (const row of metadata) {
