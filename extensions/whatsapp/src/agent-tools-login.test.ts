@@ -72,6 +72,29 @@ describe("createWhatsAppLoginTool", () => {
     expect(startWebLoginWithQrMock).toHaveBeenCalledOnce();
   });
 
+  it("rechecks continuation ownership at credential persistence without waiting for abort", async () => {
+    let current = true;
+    const tool = createOwnerLoginTool({
+      senderIsOwner: true,
+      assertInvocationCurrent: () => {
+        if (!current) {
+          throw new Error("owner revoked");
+        }
+      },
+    });
+    let persist: (() => Promise<void>) | undefined;
+    startWebLoginWithQrMock.mockImplementationOnce(async (options) => {
+      persist = options?.beforeCredentialPersistence;
+      return { message: "login started" };
+    });
+    const controller = new AbortController();
+    await tool.execute("owner-login", { action: "start" }, controller.signal);
+    await expect(persist?.()).resolves.toBeUndefined();
+    current = false;
+    expect(controller.signal.aborted).toBe(false);
+    await expect(persist?.()).rejects.toThrow("owner revoked");
+  });
+
   it("fully anchors the QR data URL pattern for grammar-constrained models", () => {
     const tool = createOwnerLoginTool();
     const pattern = (tool.parameters as { properties: { currentQrDataUrl?: { pattern?: string } } })

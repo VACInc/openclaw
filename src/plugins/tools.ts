@@ -472,7 +472,18 @@ function resolvePluginToolsFromRegistry(
         continue;
       }
       params.assertInvocationCurrent?.();
-      const factoryResult = factories.resolve(entry, params.context, declaredNames, owner.registry);
+      const factoryResult = factories.resolve(
+        entry,
+        {
+          ...params.context,
+          get senderIsOwner() {
+            return params.context.senderIsOwner;
+          },
+          assertInvocationCurrent: params.assertInvocationCurrent,
+        },
+        declaredNames,
+        owner.registry,
+      );
       if (factoryResult.failed) {
         continue;
       }

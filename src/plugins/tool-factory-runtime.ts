@@ -75,7 +75,7 @@ export function bindPluginToolCallbacks(
       return Promise.resolve(result).then((value) => {
         assertInvocationCurrent();
         return value;
-      }) as T;
+      }) as T; // SAFETY: Only promise-like callback results enter this branch; the resolved value is unchanged.
     }
     assertInvocationCurrent?.();
     return result;

@@ -41,6 +41,7 @@ export function createWhatsAppLoginTool(
     }),
     execute: async (_toolCallId, args, signal) => {
       const beforeCredentialPersistence = async () => {
+        context.assertInvocationCurrent?.();
         if (!signal || signal.aborted) {
           throw new Error("WhatsApp login authority is no longer active.");
         }
