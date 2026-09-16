@@ -1006,7 +1006,7 @@ export function createSessionsSendTool(opts?: {
           runId: crypto.randomUUID(),
           status: "error",
           error:
-            "sessions_send cannot target a thread session for inter-agent coordination. Use the parent channel session key instead.",
+            "sessions_send cannot target a thread session for inter-agent coordination. The parent channel is a different session and does not inherit the thread's context, owner authority, or resources. For authorized continuation, wake the exact owning session through the available scheduler, then read that session's result history. A wake acknowledgement is not proof of completion. Do not forward thread-owned work to its parent or launch detached retries to bypass this restriction.",
           sessionKey: unresolvedDisplayKey,
         });
       }
