@@ -246,6 +246,7 @@ export default definePluginEntry({
             resolveAuthProfileId: resolveCodexAppServerAuthProfileIdForAgent,
             resolveRuntimeOptions: resolveCodexSupervisionAppServerRuntimeOptions,
             senderIsOwner: context.senderIsOwner,
+            assertInvocationCurrent: context.assertInvocationCurrent,
           });
         },
         { names: [...CODEX_SUPERVISION_COMPAT_TOOL_NAMES] },

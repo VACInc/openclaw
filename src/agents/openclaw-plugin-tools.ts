@@ -331,6 +331,13 @@ export function resolveOpenClawPluginToolsForOptions(params: {
     ...pluginToolInputs,
     context: {
       ...pluginToolInputs.context,
+      ...(requesterOwner
+        ? {
+            requesterSenderId: requesterOwner.senderId,
+            messageChannel: requesterOwner.channel,
+            agentAccountId: requesterOwner.accountId,
+          }
+        : {}),
       get senderIsOwner() {
         return requesterOwner ? requesterOwner.isCurrent() : pluginToolInputs.context.senderIsOwner;
       },

@@ -153,6 +153,7 @@ type CodexSupervisionToolsOptions = {
   getRuntimeConfig?: () => OpenClawConfig | undefined;
   /** Trusted owner bit supplied by the plugin tool context. */
   senderIsOwner: boolean;
+  assertInvocationCurrent?: () => void;
   env?: NodeJS.ProcessEnv;
   /** Test seam; production omits this to use the canonical shared client. */
   request?: EndpointRequest;
@@ -491,6 +492,7 @@ function createPolicyGuardedRequest(
       method,
       requestParams,
       timeoutMs: runtime.requestTimeoutMs,
+      assertCurrent: options.assertInvocationCurrent,
       startOptions,
       // Client acquisition and queued writes can outlive the policy that admitted this request.
       assertCurrent: () => {
@@ -926,6 +928,7 @@ function requireSupervisionEnabled(pluginConfig: unknown): void {
 }
 
 function requireOwnerAccess(options: CodexSupervisionToolsOptions): void {
+  options.assertInvocationCurrent?.();
   if (!options.senderIsOwner) {
     throw new CodexSupervisionPolicyError(
       "Codex supervision compatibility tools require an owner-authorized sender.",

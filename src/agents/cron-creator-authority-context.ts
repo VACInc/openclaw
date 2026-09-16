@@ -163,7 +163,15 @@ export function bindRequesterOwnerIdentity(params: {
   sessionKey?: string;
   sessionId?: string;
   agentId?: string;
-}): { isCurrent: () => boolean; assertCurrent: () => void } | undefined {
+}):
+  | {
+      isCurrent: () => boolean;
+      assertCurrent: () => void;
+      senderId?: string;
+      channel?: string;
+      accountId?: string;
+    }
+  | undefined {
   const scope = activeCronCreatorAuthority.getStore();
   const owner = scope?.requesterOwner;
   const caller = getGatewayToolCallerIdentity();
@@ -208,6 +216,9 @@ export function bindRequesterOwnerIdentity(params: {
   };
   return {
     isCurrent,
+    senderId: owner.senderId,
+    channel: owner.channel,
+    accountId: owner.accountId,
     assertCurrent: () => {
       if (!isCurrent()) {
         throw new Error("Requester owner identity is no longer active for this continuation");

@@ -87,7 +87,12 @@ async function inAdminRun<T>(
   entitlement: NonNullable<
     NonNullable<ReturnType<typeof createCronCreatorAuthorityCapability>>["managementEntitlement"]
   > = { source: "control-ui-admin" },
-  requesterOwner?: { isCurrent: () => boolean },
+  requesterOwner?: {
+    isCurrent: () => boolean;
+    senderId?: string;
+    channel?: string;
+    accountId?: string;
+  },
 ) {
   const { operationalRunInstance } = createTestAdmittedRunContext(runId);
   const authority = claimAgentRunDelegatedAuthority(operationalRunInstance);
@@ -101,6 +106,7 @@ async function inAdminRun<T>(
     { kind: "unknown" },
     entitlement,
     isCurrent,
+    undefined,
     requesterOwner,
   )!;
   try {
@@ -186,7 +192,12 @@ function consume(batch: SubagentRunRecord[], runId = "continuation") {
 describe("requester cron authority lifetime", () => {
   it("carries separately admitted owner identity through explicit yield and expires retained bindings", async () => {
     let current = true;
-    const owner = { isCurrent: () => current };
+    const owner = {
+      isCurrent: () => current,
+      senderId: "original-owner",
+      channel: "discord",
+      accountId: "original-account",
+    };
     const entitlement = { source: "channel-owner" as const, isCurrent: owner.isCurrent };
     const batch = createBatch("owner-source");
     await inAdminRun(
@@ -214,6 +225,11 @@ describe("requester cron authority lifetime", () => {
             bindRequesterOwnerIdentity({ ...identity, sessionKey: "agent:main:unrelated" }),
           ).toBeUndefined();
           retained = bindRequesterOwnerIdentity(identity);
+          expect(retained).toMatchObject({
+            senderId: "original-owner",
+            channel: "discord",
+            accountId: "original-account",
+          });
           expect(retained?.isCurrent()).toBe(true);
           current = false;
           expect(() => retained?.assertCurrent()).toThrow("owner identity");
