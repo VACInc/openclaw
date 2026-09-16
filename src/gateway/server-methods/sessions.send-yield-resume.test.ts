@@ -37,7 +37,7 @@ afterEach(() => {
 it("settles nonterminal fixture wait probes without retaining gateway roots", async () => {
   const cleanup = createDeferred<{ status: "pending" }>();
   const probe = runWithGatewayIndependentRootWorkAdmission(
-    () => Promise.race([fixture.gateway({ method: "agent.wait" }), cleanup.promise]),
+    () => Promise.race([fixture.callGateway({ method: "agent.wait" }), cleanup.promise]),
     "test:registry-wait-probe",
   );
   try {

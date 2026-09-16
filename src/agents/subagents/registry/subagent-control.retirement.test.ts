@@ -575,7 +575,7 @@ describe("restored historical cancellation ownership", () => {
     capture.mockReset().mockResolvedValue(undefined);
     cleanup.mockReset().mockResolvedValue(undefined);
     testing.setDepsForTest({
-      callGateway: fixture.gateway,
+      callGateway: fixture.callGateway,
       loadAgentRuntimePluginRegistryHandle: () => undefined,
       maybeWakeRequesterAfterAllChildrenSettled: wake,
       runSubagentAnnounceFlow: announce,

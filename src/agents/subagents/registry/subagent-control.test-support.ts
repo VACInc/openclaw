@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, vi } from "vitest";
 import { clearConfigCache, clearRuntimeConfigSnapshot } from "../../../config/config.js";
 import { LegacyContextEngine } from "../../../context-engine/legacy.js";
+import { callGateway } from "../../../gateway/call.js";
 import { flushLogger, resetLogger } from "../../../logging/logger.js";
 import { resetDetachedTaskLifecycleRuntimeForTests } from "../../../tasks/detached-task-runtime.test-support.js";
 import { resetTaskFlowRegistryForTests } from "../../../tasks/task-flow-registry.test-support.js";
@@ -21,6 +22,7 @@ export function useSubagentControlFixture() {
   const env = captureEnv(["OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH"]);
   let stateDir = "";
   const persist = vi.fn(persistSubagentRunsToDiskOrThrow);
+  const gatewayClient = { callGateway };
   const gateway = vi.fn<SubagentRegistryDeps["callGateway"]>();
   gateway.mockImplementation(async (request) => {
     if (request.method !== "agent.wait") {
@@ -45,17 +47,19 @@ export function useSubagentControlFixture() {
     resetTaskRegistryForTests({ persist: false });
     resetTaskFlowRegistryForTests({ persist: false });
     gateway.mockClear();
+    vi.spyOn(gatewayClient, "callGateway").mockImplementation(gateway);
     persist.mockReset().mockImplementation(persistSubagentRunsToDiskOrThrow);
     testing.setDepsForTest({
       loadAgentRuntimePluginRegistryHandle: () => undefined,
       resolveContextEngine: async () => new LegacyContextEngine(),
-      callGateway: gateway,
+      callGateway: gatewayClient.callGateway,
       persistSubagentRunsToDiskOrThrow: persist,
     });
   });
   afterEach(async () => {
-    vi.restoreAllMocks();
+    // Keep fixture transports installed until their admitted work has settled.
     await settleSubagentRegistryPersistenceWork();
+    vi.restoreAllMocks();
     resetSubagentRegistryForTests({ persist: false });
     resetTaskRegistryForTests({ persist: false });
     resetTaskFlowRegistryForTests({ persist: false });
@@ -77,5 +81,8 @@ export function useSubagentControlFixture() {
     },
     persist,
     gateway,
+    get callGateway() {
+      return gatewayClient.callGateway;
+    },
   };
 }
