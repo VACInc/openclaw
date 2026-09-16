@@ -318,9 +318,7 @@ export function resolveOpenClawPluginToolsForOptions(params: {
     context: {
       ...pluginToolInputs.context,
       get senderIsOwner() {
-        return requesterOwner
-          ? requesterOwner.isCurrent()
-          : pluginToolInputs.context.senderIsOwner;
+        return requesterOwner ? requesterOwner.isCurrent() : pluginToolInputs.context.senderIsOwner;
       },
       ...(delivery ? { delivery } : {}),
       ...(hasAuthForProvider ? { hasAuthForProvider } : {}),

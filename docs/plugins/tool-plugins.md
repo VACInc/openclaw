@@ -179,6 +179,16 @@ context whenever tools are assembled. Argument preparation and execution use the
 same instance. Retained tools stop working when their owning plugin registry is
 retired.
 
+Owner-gated factories can receive the original configured owner's identity when
+the exact parent resumes after an explicit `sessions_yield`. This does not grant
+ownership to management-only clients, unrelated sessions, or detached cron runs.
+The host supplies `toolContext.assertInvocationCurrent` for that continuation.
+Carry this closure through awaited work and call it inside the final synchronous
+write or effect guard, not just before starting an asynchronous operation or after
+its result. Revocation must leave persisted state unchanged. The optional field
+keeps existing factory contexts source-compatible; its absence is not evidence
+of owner authority. `senderIsOwner` remains the factory's availability check.
+
 Set `hideFromChannelProgress: true` on the concrete factory tool to keep its
 transient activity out of channel progress drafts. Lifecycle events and the
 final tool result still flow normally. OpenClaw preserves the current factory's
