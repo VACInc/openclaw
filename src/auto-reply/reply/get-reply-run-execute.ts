@@ -606,7 +606,7 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
             isCurrent: isCurrentChannelOwner,
           },
           undefined,
-          { isCurrent: isCurrentChannelOwner },
+          { isCurrent: isCurrentChannelOwner, ...cronOwner },
         )
       : undefined;
   const cronCreatorAuthorityCapability =

@@ -37,7 +37,12 @@ export type CronCreatorAuthorityRunScope = {
   readonly grantTokens: Set<string>;
   readonly managementEntitlement?: CronManagementEntitlement;
   /** Separately admitted channel-owner identity, not implied by automation management rights. */
-  readonly requesterOwner?: Readonly<{ isCurrent: () => boolean }>;
+  readonly requesterOwner?: Readonly<{
+    isCurrent: () => boolean;
+    senderId?: string;
+    channel?: string;
+    accountId?: string;
+  }>;
   /** @deprecated Read managementEntitlement. Harness source compatibility lasts through 2026-10-12. */
   readonly controlUiAdmin?: true;
   readonly isCurrent?: () => boolean;
