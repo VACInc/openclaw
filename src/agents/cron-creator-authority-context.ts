@@ -38,6 +38,7 @@ export function createCronCreatorAuthorityCapability(
   callerOrigin: CronScheduledToolCallerOrigin = { kind: "unknown" },
   managementEntitlement?: CronManagementEntitlement,
   isCurrent?: () => boolean,
+  requesterOwner?: CronCreatorAuthorityCapability["requesterOwner"],
 ): CronCreatorAuthorityCapability | undefined {
   const normalizedRunId = runId.trim();
   return normalizedRunId
@@ -46,6 +47,7 @@ export function createCronCreatorAuthorityCapability(
         callerOrigin,
         managementEntitlement,
         isCurrent,
+        requesterOwner,
       )
     : undefined;
 }
@@ -82,7 +84,7 @@ export function bindRequesterYieldCronAuthority(
   };
 }
 
-/** Capture only a live management entitlement before its requester yields. */
+/** Capture live management and separately admitted owner identity before the requester yields. */
 export function captureActiveCronManagementAuthority(params: {
   runId: string;
   sessionKey: string;
@@ -92,6 +94,7 @@ export function captureActiveCronManagementAuthority(params: {
       sessionId: string;
       lifecycleGeneration: string;
       managementEntitlement: CronManagementEntitlement;
+      requesterOwner?: CronCreatorAuthorityCapability["requesterOwner"];
       isActive: () => boolean;
     }
   | undefined {
@@ -135,9 +138,69 @@ export function captureActiveCronManagementAuthority(params: {
         sessionId,
         lifecycleGeneration: authority.lifecycleGeneration,
         managementEntitlement: scope.managementEntitlement,
+        requesterOwner: scope.requesterOwner,
         isActive,
       }
     : undefined;
+}
+
+/** Bind only the separately captured owner identity of an admitted requester continuation. */
+export function bindRequesterOwnerIdentity(params: {
+  runId?: string;
+  sessionKey?: string;
+  sessionId?: string;
+  agentId?: string;
+}): { isCurrent: () => boolean; assertCurrent: () => void } | undefined {
+  const scope = activeCronCreatorAuthority.getStore();
+  const owner = scope?.requesterOwner;
+  const caller = getGatewayToolCallerIdentity();
+  const authority = caller?.approvalAuthority;
+  const context = params.runId ? getAgentRunContext(params.runId) : undefined;
+  if (
+    !scope ||
+    !owner ||
+    scope.callerOrigin.kind !== "unknown" ||
+    !scope.isCurrent ||
+    !params.runId ||
+    scope.runId !== params.runId ||
+    !params.sessionKey ||
+    !params.sessionId ||
+    !params.agentId ||
+    caller?.sessionKey !== params.sessionKey ||
+    caller.agentId !== params.agentId ||
+    context?.sessionKey !== params.sessionKey ||
+    context.sessionId !== params.sessionId ||
+    context.agentId !== params.agentId ||
+    !authority ||
+    authority.operationalRunInstance.runId !== params.runId
+  ) {
+    return undefined;
+  }
+  const runId = params.runId;
+  const isCurrent = () => {
+    try {
+      return (
+        scope.active &&
+        !scope.signal.aborted &&
+        scope.isCurrent?.() === true &&
+        owner.isCurrent() &&
+        !caller.approvalSignals?.some((signal) => signal.aborted) &&
+        caller.approvalAuthorityCheck?.() !== false &&
+        getAgentRunContext(runId) === context &&
+        validateAgentRunDelegatedAuthority(authority)
+      );
+    } catch {
+      return false;
+    }
+  };
+  return {
+    isCurrent,
+    assertCurrent: () => {
+      if (!isCurrent()) {
+        throw new Error("Requester owner identity is no longer active for this continuation");
+      }
+    },
+  };
 }
 
 /** Bind at tool construction, never rediscover authority from model arguments or routes. */
