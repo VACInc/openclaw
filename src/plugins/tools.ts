@@ -70,6 +70,7 @@ function inspectPluginTool(
   clientCaps: ReadonlySet<string>,
   entry: PluginToolRegistration,
   registry: PluginRegistry,
+  assertInvocationCurrent?: () => void,
 ): { tool: AnyAgentTool } | { error: string } | null {
   try {
     if (!isRecord(tool)) {
@@ -93,7 +94,14 @@ function inspectPluginTool(
             : undefined;
     return error
       ? { error }
-      : { tool: bindPluginToolCallbacks(entry, registry, tool as AnyAgentTool) };
+      : {
+          tool: bindPluginToolCallbacks(
+            entry,
+            registry,
+            tool as AnyAgentTool,
+            assertInvocationCurrent,
+          ),
+        };
   } catch (error) {
     return { error: formatErrorMessage(error) };
   }
@@ -265,6 +273,8 @@ export function ensureStandalonePluginToolRegistryLoaded(params: {
 
 type PluginToolResolutionParams = {
   context: OpenClawPluginToolContext;
+  /** Host-owned turn fence for factories and retained tool callbacks. */
+  assertInvocationCurrent?: () => void;
   existingToolNames?: Set<string>;
   clientCaps?: string[];
   toolAllowlist?: string[];
@@ -461,6 +471,7 @@ function resolvePluginToolsFromRegistry(
       ) {
         continue;
       }
+      params.assertInvocationCurrent?.();
       const factoryResult = factories.resolve(entry, params.context, declaredNames, owner.registry);
       if (factoryResult.failed) {
         continue;
@@ -522,7 +533,14 @@ function resolvePluginToolsFromRegistry(
         ) {
           continue;
         }
-        const inspected = inspectPluginTool(toolRaw, toolName, clientCaps, entry, owner.registry);
+        const inspected = inspectPluginTool(
+          toolRaw,
+          toolName,
+          clientCaps,
+          entry,
+          owner.registry,
+          params.assertInvocationCurrent,
+        );
         if (!inspected) {
           continue;
         }

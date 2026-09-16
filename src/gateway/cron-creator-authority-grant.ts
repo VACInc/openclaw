@@ -45,6 +45,8 @@ export type CronCreatorAuthorityRunScope = {
   readonly signal: AbortSignal;
   readonly grantTokens: Set<string>;
   readonly managementEntitlement?: CronManagementEntitlement;
+  /** Separately admitted channel-owner identity, not implied by automation management rights. */
+  readonly requesterOwner?: Readonly<{ isCurrent: () => boolean }>;
   /** @deprecated Read managementEntitlement. Harness source compatibility lasts through 2026-10-12. */
   readonly controlUiAdmin?: true;
   readonly isCurrent?: () => boolean;
@@ -83,6 +85,7 @@ export function createCronCreatorAuthorityRunScope(
   managementEntitlement?: CronManagementEntitlement,
   isCurrent?: () => boolean,
   channelRequester?: CronAuthenticatedChannelRequester,
+  requesterOwner?: CronCreatorAuthorityRunScope["requesterOwner"],
 ): CronCreatorAuthorityRunScope {
   const abortController = new AbortController();
   const requester = normalizeCronAuthenticatedChannelRequester(channelRequester);
@@ -92,6 +95,7 @@ export function createCronCreatorAuthorityRunScope(
     signal: abortController.signal,
     grantTokens: new Set(),
     ...(managementEntitlement ? { managementEntitlement } : {}),
+    ...(requesterOwner ? { requesterOwner } : {}),
     get controlUiAdmin(): true | undefined {
       return managementEntitlement?.source === "control-ui-admin" ? true : undefined;
     },

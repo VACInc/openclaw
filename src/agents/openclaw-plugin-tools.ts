@@ -24,6 +24,7 @@ import type { OpenClawPluginToolContext } from "../plugins/types.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { resolveApiKeyForProfile, resolveAuthProfileOrder } from "./auth-profiles.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
+import { bindRequesterOwnerIdentity } from "./cron-creator-authority-context.js";
 import {
   createRuntimeProviderAuthLookup,
   hasRuntimeAvailableProviderAuth,
@@ -230,6 +231,15 @@ export function resolveOpenClawPluginToolsForOptions(params: {
     getRuntimeConfig: resolveCurrentRuntimeConfig,
   });
   const authProfileStore = params.options?.authProfileStore;
+  const requesterOwner =
+    pluginToolInputs.context.senderIsOwner === true
+      ? undefined
+      : bindRequesterOwnerIdentity({
+          runId: params.options?.runId,
+          sessionKey: pluginToolInputs.context.sessionKey,
+          sessionId: pluginToolInputs.context.sessionId,
+          agentId: pluginToolInputs.context.agentId,
+        });
   const delivery = createPluginToolDelivery({
     options: params.options,
     context: pluginToolInputs.context,
@@ -321,11 +331,17 @@ export function resolveOpenClawPluginToolsForOptions(params: {
     ...pluginToolInputs,
     context: {
       ...pluginToolInputs.context,
+      get senderIsOwner() {
+        return requesterOwner
+          ? requesterOwner.isCurrent()
+          : pluginToolInputs.context.senderIsOwner;
+      },
       ...(delivery ? { delivery } : {}),
       ...(hasAuthForProvider ? { hasAuthForProvider } : {}),
       ...(resolveApiKeyForProvider ? { resolveApiKeyForProvider } : {}),
     },
     existingToolNames,
+    assertInvocationCurrent: requesterOwner?.assertCurrent,
     clientCaps: params.options?.clientCaps,
     toolAllowlist: params.options?.pluginToolAllowlist,
     toolDenylist: params.options?.pluginToolDenylist,
