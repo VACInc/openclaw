@@ -19,7 +19,7 @@ export type OpenClawPluginToolDelivery = {
 };
 
 /** Trusted execution context passed to plugin-owned agent tool factories. */
-export type OpenClawPluginToolContext = {
+type OpenClawPluginToolContextBase = {
   config?: OpenClawConfig;
   /** Active runtime-resolved config snapshot when one is available. */
   runtimeConfig?: OpenClawConfig;
@@ -80,9 +80,18 @@ export type OpenClawPluginToolContext = {
   oneShotCliRun?: boolean;
 };
 
-export type OpenClawPluginToolFactory = (
-  ctx: OpenClawPluginToolContext,
-) => AnyAgentTool | AnyAgentTool[] | null | undefined;
+/** Version 1 is the source-compatible direct-turn context; version 2 requires final-effect authority. */
+export type OpenClawPluginToolContext<Version extends 1 | 2 = 1> = Version extends 2
+  ? OpenClawPluginToolContextBase & { assertInvocationCurrent: () => void }
+  : OpenClawPluginToolContextBase;
+
+/** A version 2 descriptor explicitly opts into owner-authorized continuations. */
+export type OpenClawPluginToolFactory<Version extends 1 | 2 = 1> = Version extends 2
+  ? {
+      contextVersion: 2;
+      create: (ctx: OpenClawPluginToolContext<2>) => ReturnType<OpenClawPluginToolFactory>;
+    }
+  : (ctx: OpenClawPluginToolContext) => AnyAgentTool | AnyAgentTool[] | null | undefined;
 
 export type OpenClawPluginToolOptions = {
   name?: string;

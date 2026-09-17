@@ -126,5 +126,8 @@ export function createWhatsAppLoginTool(
 }
 
 export function registerWhatsAppLoginTool(api: OpenClawPluginApi): void {
-  api.registerTool((context) => createWhatsAppLoginTool(context), { name: "whatsapp_login" });
+  api.registerTool(
+    { contextVersion: 2, create: (context) => createWhatsAppLoginTool(context) },
+    { name: "whatsapp_login" },
+  );
 }

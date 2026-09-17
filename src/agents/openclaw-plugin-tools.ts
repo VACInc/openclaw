@@ -38,6 +38,7 @@ import {
 import type { PreparedModelRuntimeSnapshot } from "./prepared-model-runtime.types.js";
 import { resolveAgentRuntimeToolConfig } from "./tool-runtime-config.js";
 import type { AnyAgentTool } from "./tools/common.js";
+import { captureGatewayToolCallerAssertion } from "./tools/gateway-caller-context.js";
 import { hasProviderAuthForTool } from "./tools/model-config.helpers.js";
 
 type ResolveOpenClawPluginToolsOptions = OpenClawPluginToolOptions & {
@@ -327,26 +328,24 @@ export function resolveOpenClawPluginToolsForOptions(params: {
     : requestRegistry;
   const loadContext = getPluginRuntimeLoadContext(preparedRegistry);
   const metadataSnapshot = preparedModelRuntime?.metadataSnapshot ?? loadContext?.metadataSnapshot;
+  const assertCallerCurrent = captureGatewayToolCallerAssertion();
+  const assertRequestCurrent = params.options?.assertInvocationCurrent;
   const pluginTools = resolvePluginTools({
     ...pluginToolInputs,
     context: {
       ...pluginToolInputs.context,
-      ...(requesterOwner
-        ? {
-            requesterSenderId: requesterOwner.senderId,
-            messageChannel: requesterOwner.channel,
-            agentAccountId: requesterOwner.accountId,
-          }
-        : {}),
-      get senderIsOwner() {
-        return requesterOwner ? requesterOwner.isCurrent() : pluginToolInputs.context.senderIsOwner;
-      },
       ...(delivery ? { delivery } : {}),
       ...(hasAuthForProvider ? { hasAuthForProvider } : {}),
       ...(resolveApiKeyForProvider ? { resolveApiKeyForProvider } : {}),
     },
     existingToolNames,
-    assertInvocationCurrent: requesterOwner?.assertCurrent,
+    assertInvocationCurrent: assertRequestCurrent
+      ? () => {
+          assertCallerCurrent?.();
+          assertRequestCurrent();
+        }
+      : assertCallerCurrent,
+    ownerContinuation: requesterOwner,
     clientCaps: params.options?.clientCaps,
     toolAllowlist: params.options?.pluginToolAllowlist,
     toolDenylist: params.options?.pluginToolDenylist,

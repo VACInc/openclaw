@@ -186,7 +186,7 @@ async function registeredIntentTool(assertInvocationCurrent?: () => void) {
     senderIsOwner: true,
     messageChannel: "webchat",
     requesterSenderId: "owner",
-    assertInvocationCurrent,
+    assertInvocationCurrent: assertInvocationCurrent ?? (() => {}),
   });
   const tool = Array.isArray(registered)
     ? registered.find((entry) => entry.name === "intent")

@@ -231,23 +231,26 @@ export default definePluginEntry({
         api.runtime.modelAuth,
       );
       api.registerTool(
-        (context) => {
-          if (context.senderIsOwner !== true) {
-            return [];
-          }
-          const resolveToolRuntimeConfig = () =>
-            context.getRuntimeConfig?.() ??
-            context.runtimeConfig ??
-            context.config ??
-            resolveCurrentConfig();
-          return createCodexSupervisionTools({
-            getPluginConfig: () => resolvePluginConfig(resolveToolRuntimeConfig),
-            getRuntimeConfig: resolveToolRuntimeConfig,
-            resolveAuthProfileId: resolveCodexAppServerAuthProfileIdForAgent,
-            resolveRuntimeOptions: resolveCodexSupervisionAppServerRuntimeOptions,
-            senderIsOwner: context.senderIsOwner,
-            assertInvocationCurrent: context.assertInvocationCurrent,
-          });
+        {
+          contextVersion: 2,
+          create: (context) => {
+            if (context.senderIsOwner !== true) {
+              return [];
+            }
+            const resolveToolRuntimeConfig = () =>
+              context.getRuntimeConfig?.() ??
+              context.runtimeConfig ??
+              context.config ??
+              resolveCurrentConfig();
+            return createCodexSupervisionTools({
+              getPluginConfig: () => resolvePluginConfig(resolveToolRuntimeConfig),
+              getRuntimeConfig: resolveToolRuntimeConfig,
+              resolveAuthProfileId: resolveCodexAppServerAuthProfileIdForAgent,
+              resolveRuntimeOptions: resolveCodexSupervisionAppServerRuntimeOptions,
+              senderIsOwner: context.senderIsOwner,
+              assertInvocationCurrent: context.assertInvocationCurrent,
+            });
+          },
         },
         { names: [...CODEX_SUPERVISION_COMPAT_TOOL_NAMES] },
       );
@@ -270,13 +273,16 @@ export default definePluginEntry({
     );
     api.registerMigrationProvider(buildCodexMigrationProvider({ runtime: api.runtime }));
     api.registerTool(
-      (context) =>
-        createCodexThreadsTool({
-          bindingStore,
-          context,
-          runtime: api.runtime,
-          getPluginConfig: resolveCurrentPluginConfig,
-        }),
+      {
+        contextVersion: 2,
+        create: (context) =>
+          createCodexThreadsTool({
+            bindingStore,
+            context,
+            runtime: api.runtime,
+            getPluginConfig: resolveCurrentPluginConfig,
+          }),
+      },
       { name: "codex_threads" },
     );
     api.registerToolMetadata({
@@ -287,12 +293,15 @@ export default definePluginEntry({
       tags: ["codex", "sessions"],
     });
     api.registerTool(
-      (context) =>
-        createCodexPluginsTool({
-          bindingStore,
-          context,
-          getPluginConfig: resolveCurrentPluginConfig,
-        }),
+      {
+        contextVersion: 2,
+        create: (context) =>
+          createCodexPluginsTool({
+            bindingStore,
+            context,
+            getPluginConfig: resolveCurrentPluginConfig,
+          }),
+      },
       { name: "codex_plugins" },
     );
     api.registerToolMetadata({

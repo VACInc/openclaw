@@ -276,10 +276,13 @@ export default definePluginEntry({
     });
 
     api.registerTool(
-      (ctx) =>
-        createLazyStandingIntentTool(ctx, (reason) => {
-          api.logger.warn(`memory-core: intent tool unavailable: ${reason}`);
-        }),
+      {
+        contextVersion: 2,
+        create: (ctx) =>
+          createLazyStandingIntentTool(ctx, (reason) => {
+            api.logger.warn(`memory-core: intent tool unavailable: ${reason}`);
+          }),
+      },
       { names: ["intent"] },
     );
 

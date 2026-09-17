@@ -22,11 +22,15 @@ function resolveRegisteredLoginTool(context: OpenClawPluginToolContext): AnyAgen
   const api = createTestPluginApi({ registerTool });
   registerWhatsAppLoginTool(api);
   const factory = registerTool.mock.calls[0]?.[0];
-  if (typeof factory !== "function") {
+  if (!factory || typeof factory === "function" || !("contextVersion" in factory)) {
     throw new Error("WhatsApp login tool factory was not registered");
   }
   expect(registerTool.mock.calls[0]?.[1]).toEqual({ name: "whatsapp_login" });
-  const tool = factory(context);
+  expect(factory.contextVersion).toBe(2);
+  const tool = factory.create({
+    ...context,
+    assertInvocationCurrent: context.assertInvocationCurrent ?? (() => {}),
+  });
   if (Array.isArray(tool)) {
     throw new Error("expected one WhatsApp login tool");
   }

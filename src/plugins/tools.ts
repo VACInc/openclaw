@@ -35,6 +35,10 @@ import { buildPluginRuntimeLoadOptions } from "./runtime/load-context.js";
 import { resolvePluginRuntimeLoadContext } from "./runtime/load-context.resolve.js";
 import { findUndeclaredPluginToolNames } from "./tool-contracts.js";
 import {
+  createPluginToolFactoryContext,
+  type PluginToolOwnerContinuation,
+} from "./tool-factory-context.js";
+import {
   bindPluginToolCallbacks,
   createPluginToolFactoryResolver,
 } from "./tool-factory-runtime.js";
@@ -275,6 +279,7 @@ type PluginToolResolutionParams = {
   context: OpenClawPluginToolContext;
   /** Host-owned turn fence for factories and retained tool callbacks. */
   assertInvocationCurrent?: () => void;
+  ownerContinuation?: PluginToolOwnerContinuation;
   existingToolNames?: Set<string>;
   clientCaps?: string[];
   toolAllowlist?: string[];
@@ -471,19 +476,16 @@ function resolvePluginToolsFromRegistry(
       ) {
         continue;
       }
-      params.assertInvocationCurrent?.();
-      const factoryResult = factories.resolve(
+      const factoryContext = createPluginToolFactoryContext({
         entry,
-        {
-          ...params.context,
-          get senderIsOwner() {
-            return params.context.senderIsOwner;
-          },
-          assertInvocationCurrent: params.assertInvocationCurrent,
-        },
-        declaredNames,
-        owner.registry,
-      );
+        registry: owner.registry,
+        context: params.context,
+        assertInvocationCurrent: params.assertInvocationCurrent,
+        ownerContinuation: params.ownerContinuation,
+      });
+      // Catalog discovery may construct tools without an admitted run; their V2 execution stays fenced.
+      params.assertInvocationCurrent?.();
+      const factoryResult = factories.resolve(entry, factoryContext, declaredNames, owner.registry);
       if (factoryResult.failed) {
         continue;
       }
@@ -550,7 +552,7 @@ function resolvePluginToolsFromRegistry(
           clientCaps,
           entry,
           owner.registry,
-          params.assertInvocationCurrent,
+          factoryContext.assertInvocationCurrent,
         );
         if (!inspected) {
           continue;
