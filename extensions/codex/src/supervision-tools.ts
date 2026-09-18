@@ -498,7 +498,6 @@ function createPolicyGuardedRequest(
       method,
       requestParams,
       timeoutMs: runtime.requestTimeoutMs,
-      assertCurrent: options.assertInvocationCurrent,
       startOptions,
       // Client acquisition and queued writes can outlive the policy that admitted this request.
       assertCurrent: () => {
