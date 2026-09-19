@@ -108,7 +108,23 @@ beforeEach(() => {
 
 afterEach(async () => {
   await flushLogger();
-  expect(vi.getTimerCount()).toBe(0);
+  const pendingTimers = vi.getTimerCount();
+  if (pendingTimers !== 0) {
+    // Identify hosted-only failures without advancing or clearing the pending timer.
+    const fakeClock: unknown = Reflect.get(globalThis.setTimeout, "clock");
+    const timers =
+      isRecord(fakeClock) && fakeClock.timers instanceof Map ? [...fakeClock.timers.values()] : [];
+    console.error(
+      "Pending lifecycle diagnostic timers",
+      timers.filter(isRecord).map((timer) => ({
+        id: timer.id,
+        type: timer.type,
+        delay: timer.delay,
+        callback: typeof timer.func === "function" ? timer.func.toString() : undefined,
+      })),
+    );
+  }
+  expect(pendingTimers).toBe(0);
   vi.useRealTimers();
   vi.restoreAllMocks();
   setDiagnosticsEnabledForProcess(diagnosticsWereEnabled);
