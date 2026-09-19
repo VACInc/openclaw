@@ -18,6 +18,7 @@ import { withMockedPlatform } from "../../test-utils/vitest-spies.js";
 import { buildWorkspaceSkillStatus } from "../discovery/status.js";
 import { hasBinary } from "../loading/config.js";
 import { loadWorkspaceSkills } from "../loading/workspace-skill-loader.js";
+import { closeSkillsWatchers } from "../runtime/refresh.js";
 import { runCommandWithTimeoutMock } from "../test-support/install-test-mocks.js";
 import type { SkillEntry, SkillInstallSpec } from "../types.js";
 import { resolveWorkshopSkillsDir } from "../workshop/skills-root.js";
@@ -122,6 +123,8 @@ afterAll(async () => {
   vi.mocked(hasBinary).mockReset();
   vi.mocked(resolveBrewExecutable).mockReset();
   vi.mocked(isContainerEnvironment).mockReset();
+  // skills.status starts native watchers; close them before removing their fixture roots.
+  await closeSkillsWatchers(true);
   await workspaceSuite.cleanup();
 });
 
