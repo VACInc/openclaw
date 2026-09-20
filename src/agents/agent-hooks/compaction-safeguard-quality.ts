@@ -420,14 +420,15 @@ export function extractOpaqueIdentifiers(text: string): string[] {
   ).slice(0, MAX_EXTRACTED_IDENTIFIERS);
 }
 
-function tokenizeAskOverlapText(text: string): string[] {
+function tokenizeAskOverlapText(text: string, includeFallbackTokens = false): string[] {
   const normalized = localeLowercasePreservingWhitespace(text.normalize("NFKC")).trim();
   if (!normalized) {
     return [];
   }
   const keywords = extractKeywords(normalized);
-  // Keep fallback tokens on both sides: a short ask may contain only stop words,
-  // while the summary also contains keywords from its required headings.
+  if (keywords.length > 0 && !includeFallbackTokens) {
+    return keywords;
+  }
   const tokens = normalized
     .split(/[^\p{L}\p{N}]+/u)
     .map((token) => token.trim())
@@ -462,7 +463,9 @@ function hasAskOverlap(summary: string, latestAsk: string | null): boolean {
   if (!requirement) {
     return true;
   }
-  const summaryTokens = new Set(tokenizeAskOverlapText(summary));
+  // Summary headings contribute keywords even when the ask has only stop words.
+  // Retain summary fallback tokens without broadening keyword-bearing requests.
+  const summaryTokens = new Set(tokenizeAskOverlapText(summary, true));
   const overlapCount = requirement.tokens.filter((token) => summaryTokens.has(token)).length;
   return overlapCount >= requirement.requiredMatches;
 }
