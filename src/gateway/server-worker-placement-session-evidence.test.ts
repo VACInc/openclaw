@@ -268,6 +268,8 @@ describe("worker placement session evidence", () => {
       const requested = [broken, healthy, absent, incognito];
       const resolve = await createWorkerPlacementSessionEvidenceResolver(requested);
 
+      // Surface the caught exception if partial corruption collapses the whole batch.
+      expect(evidenceWarnSpy.mock.calls).toEqual([]);
       expect(await Promise.all(requested.map(resolve))).toEqual([
         "unknown",
         "current",
