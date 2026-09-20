@@ -82,7 +82,9 @@ describe("MCP HTTP keepalive", () => {
       execute.mockImplementation(async () => {
         entered.resolve();
         await release.promise;
-        if (outcome === "tool-error") throw new Error("synthetic tool failure");
+        if (outcome === "tool-error") {
+          throw new Error("synthetic tool failure");
+        }
         return {
           content: [
             {
@@ -111,7 +113,9 @@ describe("MCP HTTP keepalive", () => {
         release.resolve();
         for (;;) {
           const chunk = await within(reader.read());
-          if (chunk.done) break;
+          if (chunk.done) {
+            break;
+          }
           body += decoder.decode(chunk.value);
         }
         expect(JSON.parse(body)).toEqual(
@@ -139,8 +143,11 @@ describe("MCP HTTP keepalive", () => {
         expect(vi.getTimerCount()).toBe(0);
       } finally {
         release.resolve();
-        if (reader) await reader.cancel();
-        else await (await responsePromise).body?.cancel();
+        if (reader) {
+          await reader.cancel();
+        } else {
+          await (await responsePromise).body?.cancel();
+        }
       }
     },
   );
