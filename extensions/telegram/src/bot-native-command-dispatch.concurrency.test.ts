@@ -136,6 +136,85 @@ describe("Telegram commands during buffered message processing", () => {
     },
   );
 
+  it("rejects unauthorized text controls without blocking an authorized stop in another topic", async () => {
+    const guest = { ...from, id: from.id + 1, first_name: "Guest" };
+    const started = createDeferred<void>();
+    const release = createDeferred<void>();
+    harness.replySpy.mockImplementation(async (ctx) => {
+      if (ctx.RawBody === "ordinary run") {
+        started.resolve();
+        await release.promise;
+      } else if (ctx.RawBody === "/help" && ctx.CommandAuthorized !== true) {
+        // Core admission keeps unauthorized commands behind the active run.
+        // Reproduce that downstream wait if Telegram fails to reject this command.
+        await release.promise;
+      }
+      return undefined;
+    });
+    const bot = createBot(false, true, {
+      commands: { native: false, text: true, allowFrom: { telegram: [String(from.id)] } },
+      messages: { inbound: { byChannel: { telegram: DEBOUNCE_MS } } },
+      channels: {
+        telegram: {
+          groupPolicy: "open",
+          groupAllowFrom: [String(from.id), String(guest.id)],
+          groups: { "*": { requireMention: false } },
+          streaming: { mode: "off" },
+        },
+      },
+    });
+    const timer = vi.spyOn(globalThis, "setTimeout");
+    const work: Promise<unknown>[] = [];
+    let flush: (() => void) | undefined;
+    try {
+      const update = { update_id: 6101, message: ordinaryMessage("ordinary run", 99) };
+      const active = await runWithTelegramSpooledReplayUpdate(update, () =>
+        bot.handleUpdate(update),
+      );
+      const participant = active.deferredWork;
+      if (!participant) {
+        throw new Error("Expected a durable participant for buffered Telegram input");
+      }
+      work.push(participant.task);
+      flush = takeDebounceFlush();
+      flush();
+      await started.promise;
+
+      const help = bot.handleUpdate({
+        update_id: 6102,
+        message: { ...groupCommand("/help", 99), from: guest },
+      });
+      work.push(help);
+      const stop = bot.handleUpdate({ update_id: 6103, message: groupCommand("/stop", 100) });
+      work.push(stop);
+      await vi.waitFor(() => {
+        expect(harness.replySpy.mock.calls.map(([ctx]) => ctx.RawBody)).toEqual([
+          "ordinary run",
+          "/stop",
+        ]);
+      });
+      await Promise.all([help, stop]);
+      expect(participant.isSettled()).toBe(false);
+      expect(harness.replySpy.mock.calls[1]?.[0]).toMatchObject({
+        CommandAuthorized: true,
+        SenderId: String(from.id),
+        MessageThreadId: 100,
+      });
+
+      release.resolve();
+      await expect(participant.task).resolves.toEqual({ kind: "completed" });
+      expect(harness.replySpy.mock.calls.map(([ctx]) => ctx.RawBody)).toEqual([
+        "ordinary run",
+        "/stop",
+      ]);
+    } finally {
+      release.resolve();
+      flush?.();
+      await Promise.allSettled(work);
+      timer.mockRestore();
+    }
+  });
+
   it("does not let an unauthorized native stop cancel buffered input", async () => {
     const bot = createDebouncedBot(true, "99999");
     const timer = vi.spyOn(globalThis, "setTimeout");
