@@ -134,7 +134,10 @@ function isTelegramActiveRunControlLaneText(params: {
   return command ? TELEGRAM_ACTIVE_RUN_CONTROL_COMMAND_KEYS.has(command.key) : false;
 }
 
-function isTelegramControlLaneText(params: { rawText?: string; botUsername?: string }): boolean {
+export function isTelegramControlLaneText(params: {
+  rawText?: string;
+  botUsername?: string;
+}): boolean {
   // Live polling and webhook admission already have bot identity. In defensive pre-identity
   // paths, accepting every @target admits foreign-bot commands; only canonical aborts fence.
   const abortCommandOptions = params.botUsername
