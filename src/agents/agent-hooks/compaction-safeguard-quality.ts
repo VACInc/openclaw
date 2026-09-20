@@ -426,13 +426,13 @@ function tokenizeAskOverlapText(text: string): string[] {
     return [];
   }
   const keywords = extractKeywords(normalized);
-  if (keywords.length > 0) {
-    return keywords;
-  }
-  return normalized
+  // Keep fallback tokens on both sides: a short ask may contain only stop words,
+  // while the summary also contains keywords from its required headings.
+  const tokens = normalized
     .split(/[^\p{L}\p{N}]+/u)
     .map((token) => token.trim())
     .filter((token) => token.length > 0);
+  return uniqueStrings([...keywords, ...tokens]);
 }
 
 function resolveAskOverlapRequirement(latestAsk: string | null): {
