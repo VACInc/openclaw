@@ -314,8 +314,6 @@ it.each([
     const archivedBytes = fs.readFileSync(archivePath);
     const target = resolveSqliteTargetFromSessionStorePath(storePath);
     const options = { agentId: target.agentId ?? "main", path: target.path };
-    // Join setup holders so clean-close proof does not depend on worker lease timing.
-    await closeOpenClawAgentDatabasesAsync(state.stateDir);
     const database = openOpenClawAgentDatabase(options);
     const markUnpublished = (db: DatabaseSync) => {
       executeSqliteQuerySync(
@@ -390,7 +388,6 @@ it.each([
       if (cold) {
         closed = closeOpenClawAgentDatabaseByPath(database.path);
         invalidateOpenClawAgentDatabaseValidation(database.path);
-        // A cold admission must lack durable proof too, not just a cached handle.
         clearOpenClawAgentIntegrityVerification(database.path, state.env);
       }
       observing = true;
