@@ -21,11 +21,14 @@ import { getPreparedTelegramPollAnswer } from "./poll-answer-context.js";
 import type { TelegramPollRegistryEntry } from "./poll-registry.js";
 import { hasTelegramQuestionCallbackPrefix } from "./question-callback-data.js";
 
-const TELEGRAM_READ_ONLY_STATUS_COMMAND_KEYS = new Set([
+const TELEGRAM_READ_ONLY_COMMAND_KEYS = new Set([
+  "agents",
   "commands",
   "context",
   "help",
+  "models",
   "status",
+  "subagents",
   "tasks",
   "tools",
   "whoami",
@@ -89,8 +92,8 @@ export function isTelegramReadOnlyControlLaneText(params: {
   rawText?: string;
   botUsername?: string;
 }): boolean {
-  // Only read-only status commands should bypass the per-topic lane.
-  // Diagnostics and export commands materialize state and should not interleave with an active turn.
+  // Read-only commands must not supersede pending work when they enter the control lane.
+  // Diagnostics and export commands materialize state and remain on the ordinary lane.
   const normalizedBody = normalizeCommandBody(
     params.rawText?.trim() ?? "",
     params.botUsername ? { botUsername: params.botUsername } : undefined,
@@ -102,7 +105,7 @@ export function isTelegramReadOnlyControlLaneText(params: {
   const command = listChatCommands().find((entry) =>
     entry.textAliases.some((candidate) => candidate.trim().toLowerCase() === alias),
   );
-  return command?.category === "status" && TELEGRAM_READ_ONLY_STATUS_COMMAND_KEYS.has(command.key);
+  return command !== undefined && TELEGRAM_READ_ONLY_COMMAND_KEYS.has(command.key);
 }
 
 function resolveTelegramCommandAliasForControlLane(
@@ -131,7 +134,11 @@ function isTelegramActiveRunControlLaneText(params: {
   const command = listChatCommands().find((entry) =>
     entry.textAliases.some((candidate) => candidate.trim().toLowerCase() === alias),
   );
-  return command ? TELEGRAM_ACTIVE_RUN_CONTROL_COMMAND_KEYS.has(command.key) : false;
+  // Side questions retain their per-message lane instead of occupying the control lane.
+  return command
+    ? (command.activeRunSafe === true && command.key !== "btw") ||
+        TELEGRAM_ACTIVE_RUN_CONTROL_COMMAND_KEYS.has(command.key)
+    : false;
 }
 
 export function isTelegramControlLaneText(params: {

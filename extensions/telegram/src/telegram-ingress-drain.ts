@@ -209,12 +209,18 @@ function canReconcileTelegramLegacyLane(params: {
         typeof message.is_topic_message === "boolean" ? message.is_topic_message : undefined,
     }) ?? (typeof chatId === "number" ? getCachedTelegramForumFlag(chatId) : undefined);
   const isForumGroup = isGroupChat && forumFlag === true;
+  const isControlMessage =
+    callback === undefined &&
+    params.derivedLaneKey === `telegram:${chatId}:control` &&
+    telegramSpooledLaneKey(update, params.botInfo) === params.derivedLaneKey;
   if (
     typeof chatId !== "number" ||
     !Number.isSafeInteger(chatId) ||
-    (typedApproval ? !isPrivateChat && !isGroupChat : !isPrivateChat && !isForumGroup) ||
-    (!typedApproval && !hasValidThreadId && !isForumGroup) ||
-    (typedApproval && threadId !== undefined && !hasValidThreadId)
+    (typedApproval || isControlMessage
+      ? !isPrivateChat && !isGroupChat
+      : !isPrivateChat && !isForumGroup) ||
+    (!typedApproval && !isControlMessage && !hasValidThreadId && !isForumGroup) ||
+    ((typedApproval || isControlMessage) && threadId !== undefined && !hasValidThreadId)
   ) {
     return false;
   }
@@ -228,6 +234,11 @@ function canReconcileTelegramLegacyLane(params: {
       ? threadId
       : undefined;
   const topicLaneKey = legacyThreadId ? `${baseLaneKey}:topic:${legacyThreadId}` : undefined;
+  // Reclassify queued commands from the old message lane using the current payload policy.
+  // Handler authorization still runs after replay, exactly as for newly admitted commands.
+  if (isControlMessage) {
+    return params.storedLaneKey === baseLaneKey || params.storedLaneKey === topicLaneKey;
+  }
   const canonicalLaneKey = typedApproval
     ? `${baseLaneKey}:approval`
     : isForumGroup || params.botInfo?.has_topics_enabled === true

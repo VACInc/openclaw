@@ -1,5 +1,8 @@
 import type { Message } from "grammy/types";
-import { isAbortRequestText } from "openclaw/plugin-sdk/command-primitives-runtime";
+import {
+  isAbortRequestText,
+  isBtwRequestText,
+} from "openclaw/plugin-sdk/command-primitives-runtime";
 import type {
   DmPolicy,
   OpenClawConfig,
@@ -154,7 +157,9 @@ export function createTelegramInboundProcessing({
     const messageText = getTelegramTextParts(msg).text;
     const botUsername = ctx.me?.username;
     const isAbortControlMessage = isAbortRequestText(messageText, { botUsername });
-    const isControlLaneMessage = isTelegramControlLaneText({ rawText: messageText, botUsername });
+    const bypassTextBuffer =
+      isTelegramControlLaneText({ rawText: messageText, botUsername }) ||
+      isBtwRequestText(messageText, { botUsername });
     let abortControlAuthorized: Promise<boolean> | undefined;
     const isAuthorizedAbortControlMessage = () => {
       if (!isAbortControlMessage || !senderId) {
@@ -184,7 +189,7 @@ export function createTelegramInboundProcessing({
     }
 
     if (
-      !isControlLaneMessage &&
+      !bypassTextBuffer &&
       (await handleTextFragment({
         ctx,
         msg,
@@ -355,7 +360,7 @@ export function createTelegramInboundProcessing({
       storeAllowFrom,
       receivedAtMs: Date.now(),
       // Waiting here would hold the shared control lane and block /stop in other topics.
-      debounceKey: isControlLaneMessage ? null : debounceKey,
+      debounceKey: bypassTextBuffer ? null : debounceKey,
       debounceLane,
       botUsername,
       threadSpec,
