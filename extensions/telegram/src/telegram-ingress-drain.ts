@@ -1,4 +1,5 @@
 // Telegram plugin module owns the channel-side durable ingress monitor adapter.
+import type { Message } from "grammy/types";
 import {
   createChannelIngressMonitor,
   DEFAULT_INGRESS_ADOPTION_STALL_MS,
@@ -22,6 +23,7 @@ import {
   getCachedTelegramForumFlag,
   resolveTelegramForumThreadId,
   resolveTelegramMessageForumFlagHint,
+  resolveTelegramMessageThreadSpec,
 } from "./bot/helpers.js";
 import {
   getPreparedTelegramPollAnswer,
@@ -143,6 +145,8 @@ function canReconcileTelegramLegacyLane(params: {
   const candidate = update as {
     message?: TelegramLaneMessage;
     edited_message?: TelegramLaneMessage;
+    channel_post?: TelegramLaneMessage;
+    edited_channel_post?: TelegramLaneMessage;
     callback_query?: TelegramLaneCallback;
   };
   const callback = candidate.callback_query;
@@ -155,6 +159,8 @@ function canReconcileTelegramLegacyLane(params: {
     if (
       candidate.message !== undefined ||
       candidate.edited_message !== undefined ||
+      candidate.channel_post !== undefined ||
+      candidate.edited_channel_post !== undefined ||
       !isNonemptyTelegramCallbackValue(callback.id) ||
       !isBoundedTelegramCallbackData(callback.data) ||
       !isNonemptyTelegramCallbackValue(callback.chat_instance) ||
@@ -180,7 +186,12 @@ function canReconcileTelegramLegacyLane(params: {
       return false;
     }
   }
-  const message = candidate.message ?? candidate.edited_message ?? callback?.message;
+  const message =
+    candidate.message ??
+    candidate.edited_message ??
+    candidate.channel_post ??
+    candidate.edited_channel_post ??
+    callback?.message;
   if (message == null) {
     return false;
   }
@@ -209,22 +220,35 @@ function canReconcileTelegramLegacyLane(params: {
         typeof message.is_topic_message === "boolean" ? message.is_topic_message : undefined,
     }) ?? (typeof chatId === "number" ? getCachedTelegramForumFlag(chatId) : undefined);
   const isForumGroup = isGroupChat && forumFlag === true;
-  const isControlMessage =
-    callback === undefined &&
-    params.derivedLaneKey === `telegram:${chatId}:control` &&
-    telegramSpooledLaneKey(update, params.botInfo) === params.derivedLaneKey;
-  if (
-    typeof chatId !== "number" ||
-    !Number.isSafeInteger(chatId) ||
-    (typedApproval || isControlMessage
-      ? !isPrivateChat && !isGroupChat
-      : !isPrivateChat && !isForumGroup) ||
-    (!typedApproval && !isControlMessage && !hasValidThreadId && !isForumGroup) ||
-    ((typedApproval || isControlMessage) && threadId !== undefined && !hasValidThreadId)
-  ) {
+  if (typeof chatId !== "number" || !Number.isSafeInteger(chatId)) {
     return false;
   }
   const baseLaneKey = `telegram:${chatId}`;
+  if (
+    callback === undefined &&
+    params.derivedLaneKey === `${baseLaneKey}:control` &&
+    telegramSpooledLaneKey(update, params.botInfo) === params.derivedLaneKey
+  ) {
+    if (
+      (!isPrivateChat && !isGroupChat && !(chatType === "channel" && chatId < 0)) ||
+      (threadId !== undefined && !hasValidThreadId)
+    ) {
+      return false;
+    }
+    // Reuse the topic owner: channel Direct Messages use direct_messages_topic,
+    // not message_thread_id. Authorization still runs in the replayed handler.
+    // SAFETY: The resolver reads the validated chat/thread fields and parses direct-message IDs itself.
+    const thread = resolveTelegramMessageThreadSpec(message as Message, forumFlag);
+    const topicLaneKey = thread.id === undefined ? undefined : `${baseLaneKey}:topic:${thread.id}`;
+    return params.storedLaneKey === baseLaneKey || params.storedLaneKey === topicLaneKey;
+  }
+  if (
+    (typedApproval ? !isPrivateChat && !isGroupChat : !isPrivateChat && !isForumGroup) ||
+    (!typedApproval && !hasValidThreadId && !isForumGroup) ||
+    (typedApproval && threadId !== undefined && !hasValidThreadId)
+  ) {
+    return false;
+  }
   const legacyThreadId = isGroupChat
     ? resolveTelegramForumThreadId({
         isForum: forumFlag,
@@ -234,11 +258,6 @@ function canReconcileTelegramLegacyLane(params: {
       ? threadId
       : undefined;
   const topicLaneKey = legacyThreadId ? `${baseLaneKey}:topic:${legacyThreadId}` : undefined;
-  // Reclassify queued commands from the old message lane using the current payload policy.
-  // Handler authorization still runs after replay, exactly as for newly admitted commands.
-  if (isControlMessage) {
-    return params.storedLaneKey === baseLaneKey || params.storedLaneKey === topicLaneKey;
-  }
   const canonicalLaneKey = typedApproval
     ? `${baseLaneKey}:approval`
     : isForumGroup || params.botInfo?.has_topics_enabled === true

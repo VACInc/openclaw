@@ -1,0 +1,169 @@
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
+import { describe, expect, it, vi } from "vitest";
+import { runWithTelegramSpooledReplayUpdate } from "./bot-processing-outcome.js";
+import {
+  createBot,
+  from,
+  groupCommand,
+  harness,
+} from "./bot.create-telegram-bot.native-pipeline.test-support.js";
+
+const DEBOUNCE_MS = 4321;
+
+function createDebouncedBot(native: boolean, commandSender = String(from.id)) {
+  return createBot(native, true, {
+    commands: { native, text: true, allowFrom: { telegram: [commandSender] } },
+    messages: { inbound: { byChannel: { telegram: DEBOUNCE_MS } } },
+    channels: {
+      telegram: {
+        groupPolicy: "open",
+        groupAllowFrom: [String(from.id)],
+        groups: { "*": { requireMention: false } },
+        streaming: { mode: "off" },
+      },
+    },
+  });
+}
+
+function ordinaryMessage(text: string, threadId: number) {
+  return { ...groupCommand(text, threadId), entities: [] };
+}
+
+function takeDebounceFlush(): () => void {
+  const timer = vi.mocked(globalThis.setTimeout);
+  const index = timer.mock.calls.findLastIndex((call) => call[1] === DEBOUNCE_MS);
+  expect(index).toBeGreaterThanOrEqual(0);
+  // SAFETY: This handle is the recorded return value of the real setTimeout spy.
+  clearTimeout(timer.mock.results[index]?.value as ReturnType<typeof setTimeout>);
+  const callback = timer.mock.calls[index]?.[0];
+  if (typeof callback !== "function") {
+    throw new Error("Expected the pending Telegram debounce timer");
+  }
+  return () => callback();
+}
+
+describe("Telegram commands during buffered message processing", () => {
+  it.each([
+    { native: true, command: "/status" },
+    { native: false, command: "/status" },
+    { native: true, command: "/btw check this" },
+    { native: false, command: "/btw check this" },
+  ])(
+    "dispatches $command and cross-topic /stop while an ordinary run is held (native=$native)",
+    async ({ native, command }) => {
+      const started = createDeferred<void>();
+      const release = createDeferred<void>();
+      harness.replySpy.mockImplementation(async (ctx) => {
+        if (ctx.RawBody === "ordinary run") {
+          started.resolve();
+          await release.promise;
+        }
+        return undefined;
+      });
+      const bot = createDebouncedBot(native);
+      const timer = vi.spyOn(globalThis, "setTimeout");
+      const work: Promise<unknown>[] = [];
+      const flushes: Array<() => void> = [];
+      let updateId = 5000;
+      const dispatch = (message: ReturnType<typeof groupCommand>) => {
+        const update = { update_id: ++updateId, message };
+        const pending = runWithTelegramSpooledReplayUpdate(update, () => bot.handleUpdate(update));
+        work.push(pending);
+        return pending;
+      };
+      const buffer = async (text: string, threadId: number) => {
+        const result = await dispatch(ordinaryMessage(text, threadId));
+        const participant = result.deferredWork;
+        if (!participant) {
+          throw new Error("Expected a durable participant for buffered Telegram input");
+        }
+        work.push(participant.task);
+        const flush = takeDebounceFlush();
+        flushes.push(flush);
+        return { participant, flush };
+      };
+
+      try {
+        const active = await buffer("ordinary run", 99);
+        active.flush();
+        await started.promise;
+        const sameTopic = await buffer("same-topic follow-up", 99);
+        const otherTopic = await buffer("cancel this topic", 100);
+
+        // These updates traverse the real grammY command and message handlers. A
+        // status stuck behind the active debounce flush also stalls the shared
+        // control lane, including a stop targeting another topic.
+        const control = dispatch(groupCommand(command, 99));
+        const stop = dispatch(groupCommand("/stop", 100));
+        await vi.waitFor(() => {
+          expect(harness.replySpy.mock.calls.map(([ctx]) => ctx.RawBody).toSorted()).toEqual(
+            ["ordinary run", command, "/stop"].toSorted(),
+          );
+        });
+        await Promise.all([control, stop]);
+        expect(active.participant.isSettled()).toBe(false);
+        expect(sameTopic.participant.isSettled()).toBe(false);
+        await expect(otherTopic.participant.task).resolves.toEqual({ kind: "skipped" });
+        expect(
+          harness.replySpy.mock.calls.find(([ctx]) => ctx.RawBody === command)?.[0],
+        ).toMatchObject({
+          CommandSource: native ? "native" : "text",
+          CommandAuthorized: true,
+          MessageThreadId: 99,
+        });
+        expect(
+          harness.replySpy.mock.calls.find(([ctx]) => ctx.RawBody === "/stop")?.[0],
+        ).toMatchObject({
+          CommandAuthorized: true,
+          MessageThreadId: 100,
+        });
+
+        release.resolve();
+        await expect(active.participant.task).resolves.toEqual({ kind: "completed" });
+        sameTopic.flush();
+        await expect(sameTopic.participant.task).resolves.toEqual({ kind: "completed" });
+        expect(harness.replySpy.mock.calls.map(([ctx]) => ctx.RawBody).toSorted()).toEqual(
+          ["ordinary run", command, "/stop", "same-topic follow-up"].toSorted(),
+        );
+      } finally {
+        release.resolve();
+        for (const flush of flushes) {
+          flush();
+        }
+        await Promise.allSettled(work);
+        timer.mockRestore();
+      }
+    },
+  );
+
+  it("does not let an unauthorized native stop cancel buffered input", async () => {
+    const bot = createDebouncedBot(true, "99999");
+    const timer = vi.spyOn(globalThis, "setTimeout");
+    let flush: (() => void) | undefined;
+    let sourceWork: Promise<unknown> | undefined;
+    try {
+      const update = { update_id: 6001, message: ordinaryMessage("keep this input", 99) };
+      const pending = await runWithTelegramSpooledReplayUpdate(update, () =>
+        bot.handleUpdate(update),
+      );
+      const participant = pending.deferredWork;
+      if (!participant) {
+        throw new Error("Expected a durable participant for buffered Telegram input");
+      }
+      sourceWork = participant.task;
+      flush = takeDebounceFlush();
+
+      await bot.handleUpdate({ update_id: 6002, message: groupCommand("/stop", 99) });
+
+      expect(harness.replySpy).not.toHaveBeenCalled();
+      expect(participant.isSettled()).toBe(false);
+      flush();
+      await expect(participant.task).resolves.toEqual({ kind: "completed" });
+      expect(harness.replySpy.mock.calls.map(([ctx]) => ctx.RawBody)).toEqual(["keep this input"]);
+    } finally {
+      flush?.();
+      await sourceWork;
+      timer.mockRestore();
+    }
+  });
+});
