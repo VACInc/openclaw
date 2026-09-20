@@ -281,13 +281,11 @@ describe("saved update failure resolution", () => {
   });
 
   it.each([
-    { when: "before verification", updating: false },
-    { when: "during verification", updating: false },
-    { when: "before verification", updating: true },
-    { when: "during verification", updating: true },
+    ["before verification", "OPENCLAW_UPDATE_IN_PROGRESS"],
+    ["during verification", "OPENCLAW_UPDATE_POST_CORE_CONVERGENCE"],
   ])(
-    "does not certify pending plugin migrations $when (updating=$updating)",
-    async ({ when, updating }) => {
+    "does not certify pending plugin migrations %s despite updater completion",
+    async (when, marker) => {
       const pending = [
         {
           pluginId: "codex",
@@ -304,17 +302,44 @@ describe("saved update failure resolution", () => {
           return true;
         });
       }
-      const result = await validate(undefined, {
+      const result = await validate(failure(), {
         OPENCLAW_STATE_DIR: "/fixture/state",
-        OPENCLAW_UPDATE_IN_PROGRESS: updating ? "1" : undefined,
+        [marker]: "1",
       });
       expect(result).toMatchObject({
         ok: false,
         summary: expect.stringContaining('Plugin "codex" state migration is pending'),
       });
+      expect(result.summary).toContain("Let the current update or repair finish.");
+    },
+  );
+
+  it.each(["OPENCLAW_UPDATE_IN_PROGRESS", "OPENCLAW_UPDATE_POST_CORE_CONVERGENCE"])(
+    "preserves the caller's %s context in pending migration guidance",
+    async (marker) => {
+      vi.mocked(readDeferredPluginMigrations).mockReturnValue([
+        {
+          pluginId: "fixture-plugin",
+          reason: "Package repair deferred.",
+          command: "openclaw update repair",
+        },
+      ]);
+      const result = await validateTriageUpdateResolution({
+        failure: failure(),
+        installRoot: "/fixture/openclaw",
+        env: { OPENCLAW_STATE_DIR: "/fixture/state", [marker]: "1" },
+        signal: new AbortController().signal,
+        validateDoctor,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        summary: expect.stringContaining("Let the current update or repair finish."),
+      });
       expect(result.summary).toContain(
-        updating ? "Let the current update or repair finish." : 'Run "openclaw doctor --fix"',
+        'If this warning remains afterward, run "openclaw update repair"',
       );
+      expect(result.stopReason).toBe(result.summary);
     },
   );
 
