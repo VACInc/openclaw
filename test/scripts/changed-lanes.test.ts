@@ -2182,7 +2182,7 @@ describe("scripts/changed-lanes", () => {
     })),
     {
       name: "selects consuming test graphs with UI CSS and docs companions",
-      path: "ui/src/e2e/chat-composer-picker-layout.e2e.test.ts",
+      path: "ui/src/e2e/chat-composer-focus.e2e.test.ts",
       extraPaths: [
         "ui/src/styles/chat/composer.css",
         "ui/src/styles/chat/composer-surface.css",
@@ -2194,6 +2194,7 @@ describe("scripts/changed-lanes", () => {
         excludes: ["tsgo:core"],
         coreTestChecks: ["checkBoundary", "checkTypes"],
         stylelintTargets: [
+          "ui/src/e2e/chat-composer-focus.e2e.test.ts",
           "ui/src/styles/chat/composer-surface.css",
           "ui/src/styles/chat/composer.css",
         ],
@@ -2271,9 +2272,8 @@ describe("scripts/changed-lanes", () => {
       "coreTestChecks" in expected ? expected.coreTestChecks : [],
     );
     if ("stylelintTargets" in expected && expected.stylelintTargets) {
-      expect(
-        plan.commands.find((command) => command.name.startsWith("lint UI changed style")),
-      ).toMatchObject({
+      const stylelint = plan.commands.find((cmd) => cmd.name.startsWith("lint UI changed style"));
+      expect(stylelint).toMatchObject({
         args: ["--import", "tsx", "scripts/run-stylelint.mts", ...expected.stylelintTargets],
       });
     }
