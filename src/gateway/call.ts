@@ -1074,6 +1074,7 @@ async function executeGatewayRequestWithScopes<T>(params: {
 async function callGatewayWithScopes<T = Record<string, unknown>>(
   opts: CallGatewayBaseOptions,
   scopes: OperatorScope[] | undefined,
+  localCliAbort = false,
 ): Promise<T> {
   const context = await resolveGatewayCallContext(opts);
   const { timeoutMs, startupTimeoutMs, safeTimerTimeoutMs } = resolveGatewayCallTimeout(
@@ -1148,6 +1149,11 @@ async function callGatewayWithScopes<T = Record<string, unknown>>(
         ? null
         : resolveDeviceIdentityForGatewayCall(opts.sharedStateMode)
       : opts.deviceIdentity;
+  if (localCliAbort && omitDeviceIdentity && !deviceIdentity) {
+    // A one-shot shared-auth CLI connection cannot match an earlier run's owner.
+    // Request admin authority for cancellation; the Gateway still validates it.
+    scopes = [ADMIN_SCOPE];
+  }
   let storedAuth: DeviceAuthEntry | null | undefined;
   if (useStoredDeviceAuth) {
     storedAuth = await loadStoredOperatorDeviceAuthToken(
@@ -1346,6 +1352,9 @@ export async function callGatewayCli<T = Record<string, unknown>>(
   const scopes = isGatewayMethodClassified(opts.method)
     ? resolveLeastPrivilegeOperatorScopesForMethod(opts.method, opts.params)
     : CLI_DEFAULT_OPERATOR_SCOPES;
+  if (opts.method === "chat.abort" || opts.method === "sessions.abort") {
+    return await callGatewayWithScopes(opts, scopes, true);
+  }
   return await callGatewayWithScopeEscalation(opts, scopes);
 }
 
