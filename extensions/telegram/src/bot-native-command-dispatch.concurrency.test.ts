@@ -96,7 +96,7 @@ describe("Telegram commands during buffered message processing", () => {
         const control = dispatch(groupCommand(command, 99));
         const stop = dispatch(groupCommand("/stop", 100));
         await vi.waitFor(() => {
-          expect(harness.replySpy.mock.calls.map(([ctx]) => ctx.RawBody).toSorted()).toEqual(
+          expect(harness.replySpy.mock.calls.map(([ctx]) => ctx.RawBody ?? "").toSorted()).toEqual(
             ["ordinary run", command, "/stop"].toSorted(),
           );
         });
@@ -122,7 +122,7 @@ describe("Telegram commands during buffered message processing", () => {
         await expect(active.participant.task).resolves.toEqual({ kind: "completed" });
         sameTopic.flush();
         await expect(sameTopic.participant.task).resolves.toEqual({ kind: "completed" });
-        expect(harness.replySpy.mock.calls.map(([ctx]) => ctx.RawBody).toSorted()).toEqual(
+        expect(harness.replySpy.mock.calls.map(([ctx]) => ctx.RawBody ?? "").toSorted()).toEqual(
           ["ordinary run", command, "/stop", "same-topic follow-up"].toSorted(),
         );
       } finally {
