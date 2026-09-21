@@ -905,7 +905,12 @@ describe("createCliToolSummaryTracker", () => {
     expect(deliver).not.toHaveBeenCalled();
   });
 
-  it("leaves plan tools to the authoritative plan event instead of summarizing arguments", async () => {
+  it.each([
+    "progress_card",
+    "mcp__openclaw__progress_card",
+    "update_plan",
+    "mcp__openclaw__update_plan",
+  ])("leaves %s to the authoritative plan event instead of summarizing arguments", async (name) => {
     const deliver = vi.fn();
     const tracker = createCliToolSummaryTracker({
       commandDetailsVisible: true,
@@ -914,7 +919,7 @@ describe("createCliToolSummaryTracker", () => {
       deliver,
     });
     await tracker.noteToolEvent({
-      name: "progress_card",
+      name,
       phase: "start",
       args: {
         markdown: '<progress aria-label="CI · 2/3" value="2" max="3"></progress>',
@@ -922,7 +927,7 @@ describe("createCliToolSummaryTracker", () => {
       toolCallId: "plan-1",
     });
     await tracker.noteToolEvent({
-      name: "progress_card",
+      name,
       phase: "result",
       args: undefined,
       toolCallId: "plan-1",
