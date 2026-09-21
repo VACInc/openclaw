@@ -121,10 +121,17 @@ describe("cron service cross-tick admission lifecycle", () => {
     const releaseDirectA = createDeferred<{ status: "ok"; summary: string }>();
     const releaseDirectB = createDeferred<{ status: "ok"; summary: string }>();
     let pendingStartCount = 0;
+    const pendingStarted = createDeferred();
     const releasePending = createDeferred<{ status: "ok"; summary: string }>();
+    const schedulerRuns: Promise<unknown>[] = [];
     const state = createCronRegressionState({
       storePath: store.storePath,
       nowMs: () => t0,
+      runSchedulerOwned: (executeTick) => {
+        const schedulerRun = executeTick();
+        schedulerRuns.push(schedulerRun);
+        return schedulerRun;
+      },
       runIsolatedAgentJob: vi.fn(async ({ job }: { job: CronJob }) => {
         switch (job.id) {
           case scheduledA.id:
@@ -147,6 +154,7 @@ describe("cron service cross-tick admission lifecycle", () => {
             return await releaseDirectB.promise;
           case pending.id:
             pendingStartCount += 1;
+            pendingStarted.resolve();
             return await releasePending.promise;
           default:
             throw new Error(`unexpected cron job ${job.id}`);
@@ -177,7 +185,8 @@ describe("cron service cross-tick admission lifecycle", () => {
       expect(getActiveGatewayRootWorkCount()).toBe(2);
 
       releaseDirectA.resolve({ status: "ok", summary: "direct a" });
-      await vi.waitFor(() => expect(pendingStartCount).toBe(1));
+      await pendingStarted.promise;
+      expect(pendingStartCount).toBe(1);
       await directRunA;
       expect(getActiveGatewayRootWorkCount()).toBe(2);
 
@@ -186,9 +195,12 @@ describe("cron service cross-tick admission lifecycle", () => {
       expect(getActiveGatewayRootWorkCount()).toBe(1);
 
       releasePending.resolve({ status: "ok", summary: "pending" });
-      await vi.waitFor(() => expect(getActiveGatewayRootWorkCount()).toBe(0));
-      await vi.waitFor(() => expect(state.activeTimerTicks).toBe(0));
+      // Native persistence finishes on the scheduler's owner, not a polling deadline.
+      await Promise.all(schedulerRuns);
+      expect(getActiveGatewayRootWorkCount()).toBe(0);
+      expect(state.activeTimerTicks).toBe(0);
     } finally {
+      stop(state);
       releaseScheduledA.resolve({ status: "ok", summary: "scheduled a cleanup" });
       releaseScheduledB.resolve({ status: "ok", summary: "scheduled b cleanup" });
       releaseDirectA.resolve({ status: "ok", summary: "direct a cleanup" });
@@ -198,8 +210,8 @@ describe("cron service cross-tick admission lifecycle", () => {
         timerRun,
         directRunA ?? Promise.resolve(),
         directRunB ?? Promise.resolve(),
+        ...schedulerRuns,
       ]);
-      stop(state);
     }
   });
 
