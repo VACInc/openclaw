@@ -17,7 +17,7 @@ export function createAgentEventDeliveryStartOrder(options?: {
   let settledTail = Promise.resolve();
   return {
     preserveCallbackStartOrder: options?.preserveCallbackStartOrder ?? true,
-    schedule: (deliver, options) => {
+    schedule: (deliver, deliveryOptions) => {
       const previousStart = startTail;
       const previousSettlement = settledTail;
       let releaseStart: (() => void) | undefined;
@@ -28,7 +28,9 @@ export function createAgentEventDeliveryStartOrder(options?: {
         await previousStart;
         // Completed answers must follow earlier presentation, not merely callback invocation.
         // Ordinary progress retains callback-start ordering across independent streams.
-        if (options?.waitForEarlierDeliveries) await previousSettlement;
+        if (deliveryOptions?.waitForEarlierDeliveries) {
+          await previousSettlement;
+        }
         let delivery: Promise<unknown>;
         try {
           delivery = deliver();

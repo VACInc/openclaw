@@ -451,10 +451,10 @@ export function buildCliRunResult(params: {
       : sourceReplyMirror.delivered
         ? undefined
         : text
-          ? (output.textParts ?? [text]).map((text, assistantMessageIndex) =>
+          ? (output.textParts ?? [text]).map((partText, assistantMessageIndex) =>
               assistantTranscriptOwned || output.textParts
                 ? setReplyPayloadMetadata(
-                    { text },
+                    { text: partText },
                     {
                       ...(output.textParts ? { assistantMessageIndex } : {}),
                       ...(assistantTranscriptOwned ? { assistantTranscriptOwned: true } : {}),
@@ -463,7 +463,7 @@ export function buildCliRunResult(params: {
                         : {}),
                     },
                   )
-                : { text },
+                : { text: partText },
             )
           : resolveReplyExpectation(runParams) === "optional"
             ? [{ text: SILENT_REPLY_TOKEN }]

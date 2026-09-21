@@ -312,13 +312,14 @@ async function acceptMessage(session: ClaudeCliSession, message: Record<string, 
       message.is_error === true ||
       (typeof message.subtype === "string" && message.subtype.startsWith("error")) ||
       (typeof message.result === "string" && hasClaudeRawToolInvocation(message.result));
-    if (!completesTurn) {
-      // The transport owns continuation lifetime; the completed answer can be
-      // delivered through normal reply hooks without waiting for the children.
-      message = { ...message, openclaw_interim_result: true };
-    }
   }
-  if (!turn.events.write(message)) {
+  // The transport owns continuation lifetime; the completed answer can be
+  // delivered through normal reply hooks without waiting for the children.
+  const outputMessage =
+    message.type === "result" && !completesTurn
+      ? { ...message, openclaw_interim_result: true }
+      : message;
+  if (!turn.events.write(outputMessage)) {
     await once(turn.events, "drain", { signal: turn.controller.signal });
   }
   if (completesTurn) {

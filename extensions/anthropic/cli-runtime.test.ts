@@ -231,7 +231,9 @@ describe("Claude native stdio boundary", () => {
       const records: Record<string, unknown>[] = [];
       for await (const record of executeClaudeCli(context)) {
         records.push(record);
-        if (record.type === "result") interim.resolve(record);
+        if (record.type === "result") {
+          interim.resolve(record);
+        }
       }
       settled = true;
       return records;

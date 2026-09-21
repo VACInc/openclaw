@@ -326,7 +326,9 @@ export async function runCliFallbackCandidate(
                     // Block mode treats completed CLI text as an ordinary answer block so
                     // the existing pipeline owns coalescing and final-payload dedupe.
                     const reply = prepareCliReplyPayload(payload.text, cliCurrentMessageId);
-                    if (!turn.blockStreamingEnabled) reply.isCommentary = true;
+                    if (!turn.blockStreamingEnabled) {
+                      reply.isCommentary = true;
+                    }
                     deliveries.push(params.presentation.blockReplyHandler?.(reply));
                   }
                   await Promise.all(deliveries);

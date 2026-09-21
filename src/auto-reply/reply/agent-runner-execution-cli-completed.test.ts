@@ -32,8 +32,9 @@ it.each(["delivered", "failed-before-deliver"] as const)(
     let cliRunId: string | undefined;
     onTestFinished(
       onAgentEvent((event) => {
-        if (event.runId === cliRunId && event.stream === "assistant" && event.data.text)
+        if (event.runId === cliRunId && event.stream === "assistant" && event.data.text) {
           snapshots.push(event.data.text);
+        }
       }),
     );
     state.createBlockReplyDeliveryHandlerMock.mockImplementationOnce(
@@ -77,7 +78,9 @@ it.each(["delivered", "failed-before-deliver"] as const)(
     expect(onBlockReply).toHaveBeenCalledOnce();
     expect(onBlockReply.mock.calls[0]?.[0]).toMatchObject({ text: "First answer." });
     expect(result.kind).toBe("success");
-    if (result.kind !== "success") throw new Error("Expected successful CLI settlement");
+    if (result.kind !== "success") {
+      throw new Error("Expected successful CLI settlement");
+    }
     expect(result.directBlockDeliveries).toEqual([expect.objectContaining({ outcome })]);
     expect(result.runResult.payloads).toEqual([
       { text: "First answer." },

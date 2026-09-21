@@ -342,7 +342,7 @@ describe("executeAgentTurn: CLI durable commentary", () => {
         { text: "NO_REPLY", silent: true },
         { text: '{"action":"NO_REPLY"}', silent: true },
         { text: "An ordinary caption.", silent: false },
-      ].map((entry) => ({ ...entry, completed })),
+      ].map(({ text, silent }) => ({ text, silent, completed })),
     ),
   )(
     "keeps parsed CLI silence through normalization (completed=$completed): $text",

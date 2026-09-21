@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createAssistantMessageEventStream, type Context } from "openclaw/plugin-sdk/llm";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import { createTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { makeUserMessage } from "../../../test/helpers/user-message.js";
 import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
@@ -9,8 +10,18 @@ import {
   loadSessionEntryReadOnly as loadSessionEntry,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
-import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
-import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
+import {
+  hasOpenClawAgentDatabaseAsyncResources,
+  registerOpenClawAgentDatabaseAsyncResource,
+} from "../../state/openclaw-agent-db-resources.js";
+import {
+  closeOpenClawAgentDatabasesAsync,
+  closeOpenClawAgentDatabasesForTest,
+} from "../../state/openclaw-agent-db.js";
+import {
+  closeOpenClawStateDatabaseAsync,
+  closeOpenClawStateDatabaseForTest,
+} from "../../state/openclaw-state-db.js";
 import {
   runWithDeferredSessionSuspension,
   suspendSession,
@@ -99,14 +110,22 @@ async function joinSuspensionWrites() {
   });
 }
 
-afterEach(async () => {
+async function cleanupFixture() {
   await joinSuspensionWrites();
+  await closeOpenClawAgentDatabasesAsync();
   closeOpenClawAgentDatabasesForTest();
+  await closeOpenClawStateDatabaseAsync();
   closeOpenClawStateDatabaseForTest();
+  expect(
+    hasOpenClawAgentDatabaseAsyncResources(),
+    "fixture workers must settle before root deletion",
+  ).toBe(false);
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   tempRoots.cleanup();
-});
+}
+
+afterEach(cleanupFixture);
 
 async function createRun(agentId: string, sessionPersistence?: "durable" | "detached") {
   const root = tempRoots.make("openclaw-suspension-boundary-");
@@ -653,4 +672,40 @@ describe("embedded run detached session metadata", () => {
       (request) => deferred.push(request),
     );
   });
+});
+
+it("keeps fixture roots and environment until pending database resources close", async () => {
+  const root = tempRoots.make("openclaw-suspension-cleanup-");
+  const stateDir = path.join(root, "state");
+  vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+  const closing = createDeferred();
+  const release = createDeferred();
+  let drained = false;
+  const unregister = registerOpenClawAgentDatabaseAsyncResource({
+    agentId: "main",
+    path: path.join(root, "pending.sqlite"),
+    revoke: () => {},
+    close: async () => {
+      closing.resolve();
+      await release.promise;
+      drained = true;
+    },
+  });
+  const cleanup = cleanupFixture();
+  try {
+    await closing.promise;
+    expect(process.env.OPENCLAW_STATE_DIR).toBe(stateDir);
+    await expect(fs.access(root)).resolves.toBeUndefined();
+    expect(drained).toBe(false);
+  } finally {
+    release.resolve();
+    try {
+      await cleanup;
+    } finally {
+      await closeOpenClawAgentDatabasesAsync();
+      unregister();
+    }
+  }
+  expect(drained).toBe(true);
+  await expect(fs.access(root)).rejects.toMatchObject({ code: "ENOENT" });
 });

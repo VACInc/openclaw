@@ -566,10 +566,11 @@ it.each([true, false])(
     const directBlockDeliveries: DirectBlockDelivery[] = [];
     const handler = createBlockReplyDeliveryHandler({
       onBlockReply: async () => {
-        if (!delivered)
+        if (!delivered) {
           throw new PlatformMessageNotDispatchedError("Synthetic delivery failure", {
             cause: undefined,
           });
+        }
       },
       normalizeStreamingText: (payload) => ({ text: payload.text, skip: false }),
       applyReplyToMode: (payload) => payload,
@@ -579,8 +580,11 @@ it.each([true, false])(
       directBlockDeliveries,
     });
     const sending = handler({ text: "First answer." }, { completed: true });
-    if (delivered) await sending;
-    else await expect(sending).rejects.toThrow("Synthetic delivery failure");
+    if (delivered) {
+      await sending;
+    } else {
+      await expect(sending).rejects.toThrow("Synthetic delivery failure");
+    }
     const { replyPayloads } = await buildReplyPayloads({
       payloads: [{ text: "First answer." }, { text: "Final answer." }],
       isHeartbeat: false,
@@ -649,7 +653,9 @@ it("retains deferred-tail recovery after multiple completed CLI replies", async 
   const directBlockDeliveries: DirectBlockDelivery[] = [];
   const handler = createBlockReplyDeliveryHandler({
     onBlockReply: async (payload) => {
-      if (payload.text !== "See [") return;
+      if (payload.text !== "See [") {
+        return;
+      }
       source.setComplete(false);
       await source.run(async () => {
         setBlockReplyDelivery(Promise.resolve({ outcome: "delivered" }), { text: "See " });
