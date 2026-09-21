@@ -39,6 +39,7 @@ import {
   buildSystemRunApprovalEnvBinding,
 } from "../../infra/system-run-approval-binding.js";
 import { resetLogger, setLoggerOverride } from "../../logging.js";
+import { createDeferredCore } from "../../shared/deferred.js";
 import { createOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { waitForAgentJob } from "../agent-turn/agent-job.js";
 import {
@@ -55,6 +56,11 @@ import { createChatAbortMarker, createChatRunState } from "../server-chat-state.
 import { HEALTH_REFRESH_INTERVAL_MS } from "../server-constants.js";
 import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
 import { normalizeRpcAttachmentsToChatAttachments } from "./attachment-normalize.js";
+import {
+  createForwardingExecApprovalFixture,
+  type ApprovalIosPushDelivery,
+  type ApprovalWebPushDelivery,
+} from "./exec-approval-delivery.test-support.js";
 import { createExecApprovalHandlers } from "./exec-approval.js";
 import { logsHandlers } from "./logs.js";
 
@@ -2659,16 +2665,30 @@ describe("exec approval handlers", () => {
     },
   ) {
     const fixture = createExecApprovalFixture(testContext);
+    const responded = createDeferredCore<Parameters<ExecApprovalRequestArgs["respond"]>>();
     const requestPromise = requestExecApproval({
       handlers: fixture.handlers,
-      respond: fixture.respond,
+      respond: vi.fn((...args: Parameters<ExecApprovalRequestArgs["respond"]>) => {
+        const result = fixture.respond(...args);
+        responded.resolve(args);
+        return result;
+      }),
       context: fixture.context,
       params: params.request,
       client: params.client,
     });
-    await waitForFast(() => {
-      expect(fixture.respond.mock.calls.some((call) => call[1]?.status === "accepted")).toBe(true);
+    void requestPromise.then(
+      () => responded.reject(new Error("Exec approval request finished without a response")),
+      responded.reject,
+    );
+    testContext.onTestFinished(async () => {
+      await fixture.manager.drain();
+      await Promise.allSettled([requestPromise]);
     });
+    const [ok, payload, error] = await responded.promise;
+    expect(ok).toBe(true);
+    expectRecordFields(payload, { status: "accepted" });
+    expect(error).toBeUndefined();
     return {
       ...fixture,
       ...getRequestedExecApprovalPayload(fixture.broadcasts),
@@ -2778,64 +2798,21 @@ describe("exec approval handlers", () => {
     expect(request["commandSpans"]).toBeUndefined();
   }
 
-  function createForwardingExecApprovalFixture(
-    testContext: TestContext,
-    opts?: {
-      webPushDelivery?: {
-        handleRequested: ReturnType<typeof vi.fn>;
-        handleResolved: ReturnType<typeof vi.fn>;
-        handleExpired: ReturnType<typeof vi.fn>;
-      };
-      iosPushDelivery?: {
-        handleRequested: ReturnType<typeof vi.fn>;
-        handleResolved: ReturnType<typeof vi.fn>;
-        handleExpired: ReturnType<typeof vi.fn>;
-      };
-    },
-  ) {
-    const manager = createTestApprovalManager(testContext);
-    const forwarder = {
-      handleRequested: vi.fn(async () => false),
-      handleResolved: vi.fn(async () => {}),
-      stop: vi.fn(),
-    };
-    const handlers = createExecApprovalHandlers(manager, {
-      forwarder,
-      iosPushDelivery: opts?.iosPushDelivery as never,
-    });
-    const respond = vi.fn();
-    const context = {
-      getRuntimeConfig: () => ({}),
-      broadcast: (_eventValue: string, _payload: unknown) => {},
-      hasExecApprovalClients: () => false,
-      approvalWebPushDelivery: opts?.webPushDelivery,
-    };
-    return {
-      manager,
-      handlers,
-      forwarder,
-      webPushDelivery: opts?.webPushDelivery,
-      iosPushDelivery: opts?.iosPushDelivery,
-      respond,
-      context,
-    };
-  }
-
   function createIosPushDelivery(
-    handleRequested: ReturnType<typeof vi.fn> = vi.fn(async () => true),
+    handleRequested: NonNullable<ApprovalIosPushDelivery["handleRequested"]> = async () => true,
   ) {
     return {
-      handleRequested,
+      handleRequested: vi.fn(handleRequested),
       handleResolved: vi.fn(async () => {}),
       handleExpired: vi.fn(async () => {}),
     };
   }
 
   function createWebPushDelivery(
-    handleRequested: ReturnType<typeof vi.fn> = vi.fn(async () => true),
+    handleRequested: ApprovalWebPushDelivery["handleRequested"] = async () => true,
   ) {
     return {
-      handleRequested,
+      handleRequested: vi.fn(handleRequested),
       handleResolved: vi.fn(async () => {}),
       handleExpired: vi.fn(async () => {}),
     };
@@ -4339,18 +4316,35 @@ describe("exec approval handlers", () => {
 
   it("sends Web Push terminal replacement on resolve", async (testContext) => {
     const webPushDelivery = createWebPushDelivery();
-    const { handlers, respond, context } = createForwardingExecApprovalFixture(testContext, {
-      webPushDelivery,
+    const requested = createDeferredCore();
+    const handleRequested = webPushDelivery.handleRequested;
+    webPushDelivery.handleRequested = vi.fn((...args) => {
+      const result = handleRequested(...args);
+      requested.resolve();
+      return result;
     });
+    const { manager, handlers, respond, context } = createForwardingExecApprovalFixture(
+      testContext,
+      {
+        webPushDelivery,
+      },
+    );
     const requestPromise = requestExecApproval({
       handlers,
       respond,
       context,
       params: { timeoutMs: 60_000, id: "approval-web-push-cleanup", host: "gateway" },
     });
-    await waitForFast(() => {
-      expect(webPushDelivery.handleRequested).toHaveBeenCalledTimes(1);
+    void requestPromise.then(
+      () => requested.reject(new Error("Exec approval request finished without Web Push delivery")),
+      requested.reject,
+    );
+    testContext.onTestFinished(async () => {
+      await manager.drain();
+      await Promise.allSettled([requestPromise]);
     });
+    await requested.promise;
+    expect(webPushDelivery.handleRequested).toHaveBeenCalledTimes(1);
 
     await resolveExecApprovalForTest({
       handlers,
@@ -4359,11 +4353,10 @@ describe("exec approval handlers", () => {
     });
     await requestPromise;
 
-    await waitForFast(() => {
-      expectRecordFields(mockCallArg(webPushDelivery.handleResolved), {
-        id: "approval-web-push-cleanup",
-        decision: "allow-once",
-      });
+    // The resolve handler awaits its terminal-delivery follow-ups before responding.
+    expectRecordFields(mockCallArg(webPushDelivery.handleResolved), {
+      id: "approval-web-push-cleanup",
+      decision: "allow-once",
     });
   });
 
