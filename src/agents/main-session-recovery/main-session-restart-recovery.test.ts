@@ -3766,15 +3766,15 @@ describe("main-session-restart-recovery", () => {
     try {
       await waitForFast(() => expect(callGateway).toHaveBeenCalledOnce());
       dispatchSettlement.resolve(); // The second store waits for the first recovery slot.
-      await waitForFast(() => expect(callGateway).toHaveBeenCalledTimes(2));
+      await mockRecoveryRuntime.expectAdmission(
+        2,
+        { storePath, sessionKey: "agent:main:main" },
+        { storePath: lateStorePath, sessionKey: "agent:late:main" },
+      );
       await recovery.stop();
 
-      expect(loadSessionEntry({ sessionKey: "agent:main:main", storePath })).toMatchObject({
-        abortedLastRun: false,
-      });
-      expect(
-        loadSessionEntry({ sessionKey: "agent:late:main", storePath: lateStorePath }),
-      ).toMatchObject({ abortedLastRun: false });
+      expect(readStore(storePath)["agent:main:main"]?.abortedLastRun).toBe(false);
+      expect(readStore(lateStorePath)["agent:late:main"]?.abortedLastRun).toBe(false);
       expect(discoverySpy.mock.calls.filter(([observedCfg]) => observedCfg === cfg)).toHaveLength(
         2,
       );
@@ -3910,7 +3910,7 @@ describe("main-session-restart-recovery", () => {
     ]);
 
     releaseStartup.resolve();
-    await waitForFast(() => expect(callGateway).toHaveBeenCalledOnce());
+    await mockRecoveryRuntime.expectAdmission(1, { storePath, sessionKey: "agent:main:main" });
     await recovery.stop();
 
     const store = readStore(storePath);
@@ -3947,7 +3947,7 @@ describe("main-session-restart-recovery", () => {
     } as OpenClawConfig;
     releaseStartup.resolve();
 
-    await waitForFast(() => expect(callGateway).toHaveBeenCalledOnce());
+    await mockRecoveryRuntime.expectAdmission(1, { storePath, sessionKey: "agent:work:main" });
     await recovery.stop();
     expect(loadSessionEntry({ sessionKey: "agent:work:main", storePath })).toMatchObject({
       abortedLastRun: false,
@@ -4711,23 +4711,22 @@ describe("main-session-restart-recovery", () => {
         stateDir: tmpDir,
       });
       try {
-        await waitForFast(() => {
-          for (const target of targets) {
-            const entry = loadSessionEntry(target);
-            expect(entry?.mainRestartRecovery?.chargedAttempts).toBe(3);
-            expect(entry?.mainRestartRecovery?.reservation).toBeUndefined();
-          }
-        });
-        await waitForFast(() => {
-          for (const [index, target] of targets.entries()) {
-            expect(loadSessionEntry(target)).toMatchObject({
-              sessionId: `ops-session-${index}`,
-              status: "failed",
-              abortedLastRun: false,
-              mainRestartRecovery: { tombstone: expect.any(Object) },
-            });
-          }
-        });
+        await mockRecoveryRuntime.waitForSessionState([sessionKey], () =>
+          targets.every((target) =>
+            Boolean(loadSessionEntry(target)?.mainRestartRecovery?.tombstone),
+          ),
+        );
+        for (const [index, target] of targets.entries()) {
+          const entry = loadSessionEntry(target);
+          expect(entry?.mainRestartRecovery?.chargedAttempts).toBe(3);
+          expect(entry?.mainRestartRecovery?.reservation).toBeUndefined();
+          expect(entry).toMatchObject({
+            sessionId: `ops-session-${index}`,
+            status: "failed",
+            abortedLastRun: false,
+            mainRestartRecovery: { tombstone: expect.any(Object) },
+          });
+        }
         expect(
           vi.mocked(callGateway).mock.calls.filter(([call]) => call.method === "agent"),
         ).toHaveLength(2);
