@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { normalizeCompatibilityConfig } from "../../../extensions/telegram/config-doctor-api.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { applyPluginDoctorCompatibilityMigrations } from "../../plugins/doctor-contract-registry.js";
 import type { AgentMessage } from "../runtime/index.js";
 import { getHistoryLimitFromSessionKey, limitHistoryTurns } from "./history.js";
 
 const sentinel = Number.MAX_SAFE_INTEGER;
+function normalizeCompatibilityConfig({ cfg }: { cfg: OpenClawConfig }) {
+  return applyPluginDoctorCompatibilityMigrations(cfg, { pluginIds: ["telegram"] });
+}
+
 function transcript(turns: number): AgentMessage[] {
   return Array.from({ length: turns }, (_, index) => ({
     role: "user",
