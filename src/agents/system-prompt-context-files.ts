@@ -28,30 +28,27 @@ function sanitizeContextFileContentForPrompt(content: string): string {
 }
 
 export function prepareContextFilesForPrompt(contextFiles: EmbeddedContextFile[]) {
-  return (
-    contextFiles
-      .map((file) => {
-        const path = normalizeContextFilePath(file.path);
-        const basename = normalizeLowercaseStringOrEmpty(path.slice(path.lastIndexOf("/") + 1));
-        return {
-          file,
-          path,
-          basename,
-          order: CONTEXT_FILE_ORDER.get(basename) ?? Number.MAX_SAFE_INTEGER,
-        };
-      })
-      // oxlint-disable-next-line unicorn/no-array-sort -- map creates an owned descriptor array.
-      .sort((a, b) => {
-        if (a.order !== b.order) {
-          return a.order - b.order;
-        }
-        if (a.basename !== b.basename) {
-          return a.basename.localeCompare(b.basename);
-        }
-        // Preserve loader precedence for shared USER defaults and the personal overlay.
-        return a.basename === "user.md" ? 0 : a.path.localeCompare(b.path);
-      })
-  );
+  return contextFiles
+    .map((file) => {
+      const path = normalizeContextFilePath(file.path);
+      const basename = normalizeLowercaseStringOrEmpty(path.slice(path.lastIndexOf("/") + 1));
+      return {
+        file,
+        path,
+        basename,
+        order: CONTEXT_FILE_ORDER.get(basename) ?? Number.MAX_SAFE_INTEGER,
+      };
+    })
+    .toSorted((a, b) => {
+      if (a.order !== b.order) {
+        return a.order - b.order;
+      }
+      if (a.basename !== b.basename) {
+        return a.basename.localeCompare(b.basename);
+      }
+      // Preserve loader precedence for shared USER defaults and the personal overlay.
+      return a.basename === "user.md" ? 0 : a.path.localeCompare(b.path);
+    });
 }
 
 export function buildProjectContextSection(files: ReturnType<typeof prepareContextFilesForPrompt>) {
