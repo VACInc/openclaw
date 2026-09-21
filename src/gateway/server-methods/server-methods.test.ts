@@ -2621,6 +2621,7 @@ describe("exec approval handlers", () => {
       testContext,
       {
         request: {
+          timeoutMs: 60_000,
           twoPhase: true,
           host: "gateway",
           command: "echo ok",
