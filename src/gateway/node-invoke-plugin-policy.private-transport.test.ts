@@ -61,7 +61,7 @@ describe("private node policy transport", () => {
     setDangerousDemoCommandRegistry([registration]);
     const node = createNodeSession();
     node.commands = [];
-    const { context, invoke } = createContext({
+    const { context, invoke, approvalRequested } = createContext({
       nodeSession: node,
       pluginApprovalManager: manager,
       getApprovalClientConnIds: createApprovalClientLookup([reviewer]),
@@ -79,7 +79,7 @@ describe("private node policy transport", () => {
       onNodeCommandDispatched,
     });
 
-    const approval = await expectSinglePendingApproval(manager);
+    const approval = await expectSinglePendingApproval(manager, result, approvalRequested);
     expect(privateTransport.invoke).not.toHaveBeenCalled();
     expect(await manager.resolve(approval.id, "allow-once")).toBe(true);
     await expect(result).resolves.toMatchObject({ ok: true, payload: { completed: true } });

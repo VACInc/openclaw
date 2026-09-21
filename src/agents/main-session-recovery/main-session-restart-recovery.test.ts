@@ -4597,28 +4597,35 @@ describe("main-session-restart-recovery", () => {
       })
       .mockResolvedValueOnce({ runId: "run-resumed" });
 
-    scheduleRestartAbortedMainSessionRecovery({
+    const recovery = scheduleRestartAbortedMainSessionRecovery({
       getConfig: () => ({ agents: { entries: { main: { default: true } } } }),
       delayMs: 0,
       maxRetries: 1,
       stateDir: tmpDir,
     });
-
-    await waitForFast(() => {
+    try {
+      await mockRecoveryRuntime.waitForSessionState(["agent:main:main"], () =>
+        Boolean(
+          loadSessionEntry({ sessionKey: "agent:main:main", storePath })?.mainRestartRecovery
+            ?.tombstone,
+        ),
+      );
       expect(loadSessionEntry({ sessionKey: "agent:main:main", storePath })).toMatchObject({
         status: "failed",
         mainRestartRecovery: { tombstone: expect.any(Object) },
       });
-    });
-    expect(callGateway).toHaveBeenCalledTimes(2);
-    const freshEntry = loadSessionEntry({ sessionKey: "agent:main:fresh", storePath });
-    expect(freshEntry).toMatchObject({
-      sessionId: "fresh-session",
-      status: "running",
-      abortedLastRun: true,
-      mainRestartRecovery: { chargedAttempts: 3 },
-    });
-    expect(freshEntry?.mainRestartRecovery?.tombstone).toBeUndefined();
+      expect(callGateway).toHaveBeenCalledTimes(2);
+      const freshEntry = loadSessionEntry({ sessionKey: "agent:main:fresh", storePath });
+      expect(freshEntry).toMatchObject({
+        sessionId: "fresh-session",
+        status: "running",
+        abortedLastRun: true,
+        mainRestartRecovery: { chargedAttempts: 3 },
+      });
+      expect(freshEntry?.mainRestartRecovery?.tombstone).toBeUndefined();
+    } finally {
+      await recovery.stop();
+    }
   });
 
   it("observes final exhaustion in distinct stores for the same logical session", async () => {
@@ -4652,23 +4659,22 @@ describe("main-session-restart-recovery", () => {
         stateDir: tmpDir,
       });
       try {
-        await waitForFast(() => {
-          for (const target of targets) {
-            const entry = loadSessionEntry(target);
-            expect(entry?.mainRestartRecovery?.chargedAttempts).toBe(3);
-            expect(entry?.mainRestartRecovery?.reservation).toBeUndefined();
-          }
-        });
-        await waitForFast(() => {
-          for (const [index, target] of targets.entries()) {
-            expect(loadSessionEntry(target)).toMatchObject({
-              sessionId: `ops-session-${index}`,
-              status: "failed",
-              abortedLastRun: false,
-              mainRestartRecovery: { tombstone: expect.any(Object) },
-            });
-          }
-        });
+        await mockRecoveryRuntime.waitForSessionState([sessionKey], () =>
+          targets.every((target) =>
+            Boolean(loadSessionEntry(target)?.mainRestartRecovery?.tombstone),
+          ),
+        );
+        for (const [index, target] of targets.entries()) {
+          const entry = loadSessionEntry(target);
+          expect(entry?.mainRestartRecovery?.chargedAttempts).toBe(3);
+          expect(entry?.mainRestartRecovery?.reservation).toBeUndefined();
+          expect(entry).toMatchObject({
+            sessionId: `ops-session-${index}`,
+            status: "failed",
+            abortedLastRun: false,
+            mainRestartRecovery: { tombstone: expect.any(Object) },
+          });
+        }
         expect(
           vi.mocked(callGateway).mock.calls.filter(([call]) => call.method === "agent"),
         ).toHaveLength(2);
@@ -4695,6 +4701,7 @@ describe("main-session-restart-recovery", () => {
       })
       .mockResolvedValueOnce({ runId: "run-resumed" });
     const warn = vi.spyOn(mainSessionRecoveryLog, "warn");
+    const queued = mockRecoveryRuntime.observeQueuedAdmission("main-session:target-recovery");
     const recovery = scheduleRestartAbortedMainSessionRecovery({
       getConfig: () => ({}),
       delayMs: 0,
@@ -4703,23 +4710,13 @@ describe("main-session-restart-recovery", () => {
     });
     let stopping: Promise<void> | undefined;
     try {
-      await waitForFast(() => {
-        expect(suspension.lease).not.toBeNull();
-        expect(callGateway).toHaveBeenCalledTimes(2);
-        expect(getActiveGatewayRootWorkCount()).toBe(0);
-      });
-      let stopped = false;
-      stopping = recovery.stop().then(() => {
-        stopped = true;
-      });
-      await new Promise<void>((resolve) => {
-        setImmediate(resolve);
-      });
-      expect(stopped).toBe(true);
+      await queued;
+      expect(suspension.lease).not.toBeNull();
+      expect(callGateway).toHaveBeenCalledTimes(2);
+      expect(getActiveGatewayRootWorkCount()).toBe(0);
+      stopping = recovery.stop();
+      await stopping;
       suspension.lease?.rollback();
-      await new Promise<void>((resolve) => {
-        setImmediate(resolve);
-      });
       expect(callGateway).toHaveBeenCalledTimes(2);
       expect(loadSessionEntry({ sessionKey: "agent:main:main", storePath })).toMatchObject({
         status: "running",

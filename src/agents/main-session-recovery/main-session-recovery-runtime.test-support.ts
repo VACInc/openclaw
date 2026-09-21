@@ -3,6 +3,7 @@ import { createDeferred } from "../../../test/helpers/promise.js";
 import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
 import type { callGateway } from "../../gateway/call.js";
 import type { GatewayRecoveryRuntime } from "../../gateway/server-instance-runtime.types.js";
+import * as gatewayAdmission from "../../process/gateway-work-admission.js";
 import { sessionChanges } from "../../sessions/session-row-changes.js";
 
 export function createRecoveryRuntimeFixture(params: {
@@ -10,7 +11,49 @@ export function createRecoveryRuntimeFixture(params: {
   getDispatchSettlement: () => Promise<void>;
   sendRecoveryNotice: GatewayRecoveryRuntime["sendRecoveryNotice"];
 }) {
+  const waitForSessionState = async (sessionKeys: readonly string[], isReady: () => boolean) => {
+    const ready = createDeferred();
+    const observe = () => {
+      try {
+        if (isReady()) {
+          ready.resolve();
+        }
+      } catch (error) {
+        ready.reject(error);
+      }
+    };
+    const unsubscribe = sessionChanges.subscribe((change) => {
+      if ("sessionKey" in change && sessionKeys.includes(change.sessionKey)) {
+        observe();
+      }
+    });
+    onTestFinished(unsubscribe);
+    try {
+      // Subscribe before reading so an already committed state also completes.
+      observe();
+      await ready.promise;
+    } finally {
+      unsubscribe();
+    }
+  };
   return {
+    waitForSessionState,
+    observeQueuedAdmission(expectedOrigin: string): Promise<void> {
+      const queued = createDeferred();
+      const admit = gatewayAdmission.runWithGatewayIndependentRootWorkAdmission;
+      const observer = vi
+        .spyOn(gatewayAdmission, "runWithGatewayIndependentRootWorkAdmission")
+        .mockImplementation(<T>(run: () => Promise<T>, origin?: string, signal?: AbortSignal) => {
+          const pending = admit(run, origin, signal);
+          // The real admission owner has registered its wait before returning.
+          if (origin === expectedOrigin) {
+            queued.resolve();
+          }
+          return pending;
+        });
+      onTestFinished(() => observer.mockRestore());
+      return queued.promise;
+    },
     async expectAdmission(
       expectedGatewayCalls: number,
       ...scopes: Array<{ storePath: string; sessionKey: string }>
@@ -20,34 +63,15 @@ export function createRecoveryRuntimeFixture(params: {
         expect(entry, "recovery fixture session must exist").toBeDefined();
         return { scope, sessionId: entry?.sessionId };
       });
-      const admitted = createDeferred();
-      const observe = () => {
-        if (
+      await waitForSessionState(
+        scopes.map((scope) => scope.sessionKey),
+        () =>
           targets.every(({ scope, sessionId }) => {
             const entry = loadSessionEntry(scope);
             return entry?.sessionId === sessionId && entry?.abortedLastRun === false;
-          })
-        ) {
-          admitted.resolve();
-        }
-      };
-      const unsubscribe = sessionChanges.subscribe((change) => {
-        if (
-          "sessionKey" in change &&
-          targets.some(({ scope }) => scope.sessionKey === change.sessionKey)
-        ) {
-          observe();
-        }
-      });
-      onTestFinished(unsubscribe);
-      try {
-        // Subscribe before reading so an already committed admission also completes.
-        observe();
-        await admitted.promise;
-        expect(params.callGateway).toHaveBeenCalledTimes(expectedGatewayCalls);
-      } finally {
-        unsubscribe();
-      }
+          }),
+      );
+      expect(params.callGateway).toHaveBeenCalledTimes(expectedGatewayCalls);
     },
     dispatchSessionMethod: vi.fn(),
     dispatchAgent: async <T>(

@@ -17,7 +17,7 @@ import {
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../plugins/runtime.js";
 import type { OpenClawPluginNodeInvokePolicyContext } from "../plugins/types.js";
-import { closeOpenClawStateDatabaseByPath } from "../state/openclaw-state-db-cache.js";
+import { closeOpenClawStateDatabaseByPathAsync } from "../state/openclaw-state-db-cache.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
 import { createTestApprovalManager } from "./exec-approval-manager.test-support.js";
 import { applyPluginNodeInvokePolicy } from "./node-invoke-plugin-policy.js";
@@ -59,10 +59,10 @@ describe("applyPluginNodeInvokePolicy", () => {
     hasApprovalTurnSourceRouteMock.mockClear();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     resetPluginRuntimeStateForTest();
     for (const dir of tempDirs.splice(0)) {
-      closeOpenClawStateDatabaseByPath(path.join(dir, "state.sqlite"));
+      await closeOpenClawStateDatabaseByPathAsync(path.join(dir, "state.sqlite"));
       fs.rmSync(dir, { force: true, recursive: true });
     }
   });
@@ -165,7 +165,7 @@ describe("applyPluginNodeInvokePolicy", () => {
         return await policyContext.invokeNode();
       }),
     ]);
-    const { context, invoke } = createContext({
+    const { context, invoke, approvalRequested } = createContext({
       nodeSession,
       pluginApprovalManager: manager,
       getApprovalClientConnIds: createApprovalClientLookup([reviewer]),
@@ -207,7 +207,7 @@ describe("applyPluginNodeInvokePolicy", () => {
       nodeInvokeStream: stream,
     });
 
-    const approval = await expectSinglePendingApproval(manager);
+    const approval = await expectSinglePendingApproval(manager, resultPromise, approvalRequested);
     expect(approval.request.sessionKey).toBe("agent:main:paired");
     expect(invoke).not.toHaveBeenCalled();
     expect(await manager.resolve(approval.id, "allow-once")).toBe(true);
@@ -240,7 +240,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     });
     setDangerousDemoCommandRegistry([createApprovalRequestPolicy()]);
     const reviewer = createOperatorClient("conn-owner-approval");
-    const { context } = createContext({
+    const { context, approvalRequested } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds: createApprovalClientLookup([reviewer]),
     });
@@ -259,7 +259,7 @@ describe("applyPluginNodeInvokePolicy", () => {
       sessionKey: "agent:main:plugin-asserted",
     });
 
-    const approval = await expectSinglePendingApproval(manager);
+    const approval = await expectSinglePendingApproval(manager, resultPromise, approvalRequested);
     expect(approval.request.sessionKey).toBeNull();
     expect(await manager.resolve(approval.id, "deny")).toBe(true);
     await expect(resultPromise).resolves.toMatchObject({ ok: true });
@@ -651,7 +651,7 @@ describe("applyPluginNodeInvokePolicy", () => {
       }),
     ]);
     setDangerousDemoCommandRegistry([createApprovalRequestPolicy()]);
-    const { context } = createContext({
+    const { context, approvalRequested } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds,
     });
@@ -659,7 +659,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     requester.internal = synthetic ? { syntheticClient: true } : undefined;
     const resultPromise = invokeDemoPolicy(context, requester);
 
-    const record = await expectSinglePendingApproval(manager);
+    const record = await expectSinglePendingApproval(manager, resultPromise, approvalRequested);
     expect(record.requestedByConnId).toBe("conn-requester");
     expect(record.requestedByDeviceId).toBe("device-owner");
     expect(record.requestedByClientId).toBe("client-owner");
@@ -680,13 +680,13 @@ describe("applyPluginNodeInvokePolicy", () => {
     });
     const requester = createOperatorClient();
     setDangerousDemoCommandRegistry([createApprovalRequestPolicy()]);
-    const { context } = createContext({
+    const { context, approvalRequested } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds: createApprovalClientLookup([requester]),
     });
     const resultPromise = invokeDemoPolicy(context, requester);
 
-    const record = await expectSinglePendingApproval(manager);
+    const record = await expectSinglePendingApproval(manager, resultPromise, approvalRequested);
     expect(context.broadcastToConnIds).toHaveBeenCalledWith(
       "plugin.approval.requested",
       expect.objectContaining({ id: record.id }),
@@ -713,10 +713,13 @@ describe("applyPluginNodeInvokePolicy", () => {
         agentId: "agent​x",
       }),
     ]);
-    const { context } = createContext({ pluginApprovalManager: manager, getApprovalClientConnIds });
+    const { context, approvalRequested } = createContext({
+      pluginApprovalManager: manager,
+      getApprovalClientConnIds,
+    });
     const resultPromise = invokeDemoPolicy(context, createOperatorClient());
 
-    const record = await expectSinglePendingApproval(manager);
+    const record = await expectSinglePendingApproval(manager, resultPromise, approvalRequested);
     expect(record.request.title).toBe("Deploy\\u{202E}yolped");
     expect(record.request.description).toBe("safe\\u{200B}text");
     // Metadata is interpolated into channel approval text lines.
@@ -734,7 +737,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     setDangerousDemoCommandRegistry([
       createApprovalRequestPolicy({ allowedDecisions: ["allow-once"] }),
     ]);
-    const { context } = createContext({
+    const { context, approvalRequested } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds: createApprovalClientLookup([
         createOperatorClient("conn-owner-approval"),
@@ -742,7 +745,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     });
     const resultPromise = invokeDemoPolicy(context, createOperatorClient());
 
-    const record = await expectSinglePendingApproval(manager);
+    const record = await expectSinglePendingApproval(manager, resultPromise, approvalRequested);
     expect(record.request.allowedDecisions).toEqual(["allow-once", "deny"]);
     expect(await manager.resolve(record.id, "allow-always")).toBe(false);
     expect(await manager.listPendingRecords()).toHaveLength(1);
@@ -758,7 +761,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     const getApprovalClientConnIds = vi.fn(() => new Set<string>());
     const handlePluginApprovalRequested = vi.fn(async () => true);
     setDangerousDemoCommandRegistry([createApprovalRequestPolicy()]);
-    const { context } = createContext({
+    const { context, approvalRequested } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds,
       hasExecApprovalClients: vi.fn(() => false),
@@ -797,7 +800,7 @@ describe("applyPluginNodeInvokePolicy", () => {
       },
     });
 
-    const record = await expectSinglePendingApproval(manager);
+    const record = await expectSinglePendingApproval(manager, resultPromise, approvalRequested);
     expect(record.request.turnSourceChannel).toBe("tui");
     expect(record.request.turnSourceTo).toBe("terminal");
     expect(record.request.turnSourceAccountId).toBe("default");
@@ -839,7 +842,7 @@ describe("applyPluginNodeInvokePolicy", () => {
       ) => true,
     );
     setDangerousDemoCommandRegistry([createApprovalRequestPolicy()]);
-    const { context } = createContext({
+    const { context, approvalRequested } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds: vi.fn(() => new Set<string>()),
       hasExecApprovalClients: vi.fn(() => false),
@@ -847,7 +850,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     });
 
     const resultPromise = invokeDemoPolicy(context, createOperatorClient());
-    const record = await expectSinglePendingApproval(manager);
+    const record = await expectSinglePendingApproval(manager, resultPromise, approvalRequested);
 
     expect(handleRequested).toHaveBeenCalledTimes(1);
     const deliveryOptions = handleRequested.mock.calls[0]?.[1];
@@ -873,7 +876,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     });
     const handleExpired = vi.fn(async () => {});
     setDangerousDemoCommandRegistry([createApprovalRequestPolicy()]);
-    const { context } = createContext({
+    const { context, approvalRequested } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds: vi.fn(() => new Set<string>()),
       hasExecApprovalClients: vi.fn(() => false),
@@ -884,7 +887,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     });
 
     const resultPromise = invokeDemoPolicy(context, createOperatorClient());
-    const record = await expectSinglePendingApproval(manager);
+    const record = await expectSinglePendingApproval(manager, resultPromise, approvalRequested);
     const replacementExpired = vi.fn(async () => {});
     context.pluginApprovalIosPushDelivery = { handleExpired: replacementExpired };
     await manager.expire(record.id, "timeout");
@@ -948,7 +951,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     setDangerousDemoCommandRegistry([
       createApprovalRequestPolicy({ timeoutMs: Number.MAX_SAFE_INTEGER }),
     ]);
-    const { context } = createContext({
+    const { context, approvalRequested } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds: createApprovalClientLookup([
         createOperatorClient("conn-owner-approval"),
@@ -956,7 +959,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     });
     const resultPromise = invokeDemoPolicy(context, createOperatorClient());
 
-    const record = await expectSinglePendingApproval(manager);
+    const record = await expectSinglePendingApproval(manager, resultPromise, approvalRequested);
     expect(record.expiresAtMs - record.createdAtMs).toBe(MAX_PLUGIN_APPROVAL_TIMEOUT_MS);
 
     await expectApprovalResolution(resultPromise, manager, record);
@@ -968,7 +971,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     });
     vi.spyOn(manager, "consumeAllowOnce").mockResolvedValue(false);
     setDangerousDemoCommandRegistry([createApprovalRequestPolicy()]);
-    const { context } = createContext({
+    const { context, approvalRequested } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds: createApprovalClientLookup([
         createOperatorClient("conn-owner-approval"),
@@ -976,7 +979,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     });
     const resultPromise = invokeDemoPolicy(context, createOperatorClient());
 
-    const record = await expectSinglePendingApproval(manager);
+    const record = await expectSinglePendingApproval(manager, resultPromise, approvalRequested);
     expect(await manager.resolve(record.id, "allow-once")).toBe(true);
 
     await expect(resultPromise).resolves.toStrictEqual({
@@ -1039,7 +1042,7 @@ describe("applyPluginNodeInvokePolicy", () => {
         description: `${"b".repeat(255)}🚀tail`,
       }),
     ]);
-    const { context } = createContext({
+    const { context, approvalRequested } = createContext({
       pluginApprovalManager: manager,
       getApprovalClientConnIds: createApprovalClientLookup([
         createOperatorClient("conn-owner-approval"),
@@ -1047,7 +1050,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     });
     const resultPromise = invokeDemoPolicy(context, createOperatorClient());
 
-    const record = await expectSinglePendingApproval(manager);
+    const record = await expectSinglePendingApproval(manager, resultPromise, approvalRequested);
     expect(record.request.title).toBe("a".repeat(79));
     expect(record.request.description).toBe("b".repeat(255));
 

@@ -7,6 +7,7 @@ import { resolveCanonicalPluginApprovalRequestAllowedDecisions } from "../infra/
 import type { PluginApprovalRequestPayload } from "../infra/plugin-approvals.js";
 import { resetPluginRuntimeStateForTest } from "../plugins/runtime.js";
 import { withPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
+import { createDeferredCore } from "../shared/deferred.js";
 import { tableExists } from "../state/openclaw-state-db-schema-helpers.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
@@ -16,6 +17,7 @@ import {
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
+import { drainTestApprovalRequests } from "./exec-approval-manager.test-support.js";
 import { applyPluginNodeInvokePolicy } from "./node-invoke-plugin-policy.js";
 import {
   createApprovalClientLookup,
@@ -47,7 +49,19 @@ const ENVIRONMENT_ID = "environment-1";
 const NODE_ID = "node-1";
 const PAIRING_GENERATION = "pairing-1";
 const CWD = "/worker/workspace";
-const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const approvalManagers = new Set<ExecApprovalManager<PluginApprovalRequestPayload>>();
+const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
+  afterEach(async () => {
+    for (const manager of approvalManagers) {
+      await drainTestApprovalRequests(manager);
+      approvalManagers.delete(manager);
+    }
+    resetPluginRuntimeStateForTest();
+    await closeOpenClawStateDatabaseAsync();
+    closeOpenClawStateDatabaseForTest();
+    cleanup();
+  }),
+);
 
 function createDatabaseOptions(): OpenClawStateDatabaseOptions {
   const stateDir = tempDirs.make("openclaw-placement-grant-");
@@ -55,12 +69,6 @@ function createDatabaseOptions(): OpenClawStateDatabaseOptions {
 }
 
 beforeEach(resetPluginRuntimeStateForTest);
-
-afterEach(async () => {
-  resetPluginRuntimeStateForTest();
-  await closeOpenClawStateDatabaseAsync();
-  closeOpenClawStateDatabaseForTest();
-});
 
 function seedActivePlacement(databaseOptions: OpenClawStateDatabaseOptions): void {
   const database = openOpenClawStateDatabase(databaseOptions);
@@ -420,6 +428,7 @@ describe("placement standing grants", () => {
       retainPlacementStandingGrant: placementStandingGrants.retain,
       validateAgentRuntimeDelegatedAuthority: () => true,
     });
+    approvalManagers.add(manager);
     const policy = createDemoPolicy(async (context) => {
       const placementApproval = await context.approvals?.request({
         title: "Run on placement",
@@ -438,11 +447,13 @@ describe("placement standing grants", () => {
     setDangerousDemoCommandRegistry([policy]);
 
     const nodeSession = { ...createNodeSession(), pairingGeneration: PAIRING_GENERATION };
+    let approvalRequested = createDeferredCore();
     const { context } = createContext({
       pluginApprovalManager: manager,
       nodeSession,
       getApprovalClientConnIds: createApprovalClientLookup([createOperatorClient("reviewer")]),
       validateAgentRuntimeApprovalAuthority: () => true,
+      onApprovalRequested: () => approvalRequested.resolve(),
     });
     context.placementStandingGrants = placementStandingGrants;
     const invoke = vi.fn(async (input: Parameters<typeof context.nodeRegistry.invoke>[0]) => {
@@ -495,14 +506,19 @@ describe("placement standing grants", () => {
       params: DEMO_PARAMS,
       sessionKey: SESSION_KEY,
     });
-    const identityOnlyApproval = await expectSinglePendingApproval(manager);
+    const identityOnlyApproval = await expectSinglePendingApproval(
+      manager,
+      identityOnlyLaunch,
+      approvalRequested.promise,
+    );
     expect(identityOnlyApproval.request.allowedDecisions).not.toContain("allow-always");
     expect(identityOnlyApproval.request.placementGrant).toBeNull();
     expect(await manager.resolve(identityOnlyApproval.id, "deny")).toBe(true);
     await expect(identityOnlyLaunch).resolves.toMatchObject({ ok: false, code: "DENIED" });
 
-    const launch = () =>
-      withPluginRuntimeGatewayRequestScope(
+    const launch = () => {
+      approvalRequested = createDeferredCore();
+      return withPluginRuntimeGatewayRequestScope(
         { isWebchatConnect: () => false, nodePlacementGrantAuthority },
         () =>
           applyPluginNodeInvokePolicy({
@@ -514,9 +530,14 @@ describe("placement standing grants", () => {
             sessionKey: SESSION_KEY,
           }),
       );
+    };
 
     const legacyLaunch = launch();
-    const legacyApproval = await expectSinglePendingApproval(manager);
+    const legacyApproval = await expectSinglePendingApproval(
+      manager,
+      legacyLaunch,
+      approvalRequested.promise,
+    );
     expect(legacyApproval.request.allowedDecisions).not.toContain("allow-always");
     expect(legacyApproval.request.placementGrant).toBeNull();
     expect(await manager.resolve(legacyApproval.id, "deny")).toBe(true);
@@ -524,7 +545,11 @@ describe("placement standing grants", () => {
 
     policy.policy.standingApproval = { kind: "placement", scope: "demo.exec-placement" };
     const firstLaunch = launch();
-    const firstApproval = await expectSinglePendingApproval(manager);
+    const firstApproval = await expectSinglePendingApproval(
+      manager,
+      firstLaunch,
+      approvalRequested.promise,
+    );
     expect(firstApproval.request.placementGrant).toMatchObject({
       sessionId: SESSION_ID,
       nodeId: NODE_ID,
@@ -549,14 +574,22 @@ describe("placement standing grants", () => {
         .where("session_id", "=", SESSION_ID),
     );
     const staleLaunch = launch();
-    const staleApproval = await expectSinglePendingApproval(manager);
+    const staleApproval = await expectSinglePendingApproval(
+      manager,
+      staleLaunch,
+      approvalRequested.promise,
+    );
     placementAuthorityActive = false;
     expect(await manager.resolve(staleApproval.id, "allow-always")).toBe(false);
     await expect(staleLaunch).resolves.toMatchObject({ ok: false, code: "DENIED" });
     placementAuthorityActive = true;
 
     const movedLaunch = launch();
-    const movedApproval = await expectSinglePendingApproval(manager);
+    const movedApproval = await expectSinglePendingApproval(
+      manager,
+      movedLaunch,
+      approvalRequested.promise,
+    );
     expect(movedApproval.id).not.toBe(firstApproval.id);
     expect(movedApproval.request.placementGrant).toMatchObject({ placementGeneration: 5 });
     expect(await manager.resolve(movedApproval.id, "deny")).toBe(true);
