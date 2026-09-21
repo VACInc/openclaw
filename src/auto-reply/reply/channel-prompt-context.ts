@@ -70,7 +70,7 @@ export function selectInboundHistoryContext(
     typeof configuredLimit === "number" &&
     Number.isSafeInteger(configuredLimit) &&
     configuredLimit >= 0
-      ? resolvePromptHistoryLimit(configuredLimit, 20).limit
+      ? resolvePromptHistoryLimit(configuredLimit, 20)
       : 20;
   return {
     boundedHistory: limit > 0 ? history.slice(-limit) : [],

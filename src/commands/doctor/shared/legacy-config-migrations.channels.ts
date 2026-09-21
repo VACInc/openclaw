@@ -1,5 +1,4 @@
 // Legacy channel config migrations for routing, streaming, groups, and account aliases.
-import { resolvePromptHistoryLimit } from "../../../auto-reply/reply/history-limit.js";
 import {
   defineLegacyConfigMigration,
   ensureRecord,
@@ -400,12 +399,6 @@ const GROUP_ROUTING_RULES: LegacyConfigRule[] = [
       'routing.groupChat.mentionPatterns was moved; use messages.groupChat.mentionPatterns instead. Run "openclaw doctor --fix".',
   },
   {
-    path: ["messages", "groupChat", "historyLimit"],
-    message:
-      'messages.groupChat.historyLimit is the JSON integer maximum, which is not a prompt history window. Run "openclaw doctor --fix" to remove it so the default bound applies.',
-    match: (value) => resolvePromptHistoryLimit(value).isSchemaMaximum,
-  },
-  {
     path: ["channels", "telegram", "requireMention"],
     message:
       'channels.telegram.requireMention was removed; use channels.telegram.groups."*".requireMention instead. Run "openclaw doctor --fix".',
@@ -439,17 +432,6 @@ function migrateRetiredWebchatChannelConfig(raw: Record<string, unknown>, change
   changes.push("Removed retired channels.webchat config.");
 }
 
-function migrateSchemaMaxGroupHistoryLimit(raw: Record<string, unknown>, changes: string[]): void {
-  const groupChat = getRecord(getRecord(raw.messages)?.groupChat);
-  if (!groupChat || !resolvePromptHistoryLimit(groupChat.historyLimit).isSchemaMaximum) {
-    return;
-  }
-  delete groupChat.historyLimit;
-  changes.push(
-    "Removed unbounded messages.groupChat.historyLimit; JSON integer maximum is not a prompt history window.",
-  );
-}
-
 /** Legacy config migration specs for channel-owned compatibility keys. */
 export const LEGACY_CONFIG_MIGRATIONS_CHANNELS: LegacyConfigMigrationSpec[] = [
   defineLegacyConfigMigration({
@@ -467,7 +449,6 @@ export const LEGACY_CONFIG_MIGRATIONS_CHANNELS: LegacyConfigMigrationSpec[] = [
       migrateRoutingAllowFrom(raw, changes);
       migrateRoutingGroupChat(raw, changes);
       migrateTelegramRequireMention(raw, changes);
-      migrateSchemaMaxGroupHistoryLimit(raw, changes);
     },
   }),
   defineLegacyConfigMigration({

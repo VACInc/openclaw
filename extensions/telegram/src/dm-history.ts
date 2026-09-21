@@ -12,5 +12,5 @@ export function resolveTelegramDmHistoryLimit(params: {
   return resolvePromptHistoryLimit(
     override ?? params.config.dmHistoryLimit,
     DEFAULT_TELEGRAM_DM_HISTORY_LIMIT,
-  ).limit;
+  );
 }

@@ -399,7 +399,7 @@ export async function monitorSignalProvider(opts: MonitorSignalOpts = {}): Promi
   });
   const historyLimit = resolvePromptHistoryLimit(
     accountInfo.config.historyLimit ?? cfg.messages?.groupChat?.historyLimit,
-  ).limit;
+  );
   const groupHistories = new Map<string, HistoryEntry[]>();
   const textLimit = resolveTextChunkLimit(cfg, "signal", accountInfo.accountId);
   const chunkMode = resolveChunkMode(cfg, "signal", accountInfo.accountId);

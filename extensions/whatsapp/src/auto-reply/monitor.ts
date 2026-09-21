@@ -155,7 +155,7 @@ export async function monitorWebChannel(
     account.historyLimit ??
       cfg.channels?.whatsapp?.historyLimit ??
       cfg.messages?.groupChat?.historyLimit,
-  ).limit;
+  );
   const groupHistories = new Map<
     string,
     Array<{

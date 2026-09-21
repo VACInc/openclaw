@@ -487,7 +487,7 @@ export async function handleFeishuMessage(params: {
 
   const historyLimit = resolvePromptHistoryLimit(
     feishuCfg?.historyLimit ?? cfg.messages?.groupChat?.historyLimit,
-  ).limit;
+  );
   const groupConfig = isGroup
     ? resolveFeishuGroupConfig({ cfg: feishuCfg, groupId: ctx.chatId })
     : undefined;

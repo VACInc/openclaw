@@ -109,7 +109,7 @@ export function createLineBot(opts: LineBotOptions): LineBot {
         groupHistories,
         historyLimit: resolvePromptHistoryLimit(
           account.config.historyLimit ?? cfg.messages?.groupChat?.historyLimit,
-        ).limit,
+        ),
       });
     },
   });

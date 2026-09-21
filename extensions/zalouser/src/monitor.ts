@@ -811,7 +811,7 @@ export async function monitorZalouserProvider(
   const core = getZalouserRuntime();
   const historyLimit = resolvePromptHistoryLimit(
     account.config.historyLimit ?? config.messages?.groupChat?.historyLimit,
-  ).limit;
+  );
   const groupHistories = new Map<string, HistoryEntry[]>();
 
   try {

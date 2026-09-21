@@ -52,7 +52,7 @@ export function createMSTeamsMessageHandler(deps: MSTeamsMessageHandlerDeps) {
   });
   const historyLimit = resolvePromptHistoryLimit(
     msteamsCfg?.historyLimit ?? cfg.messages?.groupChat?.historyLimit,
-  ).limit;
+  );
   const conversationHistories = new Map<string, HistoryEntry[]>();
   const readConfig = createRuntimeConfigReader(cfg);
   const resolveDebounceMs = () =>

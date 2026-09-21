@@ -105,7 +105,7 @@ export function resolveTelegramMessageTurnSettings(params: {
       allowFrom,
     historyLimit: resolvePromptHistoryLimit(
       params.telegramCfg.historyLimit ?? params.cfg.messages?.groupChat?.historyLimit,
-    ).limit,
+    ),
     replyToMode: params.opts.replyToMode ?? params.telegramCfg.replyToMode ?? "off",
     streamMode: resolveTelegramStreamMode(params.telegramCfg),
     textLimit: Math.min(

@@ -356,7 +356,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
   const imessageCfg = accountInfo.config;
   const historyLimit = resolvePromptHistoryLimit(
     imessageCfg.historyLimit ?? cfg.messages?.groupChat?.historyLimit,
-  ).limit;
+  );
   const groupHistories = new Map<string, HistoryEntry[]>();
   const sentMessageCache = createSentMessageCache();
   const selfChatCache = createSelfChatCache();

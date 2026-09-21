@@ -11,13 +11,13 @@ function effectiveLimits(cfg: OpenClawConfig, accountId?: string) {
     ? mergeTelegramAccountConfig(cfg, accountId)
     : (cfg.channels?.telegram ?? {});
   return [
-    resolvePromptHistoryLimit(config.historyLimit ?? cfg.messages?.groupChat?.historyLimit).limit,
+    resolvePromptHistoryLimit(config.historyLimit ?? cfg.messages?.groupChat?.historyLimit),
     resolveTelegramDmHistoryLimit({ config }),
     resolveTelegramDmHistoryLimit({ config, senderId: "42" }),
   ];
 }
 
-describe("Telegram history-window repair", () => {
+describe("Telegram observed history and saved limits", () => {
   it.each([0, 7, 5000])("preserves sentinel overrides over inherited %s windows", (inherited) => {
     const cfg: OpenClawConfig = {
       messages: { groupChat: { historyLimit: inherited } },
@@ -35,9 +35,8 @@ describe("Telegram history-window repair", () => {
     expect([effectiveLimits(result.config), effectiveLimits(result.config, "work")]).toEqual(
       before,
     );
-    expect(result.config.channels?.telegram?.historyLimit).toBe(50);
-    expect(result.config.channels?.telegram?.dms?.["42"]?.historyLimit).toBe(10);
-    expect(result.config.channels?.telegram?.accounts?.work?.dmHistoryLimit).toBe(10);
+    expect(result.config).toEqual(cfg);
+    expect(result.changes).toEqual([]);
     expect(cfg.channels?.telegram?.historyLimit).toBe(sentinel);
     expect(normalizeCompatibilityConfig({ cfg: result.config }).changes).toEqual([]);
   });

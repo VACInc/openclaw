@@ -271,7 +271,7 @@ export async function monitorMatrixProvider(opts: MonitorMatrixOpts = {}): Promi
   const historyLimit = resolvePromptHistoryLimit(
     accountConfig.historyLimit ?? globalGroupChatHistoryLimit,
     0,
-  ).limit;
+  );
   const mediaMaxMb = opts.mediaMaxMb ?? accountConfig.mediaMaxMb ?? DEFAULT_MEDIA_MAX_MB;
   const mediaMaxBytes = Math.max(1, mediaMaxMb) * 1024 * 1024;
   const streaming = resolveMatrixStreamingMode(accountConfig.streaming);

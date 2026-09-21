@@ -72,8 +72,8 @@ export function resolveSlackMonitorPolicy(
   return {
     historyLimit: resolvePromptHistoryLimit(
       slack.historyLimit ?? cfg.messages?.groupChat?.historyLimit,
-    ).limit,
-    dmHistoryLimit: resolvePromptHistoryLimit(slack.dmHistoryLimit, 0).limit,
+    ),
+    dmHistoryLimit: resolvePromptHistoryLimit(slack.dmHistoryLimit, 0),
     sessionScope: cfg.session?.scope ?? ("per-sender" as const),
     mainKey: normalizeMainKey(cfg.session?.mainKey),
     dmEnabled: slack.dm?.enabled ?? true,

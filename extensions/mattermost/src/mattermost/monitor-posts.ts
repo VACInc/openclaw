@@ -64,7 +64,7 @@ export function createMattermostPostHandler(monitor: MattermostMonitorContext) {
   const historyLimit = resolvePromptHistoryLimit(
     account.config.historyLimit ?? cfg.messages?.groupChat?.historyLimit,
     DEFAULT_GROUP_HISTORY_LIMIT,
-  ).limit;
+  );
 
   const recoverThread = createMattermostThreadBackfill({ monitor, channelHistories, historyLimit });
 

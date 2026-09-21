@@ -459,7 +459,7 @@ export function createTelegramMessageContextRuntime({
     const isGroup = msg.chat.type === "group" || msg.chat.type === "supergroup";
     const groupHistoryLimit = resolvePromptHistoryLimit(
       runtimeTelegramCfg.historyLimit ?? runtimeCfg.messages?.groupChat?.historyLimit,
-    ).limit;
+    );
     const dmHistoryLimit = resolveTelegramDmHistoryLimit({
       config: runtimeTelegramCfg,
       senderId: msg.from?.id,

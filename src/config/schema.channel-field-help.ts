@@ -25,7 +25,7 @@ const SHARED_CHANNEL_FIELD_HELP: Record<string, string> = {
   defaultTo: "Target used for outbound messages when the caller supplies none.",
   dm: "Settings that apply only to direct messages on this channel.",
   dmHistoryLimit:
-    "History limit for direct messages. Automatic prompt history is capped at 200 messages; 0 disables it. The JSON integer maximum selects the channel DM default.",
+    "Channel-specific direct-message history limit. Consult channel guidance for message-window defaults and session user-turn trimming; zero has different meanings for those consumers.",
   dmPolicy:
     'Who may DM the agent: "pairing" approves each new sender, "allowlist" trusts allowFrom, "open" allows anyone, "disabled" turns DMs off.',
   dms: "Per-conversation overrides, keyed by DM id.",
@@ -39,7 +39,7 @@ const SHARED_CHANNEL_FIELD_HELP: Record<string, string> = {
   healthMonitor: "Per-channel opt-out for the health monitor that restarts stalled channels.",
   heartbeatVisibility: "Which heartbeat results this channel shows.",
   historyLimit:
-    "How many earlier messages to include as context. 0 disables history. Automatic prompt history is capped at 200 messages. The JSON integer maximum selects the channel default window (50 for shared group history), not an unlimited window.",
+    "Channel-specific history limit. Consult channel guidance for observed-message windows and session user-turn trimming; zero has different meanings for those consumers.",
   markdown: "Markdown rendering overrides for this channel.",
   mediaMaxMb: "Per-attachment media limit in MiB. Channel transport limits still apply.",
   mentionPatterns: "Extra patterns that count as mentioning the agent in group chats.",
