@@ -1,10 +1,8 @@
-import { spawn } from "node:child_process";
-import { once } from "node:events";
 // Persistent operator approval store tests cover terminal CAS, expiry, replay, and recovery.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApprovalResolutionRef } from "../infra/approval-resolution-ref.js";
 import {
   executeSqliteQuerySync,
@@ -32,6 +30,7 @@ import {
   pruneTerminalOperatorApprovals,
   resolveOperatorApproval,
 } from "./operator-approval-store.js";
+import { getOperatorApprovalDetailedInDatabase } from "./operator-approval-store.kernel.js";
 
 type OperatorApprovalDatabase = Pick<OpenClawStateKyselyDatabase, "operator_approvals">;
 type NewOperatorApproval = Parameters<typeof insertOperatorApproval>[0]["approval"];
@@ -385,57 +384,40 @@ describe("operator approval store", () => {
     ).toMatchObject([{ id: "authorized-after-first-page" }]);
   });
 
-  it("reads the default clock after waiting for the SQLite write lock", async () => {
+  it("samples the default clock after acquiring the SQLite write transaction", async () => {
     const databaseOptions = createDatabaseOptions();
-    const createdAtMs = Date.now();
-    const expiresAtMs = createdAtMs + 1_500;
     await insertOperatorApproval({
-      approval: approval("lock-delayed-clock", { createdAtMs, expiresAtMs }),
+      approval: approval("lock-delayed-clock", { createdAtMs: 1_000, expiresAtMs: 2_000 }),
       databaseOptions,
     });
-    const databasePath = openOpenClawStateDatabase(databaseOptions).path;
-    const releaseAtMs = expiresAtMs + 200;
-    const child = spawn(
-      process.execPath,
-      [
-        "--input-type=module",
-        "--eval",
-        [
-          'import { DatabaseSync } from "node:sqlite";',
-          "const [databasePath, releaseAtRaw] = process.argv.slice(1);",
-          "const database = new DatabaseSync(databasePath);",
-          'database.exec("PRAGMA busy_timeout=5000; BEGIN IMMEDIATE;");',
-          'process.stdout.write("locked\\n");',
-          'setTimeout(() => { database.exec("COMMIT"); database.close(); }, Math.max(0, Number(releaseAtRaw) - Date.now()));',
-        ].join("\n"),
-        databasePath,
-        String(releaseAtMs),
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
-    let stderr = "";
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
+    const { db } = openOpenClawStateDatabase(databaseOptions);
+    const originalExec = db.exec.bind(db);
+    let transactionBegan = false;
+    const execSpy = vi.spyOn(db, "exec").mockImplementation((sql) => {
+      const result = originalExec(sql);
+      if (sql === "BEGIN IMMEDIATE") {
+        transactionBegan = true;
+      }
+      return result;
     });
-    const exitPromise = once(child, "exit");
-    await new Promise<void>((resolve, reject) => {
-      child.once("error", reject);
-      child.once("exit", (code) => reject(new Error(`lock holder exited early (${code})`)));
-      child.stdout.once("data", (chunk) => {
-        if (String(chunk).includes("locked")) {
-          resolve();
-        } else {
-          reject(new Error(`unexpected lock holder output: ${String(chunk)}`));
-        }
+    // The worker bridge has separate coverage. This exercises its real store
+    // kernel with a clock that crosses expiry only after write-lock acquisition.
+    const nowSpy = vi
+      .spyOn(Date, "now")
+      .mockImplementation(() => (transactionBegan ? 2_000 : 1_500));
+    try {
+      expect(Date.now()).toBeLessThan(2_000);
+      expect(
+        getOperatorApprovalDetailedInDatabase({ id: "lock-delayed-clock", databaseOptions }),
+      ).toMatchObject({
+        outcome: "found",
+        record: { status: "expired", terminalReason: "timeout" },
       });
-    });
-    expect(Date.now()).toBeLessThan(expiresAtMs);
-
-    const record = await getOperatorApproval({ id: "lock-delayed-clock", databaseOptions });
-    const [exitCode] = await exitPromise;
-
-    expect(exitCode, stderr).toBe(0);
-    expect(record).toMatchObject({ status: "expired", terminalReason: "timeout" });
+      expect(transactionBegan).toBe(true);
+    } finally {
+      nowSpy.mockRestore();
+      execSpy.mockRestore();
+    }
   });
 
   it("preserves BOM, NBSP, and boundary spaces as opaque approval identity", async () => {

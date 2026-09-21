@@ -84,6 +84,23 @@ async function attachStartupNodeConnect(params: {
 }) {
   const sent: unknown[] = [];
   const connectResponse = createDeferred<StartupConnectResponse>();
+  const admissionReleased = createDeferred();
+  const beginAdmission = gatewayWorkAdmission.tryBeginGatewayRestartStartupRootWorkAdmission;
+  const startupAdmission = vi
+    .spyOn(gatewayWorkAdmission, "tryBeginGatewayRestartStartupRootWorkAdmission")
+    .mockImplementationOnce(() => {
+      startupAdmission.mockRestore();
+      const admission = beginAdmission();
+      return (
+        admission && {
+          ...admission,
+          release: () => {
+            admission.release();
+            admissionReleased.resolve();
+          },
+        }
+      );
+    });
   const clients = new Set<unknown>();
   const socket = createGatewayWsTestSocket({
     onSend: (data) => {
@@ -213,22 +230,10 @@ async function attachStartupNodeConnect(params: {
     ),
   );
   const response = async () => {
-    await vi.waitFor(() => {
-      expect(
-        sent.some(
-          (frame) =>
-            typeof frame === "object" &&
-            frame !== null &&
-            (frame as StartupConnectResponse).id === "startup-node-connect",
-        ),
-      ).toBe(true);
-    });
-    return sent.find(
-      (frame) =>
-        typeof frame === "object" &&
-        frame !== null &&
-        (frame as StartupConnectResponse).id === "startup-node-connect",
-    ) as StartupConnectResponse;
+    const frame = await connectResponse.promise;
+    // Hello delivery precedes setup confirmation; keep fixture state until its owner settles.
+    await admissionReleased.promise;
+    return frame;
   };
   return {
     clients,
@@ -237,6 +242,7 @@ async function attachStartupNodeConnect(params: {
     pendingSetup,
     response,
     responseReceived: connectResponse.promise,
+    admissionReleased: admissionReleased.promise,
     sent,
     socket,
   };
@@ -607,23 +613,6 @@ describe("attachGatewayWsConnectionHandler startup readiness", () => {
           }
           const authenticationStarted = createDeferred();
           const releaseAuthentication = createDeferred();
-          const admissionReleased = createDeferred();
-          const beginAdmission =
-            gatewayWorkAdmission.tryBeginGatewayRestartStartupRootWorkAdmission;
-          const startupAdmission = vi
-            .spyOn(gatewayWorkAdmission, "tryBeginGatewayRestartStartupRootWorkAdmission")
-            .mockImplementation(() => {
-              const admission = beginAdmission();
-              return (
-                admission && {
-                  ...admission,
-                  release: () => {
-                    admission.release();
-                    admissionReleased.resolve();
-                  },
-                }
-              );
-            });
           const registeredRootCounts: number[] = [];
           const authorize = gatewayAuth.authorizeWsControlUiGatewayConnect;
           const authentication = vi
@@ -659,7 +648,7 @@ describe("attachGatewayWsConnectionHandler startup readiness", () => {
             if (connectionKind === "paired shared-token") {
               expect(harness.pendingSetup).not.toHaveBeenCalled();
             }
-            await admissionReleased.promise;
+            await harness.admissionReleased;
             expect(getActiveGatewayRootWorkCount()).toBe(0);
             expect(createSafeGatewayRestartPreflight()).toMatchObject({
               safe: true,
@@ -669,7 +658,6 @@ describe("attachGatewayWsConnectionHandler startup readiness", () => {
           } finally {
             releaseAuthentication.resolve();
             authentication.mockRestore();
-            startupAdmission.mockRestore();
           }
         },
       );

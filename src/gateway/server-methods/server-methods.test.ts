@@ -49,13 +49,20 @@ import {
   resolveEffectiveChatHistoryMaxChars,
   sanitizeChatHistoryMessages,
 } from "../chat-display-projection.js";
-import { createTestApprovalManager } from "../exec-approval-manager.test-support.js";
+import {
+  createTestApprovalManager,
+  waitForTestApprovalRequest,
+} from "../exec-approval-manager.test-support.js";
 import type { HealthSummary } from "../health/types.js";
-import { createChatAbortMarker, createChatRunState } from "../server-chat-state.js";
+import { createChatAbortMarker } from "../server-chat-state.js";
 import { HEALTH_REFRESH_INTERVAL_MS } from "../server-constants.js";
 import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
 import { normalizeRpcAttachmentsToChatAttachments } from "./attachment-normalize.js";
 import { createExecApprovalHandlers } from "./exec-approval.js";
+import {
+  createExecApprovalFixture,
+  createForwardingExecApprovalFixture,
+} from "./exec-approval.server-methods.test-support.js";
 import { logsHandlers } from "./logs.js";
 
 function waitForFast<T>(
@@ -2601,22 +2608,6 @@ describe("exec approval handlers", () => {
     });
   }
 
-  function createExecApprovalFixture(testContext: TestContext, opts?: { config?: OpenClawConfig }) {
-    const manager = createTestApprovalManager(testContext);
-    const handlers = createExecApprovalHandlers(manager);
-    const broadcasts: Array<{ event: string; payload: unknown }> = [];
-    const respond = vi.fn();
-    const context = {
-      getRuntimeConfig: () => opts?.config ?? {},
-      broadcast: (event: string, payload: unknown) => {
-        broadcasts.push({ event, payload });
-      },
-      hasExecApprovalClients: () => true,
-      chatRunState: createChatRunState(),
-    };
-    return { manager, handlers, broadcasts, respond, context };
-  }
-
   function getRequestedExecApprovalPayload(
     broadcasts: Array<{ event: string; payload: unknown }>,
   ): { approvalKind: "exec"; id: string; request: Record<string, unknown> } {
@@ -2669,9 +2660,8 @@ describe("exec approval handlers", () => {
       params: params.request,
       client: params.client,
     });
-    await waitForFast(() => {
-      expect(fixture.respond.mock.calls.some((call) => call[1]?.status === "accepted")).toBe(true);
-    });
+    await waitForTestApprovalRequest(fixture.manager, requestPromise, fixture.responseSent);
+    expect(fixture.respond.mock.calls.some((call) => call[1]?.status === "accepted")).toBe(true);
     return {
       ...fixture,
       ...getRequestedExecApprovalPayload(fixture.broadcasts),
@@ -2779,49 +2769,6 @@ describe("exec approval handlers", () => {
     );
     expectRecordFields(request["commandAnalysis"], { commandCount: 1, nestedCommandCount: 0 });
     expect(request["commandSpans"]).toBeUndefined();
-  }
-
-  function createForwardingExecApprovalFixture(
-    testContext: TestContext,
-    opts?: {
-      webPushDelivery?: {
-        handleRequested: ReturnType<typeof vi.fn>;
-        handleResolved: ReturnType<typeof vi.fn>;
-        handleExpired: ReturnType<typeof vi.fn>;
-      };
-      iosPushDelivery?: {
-        handleRequested: ReturnType<typeof vi.fn>;
-        handleResolved: ReturnType<typeof vi.fn>;
-        handleExpired: ReturnType<typeof vi.fn>;
-      };
-    },
-  ) {
-    const manager = createTestApprovalManager(testContext);
-    const forwarder = {
-      handleRequested: vi.fn(async () => false),
-      handleResolved: vi.fn(async () => {}),
-      stop: vi.fn(),
-    };
-    const handlers = createExecApprovalHandlers(manager, {
-      forwarder,
-      iosPushDelivery: opts?.iosPushDelivery as never,
-    });
-    const respond = vi.fn();
-    const context = {
-      getRuntimeConfig: () => ({}),
-      broadcast: (_eventValue: string, _payload: unknown) => {},
-      hasExecApprovalClients: () => false,
-      approvalWebPushDelivery: opts?.webPushDelivery,
-    };
-    return {
-      manager,
-      handlers,
-      forwarder,
-      webPushDelivery: opts?.webPushDelivery,
-      iosPushDelivery: opts?.iosPushDelivery,
-      respond,
-      context,
-    };
   }
 
   function createIosPushDelivery(
@@ -4181,12 +4128,10 @@ describe("exec approval handlers", () => {
 
   it("keeps approvals pending when iOS push delivery accepted the request", async (testContext) => {
     const iosPushDelivery = createIosPushDelivery();
-    const { manager, handlers, forwarder, respond, context } = createForwardingExecApprovalFixture(
-      testContext,
-      {
+    const { manager, handlers, forwarder, respond, responseSent, context } =
+      createForwardingExecApprovalFixture(testContext, {
         iosPushDelivery,
-      },
-    );
+      });
     const expireSpy = vi.spyOn(manager, "expire");
 
     const requestPromise = requestExecApproval({
@@ -4201,14 +4146,13 @@ describe("exec approval handlers", () => {
       },
     });
 
-    await waitForFast(() => {
-      expect(lastMockCallArg(respond)).toBe(true);
-      expectRecordFields(lastMockCallArg(respond, 1), {
-        status: "accepted",
-        id: "approval-ios-push",
-      });
-      expect(lastMockCallArg(respond, 2)).toBeUndefined();
+    await waitForTestApprovalRequest(manager, requestPromise, responseSent);
+    expect(lastMockCallArg(respond)).toBe(true);
+    expectRecordFields(lastMockCallArg(respond, 1), {
+      status: "accepted",
+      id: "approval-ios-push",
     });
+    expect(lastMockCallArg(respond, 2)).toBeUndefined();
 
     expect(forwarder.handleRequested).toHaveBeenCalledTimes(1);
     expectRecordFields(mockCallArg(iosPushDelivery.handleRequested), { id: "approval-ios-push" });

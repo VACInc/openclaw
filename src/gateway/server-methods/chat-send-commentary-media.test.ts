@@ -98,7 +98,8 @@ describe("webchat commentary media", () => {
     await withOpenClawTestState({ label: "commentary-media" }, async (state) => {
       fetchedUrls.length = 0;
       let requestCount = 0;
-      let abortedResponseClosed = false;
+      const requestsArrived = createDeferred();
+      const abortedResponseClosed = createDeferred<boolean>();
       const abortController = new AbortController();
       const imageResponse = createDeferred();
       const gcDuringPreparation =
@@ -107,6 +108,9 @@ describe("webchat commentary media", () => {
         scenario === "gc-with-revocation-after-commit";
       const upstream = http.createServer((_request, response) => {
         requestCount += 1;
+        if (requestCount === mediaUrls.length) {
+          requestsArrived.resolve();
+        }
         const send = () => {
           response.writeHead(200, {
             "content-type": scenario === "document" ? "application/pdf" : "image/png",
@@ -124,7 +128,7 @@ describe("webchat commentary media", () => {
           response.writeHead(200, { "content-type": "image/png" });
           response.write(PNG_BYTES.subarray(0, 16));
           response.on("close", () => {
-            abortedResponseClosed = !response.writableFinished;
+            abortedResponseClosed.resolve(!response.writableFinished);
           });
         } else {
           void imageResponse.promise.then(send);
@@ -188,7 +192,7 @@ describe("webchat commentary media", () => {
       const warn = vi.fn(() => commentarySettled.resolve());
       let current = true;
       let admittedActive = true;
-      let cleanupStarted = false;
+      const cleanupStarted = createDeferred();
       let cleanupSettled = false;
       const transcriptLifecycle = createEmbeddedAttemptTranscriptLifecycle({
         runId,
@@ -383,10 +387,11 @@ describe("webchat commentary media", () => {
                   messageId: "progress-row",
                   runId,
                 });
-                await vi.waitFor(() => {
-                  expect(warn).not.toHaveBeenCalled();
-                  expect(requestCount).toBe(localMedia ? 0 : mediaUrls.length);
-                });
+                if (!localMedia) {
+                  await Promise.race([requestsArrived.promise, commentarySettled.promise]);
+                }
+                expect(warn).not.toHaveBeenCalled();
+                expect(requestCount).toBe(localMedia ? 0 : mediaUrls.length);
                 if (scenario === "completion") {
                   return;
                 }
@@ -570,7 +575,7 @@ describe("webchat commentary media", () => {
                 if (scenario !== "completion") {
                   imageResponse.resolve();
                 }
-                cleanupStarted = true;
+                cleanupStarted.resolve();
                 await transcriptLifecycle.beginCleanup();
                 admittedActive = false;
                 await transcriptLifecycle.dispose();
@@ -581,7 +586,7 @@ describe("webchat commentary media", () => {
         );
         void run.catch(() => {});
         if (scenario === "completion") {
-          await vi.waitFor(() => expect(cleanupStarted).toBe(true));
+          await Promise.race([cleanupStarted.promise, run]);
           await new Promise<void>((resolve) => {
             setImmediate(resolve);
           });
@@ -589,9 +594,7 @@ describe("webchat commentary media", () => {
           imageResponse.resolve();
         }
         if (scenario === "aborted") {
-          await vi.waitFor(() => {
-            expect(abortedResponseClosed).toBe(true);
-          });
+          await expect(abortedResponseClosed.promise).resolves.toBe(true);
         }
         await run;
         if (gcDuringPreparation) {

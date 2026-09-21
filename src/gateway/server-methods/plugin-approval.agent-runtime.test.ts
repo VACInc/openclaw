@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import type { PluginApprovalRequestPayload } from "../../infra/plugin-approvals.js";
-import { closeOpenClawStateDatabaseByPath } from "../../state/openclaw-state-db-cache.js";
+import { closeOpenClawStateDatabaseByPathAsync } from "../../state/openclaw-state-db-cache.js";
 import {
   openOpenClawStateDatabase,
   type OpenClawStateDatabaseOptions,
@@ -10,14 +10,25 @@ import {
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
 import type { AgentRuntimeIdentity } from "../agent-runtime-identity-token.js";
 import { ExecApprovalManager } from "../exec-approval-manager.js";
-import { createTestApprovalManager } from "../exec-approval-manager.test-support.js";
+import {
+  createTestApprovalManager,
+  drainTestApprovalRequests,
+  startTestApprovalRpcRequest,
+} from "../exec-approval-manager.test-support.js";
 import { createPluginApprovalHandlers } from "./plugin-approval.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 
+const approvalManagers = new Set<ExecApprovalManager<PluginApprovalRequestPayload>>();
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
-  afterEach(() => {
+  afterEach(async () => {
+    for (const manager of approvalManagers) {
+      await drainTestApprovalRequests(manager);
+      approvalManagers.delete(manager);
+    }
     for (const dir of tempDirs.dirs) {
-      closeOpenClawStateDatabaseByPath(resolveOpenClawStateSqlitePath({ OPENCLAW_STATE_DIR: dir }));
+      await closeOpenClawStateDatabaseByPathAsync(
+        resolveOpenClawStateSqlitePath({ OPENCLAW_STATE_DIR: dir }),
+      );
     }
     cleanup();
   }),
@@ -130,8 +141,9 @@ describe("plugin approval signed agent runtime", () => {
       },
       validateAuthority: () => active,
     });
-    const pending = requestHandler(manager)(opts);
-    await vi.waitFor(async () => expect(await manager.listPendingRecords()).toHaveLength(1));
+    const { pending, ready } = startTestApprovalRpcRequest(manager, requestHandler(manager), opts);
+    await ready;
+    expect(await manager.listPendingRecords()).toHaveLength(1);
     const record = (await manager.listPendingRecords())[0]!;
     active = false;
 
@@ -175,6 +187,7 @@ describe("plugin approval signed agent runtime", () => {
       persistence: { runtimeEpoch: "runtime-a", databaseOptions: options },
       validateAgentRuntimeDelegatedAuthority: () => true,
     });
+    approvalManagers.add(manager);
     const opts = requestOptions({
       request: {
         pluginId: "forged-plugin",
@@ -206,8 +219,9 @@ describe("plugin approval signed agent runtime", () => {
       },
     });
 
-    const pending = requestHandler(manager)(opts);
-    await vi.waitFor(() => expect(opts.context.broadcast).toHaveBeenCalled());
+    const { pending, ready } = startTestApprovalRpcRequest(manager, requestHandler(manager), opts);
+    await ready;
+    expect(opts.context.broadcast).toHaveBeenCalled();
     const broadcastPayload = vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as
       | { id?: unknown }
       | undefined;
@@ -243,6 +257,7 @@ describe("plugin approval signed agent runtime", () => {
       persistence: { runtimeEpoch: "runtime-a", databaseOptions: options },
       validateAgentRuntimeDelegatedAuthority: () => true,
     });
+    approvalManagers.add(manager);
     const opts = requestOptions({
       request: { title: "Sensitive action", description: "D", twoPhase: true },
       identity: {
@@ -260,8 +275,9 @@ describe("plugin approval signed agent runtime", () => {
       },
     });
 
-    const pending = requestHandler(manager)(opts);
-    await vi.waitFor(() => expect(opts.context.broadcast).toHaveBeenCalled());
+    const { pending, ready } = startTestApprovalRpcRequest(manager, requestHandler(manager), opts);
+    await ready;
+    expect(opts.context.broadcast).toHaveBeenCalled();
     const approvalId = String(
       (vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as { id?: unknown } | undefined)?.id,
     );
