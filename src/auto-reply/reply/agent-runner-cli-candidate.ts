@@ -249,10 +249,10 @@ export async function runCliFallbackCandidate(
                   : onPartialReply({ text: sanitized.text }),
             );
           },
-          onCompletedReply: async (text) => {
+          onCompletedReply: async (text, assistantMessageIndex) => {
             params.runAbortSignal?.throwIfAborted();
             assertSettlementCurrent();
-            const reply = prepareCliReplyPayload(text, cliCurrentMessageId);
+            const reply = prepareCliReplyPayload(text, cliCurrentMessageId, assistantMessageIndex);
             await params.presentation.blockReplyHandler?.(reply, { completed: true });
           },
           onReasoningText: createCliReasoningStreamBridge(turn.opts?.onReasoningStream),

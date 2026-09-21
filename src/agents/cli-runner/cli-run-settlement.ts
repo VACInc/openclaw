@@ -451,12 +451,13 @@ export function buildCliRunResult(params: {
       : sourceReplyMirror.delivered
         ? undefined
         : text
-          ? (output.textParts ?? [text]).map((text) =>
-              assistantTranscriptOwned
+          ? (output.textParts ?? [text]).map((text, assistantMessageIndex) =>
+              assistantTranscriptOwned || output.textParts
                 ? setReplyPayloadMetadata(
                     { text },
                     {
-                      assistantTranscriptOwned: true,
+                      ...(output.textParts ? { assistantMessageIndex } : {}),
+                      ...(assistantTranscriptOwned ? { assistantTranscriptOwned: true } : {}),
                       ...(assistantTranscriptIdempotencyKey
                         ? { assistantTranscriptIdempotencyKey }
                         : {}),

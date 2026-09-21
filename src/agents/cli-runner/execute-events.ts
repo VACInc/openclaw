@@ -324,12 +324,16 @@ export function createCliEventHandlers(params: {
       });
     }
   };
-  const emitCliCompletedReply = (text: string) => {
+  const emitCliCompletedReply = (text: string, assistantMessageIndex: number) => {
+    if (text) {
+      observedCliActivity = true;
+    }
     if (emitLiveEvents) {
       emitAgentEvent({
         runId: runParams.runId,
         stream: "assistant",
         data: {
+          assistantMessageIndex,
           completedText: applyPluginTextReplacements(
             text,
             context.backendResolved.textTransforms?.output,

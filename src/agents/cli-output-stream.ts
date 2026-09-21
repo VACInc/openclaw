@@ -299,7 +299,11 @@ export function createCliJsonlStreamingParser(params: CliJsonlStreamingParserOpt
         return;
       }
     }
-    if (parsed.type === "result" && isStreamJsonDialect(params)) {
+    if (
+      parsed.type === "result" &&
+      parsed.openclaw_interim_result !== true &&
+      isStreamJsonDialect(params)
+    ) {
       sawTerminalResult = true;
     }
     observeSessionId(parsed);
@@ -435,7 +439,12 @@ export function createCliJsonlStreamingParser(params: CliJsonlStreamingParserOpt
       output = {
         ...result,
         text,
-        ...(textParts.length > 1 && !(stoppedTurn && !nextText) ? { textParts } : {}),
+        ...((textParts.length > 1 ||
+          output?.textParts ||
+          parsed.openclaw_interim_result === true) &&
+        !(stoppedTurn && !nextText)
+          ? { textParts }
+          : {}),
         ...(syntheticNoResponse
           ? {
               errorText: CLAUDE_SYNTHETIC_NO_RESPONSE_ERROR,
@@ -458,7 +467,7 @@ export function createCliJsonlStreamingParser(params: CliJsonlStreamingParserOpt
         !output.errorText &&
         !output.terminalFailure
       ) {
-        params.onCompletedReply?.(completedText);
+        params.onCompletedReply?.(completedText, textParts.length - 1);
       }
       // An interim result commits its segment. Rebase boundary state so later
       // text is judged on its own, while delta snapshots stay cumulative.

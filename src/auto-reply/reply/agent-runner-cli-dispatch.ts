@@ -383,7 +383,7 @@ type RunCliAgentWithLifecycleParams = {
   onActivity?: () => void;
   preserveProgressCallbackStartOrder?: boolean;
   onAssistantText?: (text: string) => Promise<boolean | void>;
-  onCompletedReply?: (text: string) => Promise<void>;
+  onCompletedReply?: (text: string, assistantMessageIndex: number) => Promise<void>;
   onReasoningText?: (payload: ReasoningTextPayload) => Promise<void>;
   onReasoningProgress?: (payload: ReasoningProgressPayload) => Promise<void>;
   onCompactionStart?: GetReplyOptions["onCompactionStart"];
@@ -502,9 +502,9 @@ async function runCliAgentWithLifecycleInternal(
         },
       })
     : undefined;
-  const progressStartOrder = params.preserveProgressCallbackStartOrder
-    ? createAgentEventDeliveryStartOrder()
-    : undefined;
+  const progressStartOrder = createAgentEventDeliveryStartOrder({
+    preserveCallbackStartOrder: params.preserveProgressCallbackStartOrder === true,
+  });
   const assistantBridge = createAssistantTextBridge({
     runId: params.runId,
     suppressed: params.suppressAssistantBridge,
@@ -617,7 +617,10 @@ async function runCliAgentWithLifecycleInternal(
     const result = params.transformResult?.(rawResult) ?? rawResult;
     await stopAgentEventBridges(bridges);
 
-    const cliText = normalizeOptionalString(result.payloads?.[0]?.text);
+    const cliText = result.payloads?.length
+      ? (normalizeOptionalString(result.meta.finalAssistantVisibleText) ??
+        normalizeOptionalString(result.payloads[0]?.text))
+      : undefined;
     const durableReasoningText = normalizeOptionalString(finalReasoningText);
     const resultWithReasoning = durableReasoningText
       ? {

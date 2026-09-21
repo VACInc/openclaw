@@ -137,7 +137,10 @@ export function createBlockReplyDeliveryHandler(params: {
   blockStreamingEnabled: boolean;
   blockReplyPipeline: BlockReplyPipeline | null;
   directBlockDeliveries: DirectBlockDelivery[];
-}): (payload: ReplyPayload, options?: { completed?: boolean }) => Promise<void> {
+}): (
+  payload: ReplyPayload,
+  options?: BlockReplyContext & { completed?: boolean },
+) => Promise<void> {
   return async (payload, options) => {
     // Suppressed display lanes must not enter delivery bookkeeping: callers use
     // that evidence to decide whether an otherwise empty turn needs a fallback.
@@ -211,7 +214,15 @@ export function createBlockReplyDeliveryHandler(params: {
 
     // Use pipeline if available (block streaming enabled), otherwise send directly.
     if (params.blockStreamingEnabled && params.blockReplyPipeline) {
+      if (options?.completed) {
+        // A completed answer is a delivery boundary, not another streaming chunk.
+        // Keep prior commentary separate and do not wait for a size/idle threshold.
+        await params.blockReplyPipeline.flush({ force: true });
+      }
       params.blockReplyPipeline.enqueue(blockPayload);
+      if (options?.completed) {
+        await params.blockReplyPipeline.flush({ force: true });
+      }
     } else if (
       params.blockStreamingEnabled ||
       options?.completed === true ||

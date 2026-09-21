@@ -23,18 +23,15 @@ export function transformCliResultText(
 /** Keep completed answers distinct while retaining cumulative transcript text. */
 export function appendCliResultText(previous: CliOutput | null, nextText: string) {
   const previousText = previous?.text.trim() ?? "";
-  const completedText =
-    previousText && nextText.startsWith(previousText)
-      ? nextText.slice(previousText.length).trim()
-      : nextText;
-  const text =
-    previousText && nextText && !nextText.startsWith(previousText)
-      ? `${previousText}\n${nextText}`
-      : nextText || previousText;
-  const textParts = previousText
-    ? [...(previous?.textParts ?? [previousText]), ...(completedText ? [completedText] : [])]
-    : completedText
-      ? [completedText]
-      : [];
+  // Each result commits its own answer. Only assistant snapshots are cumulative;
+  // a shared prefix cannot distinguish a new answer ("Hi" -> "History") from one.
+  const previousParts = previous?.textParts ?? (previousText ? [previousText] : []);
+  const completedText = nextText === previousParts.at(-1) ? "" : nextText;
+  const text = completedText
+    ? previousText
+      ? `${previousText}\n${completedText}`
+      : completedText
+    : previousText;
+  const textParts = completedText ? [...previousParts, completedText] : previousParts;
   return { text, textParts, completedText };
 }
