@@ -9,42 +9,6 @@ import { ExecApprovalManager } from "./exec-approval-manager.js";
 import type { ExecApprovalManagerOptions } from "./exec-approval-manager.types.js";
 import * as operatorApprovalStore from "./operator-approval-store.js";
 
-type TestApprovalRequestOwner = Pick<ExecApprovalManager<unknown>, "drain">;
-const pendingRequests = new WeakMap<TestApprovalRequestOwner, Set<Promise<unknown>>>();
-
-/** Observe an actual request publication and retain its operation through fixture teardown. */
-export async function waitForTestApprovalRequest(
-  manager: TestApprovalRequestOwner,
-  operation: Promise<unknown> | void,
-  published: Promise<unknown>,
-): Promise<void> {
-  const pending = Promise.resolve(operation);
-  let requests = pendingRequests.get(manager);
-  if (!requests) {
-    requests = new Set();
-    pendingRequests.set(manager, requests);
-  }
-  requests.add(pending);
-  await Promise.race([
-    published,
-    pending.then(() => {
-      throw new Error("Approval request completed before its publication");
-    }),
-  ]);
-}
-
-/** Retirement closes observers; join their request promises before removing database inputs. */
-export async function drainTestApprovalRequests(manager: TestApprovalRequestOwner): Promise<void> {
-  await manager.drain();
-  const requests = pendingRequests.get(manager);
-  if (requests) {
-    // The test observes operation errors. Cleanup also observes retirement rejection
-    // when a failed assertion prevents the test from reaching its decision await.
-    await Promise.allSettled(requests);
-    pendingRequests.delete(manager);
-  }
-}
-
 /** Vitest clocks are process-local; send controlled time through the store's existing input. */
 export function installTestApprovalClock(): (() => void) | undefined {
   const forceDeny = operatorApprovalStore.forceDenyOperatorApproval;
@@ -82,9 +46,9 @@ export async function createPreparedTestApprovalManager<TPayload = ExecApprovalR
   return fixture;
 }
 
-function createTestApprovalFixture<TPayload>(
+export function createTestApprovalFixture<TPayload = ExecApprovalRequestPayload>(
   test: TestContext,
-  options: Omit<ExecApprovalManagerOptions<TPayload>, "persistence">,
+  options: Omit<ExecApprovalManagerOptions<TPayload>, "persistence"> = {},
 ) {
   test.signal.throwIfAborted();
   const restoreClock = installTestApprovalClock();
@@ -92,12 +56,22 @@ function createTestApprovalFixture<TPayload>(
   const fixture = createFixtureLifetime();
   let manager: ExecApprovalManager<TPayload> | undefined;
   let databasePath: string | undefined = undefined;
+  const requests: Promise<unknown>[] = [];
+  let body: Promise<unknown> | undefined;
+  async function drainRequests() {
+    try {
+      await manager?.drain();
+    } finally {
+      // Manager retirement settles observers; their outer RPC/policy continuations
+      // still own the database until they have unwound.
+      await Promise.allSettled(requests);
+    }
+  }
   // Register on the actual test, never once through a cached helper module.
   test.onTestFinished(() => {
     void fixture.verifyCleanup(async () => {
-      if (manager) {
-        await drainTestApprovalRequests(manager);
-      }
+      await drainRequests();
+      await Promise.allSettled([body]);
       if (databasePath) {
         await closeOpenClawStateDatabaseByPathAsync(databasePath);
       }
@@ -117,7 +91,26 @@ function createTestApprovalFixture<TPayload>(
       ...options,
       persistence: { runtimeEpoch: randomUUID(), databaseOptions },
     });
-    return { manager, databaseOptions };
+    return {
+      manager,
+      databaseOptions,
+      track: <T>(request: Promise<T>) => {
+        requests.push(request);
+        void request.catch(() => {});
+        return request;
+      },
+      run: <T>(callback: () => Promise<T>) => {
+        const work = fixture.run(async () => {
+          try {
+            return await callback();
+          } finally {
+            await drainRequests();
+          }
+        });
+        body = work;
+        return work;
+      },
+    };
   } catch (error) {
     // A failed open can include failed closure of an unpublished handle.
     // Retain its inputs rather than certify cleanup from an empty cache.

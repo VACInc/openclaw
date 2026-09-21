@@ -7,11 +7,10 @@ import type { PluginRegistry } from "../plugins/registry-types.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import type { OpenClawPluginNodeInvokePolicyContext } from "../plugins/types.js";
 import { trackAsyncWork } from "../shared/async-work-scope.js";
-import { createDeferredCore } from "../shared/deferred.js";
 import type { ExecApprovalManager } from "./exec-approval-manager.js";
-import { waitForTestApprovalRequest } from "./exec-approval-manager.test-support.js";
 import { applyPluginNodeInvokePolicy } from "./node-invoke-plugin-policy.js";
 import type { NodeRegistry, NodeSession } from "./node-registry.js";
+import { waitForApprovalRequested } from "./server-methods/approval-request.test-support.js";
 import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
 
 export const DEMO_PLUGIN_ID = "demo";
@@ -47,16 +46,8 @@ export function createContext(opts?: {
   forwardPluginApprovalRequest?: GatewayRequestContext["forwardPluginApprovalRequest"];
   pluginApprovalIosPushDelivery?: GatewayRequestContext["pluginApprovalIosPushDelivery"];
   validateAgentRuntimeApprovalAuthority?: GatewayRequestContext["validateAgentRuntimeApprovalAuthority"];
-  onApprovalRequested?: () => void;
 }) {
   const nodeSession = opts?.nodeSession ?? createNodeSession();
-  const approvalRequested = createDeferredCore();
-  const observeApprovalRequested = (event: string) => {
-    if (event === "plugin.approval.requested") {
-      approvalRequested.resolve();
-      opts?.onApprovalRequested?.();
-    }
-  };
   const invoke = vi.fn<NodeRegistry["invoke"]>(async (params) => {
     params.onDispatchReady?.("invoke-1");
     return {
@@ -76,8 +67,8 @@ export function createContext(opts?: {
         getForPairingGeneration: () => nodeSession,
         invoke,
       },
-      broadcast: vi.fn(observeApprovalRequested),
-      broadcastToConnIds: vi.fn(observeApprovalRequested),
+      broadcast: vi.fn(),
+      broadcastToConnIds: vi.fn(),
       pluginApprovalManager: opts?.pluginApprovalManager,
       getApprovalClientConnIds: opts?.getApprovalClientConnIds,
       hasExecApprovalClients: opts?.hasExecApprovalClients,
@@ -86,7 +77,6 @@ export function createContext(opts?: {
       validateAgentRuntimeApprovalAuthority: opts?.validateAgentRuntimeApprovalAuthority,
     } as unknown as GatewayRequestContext,
     invoke,
-    approvalRequested: approvalRequested.promise,
   };
 }
 
@@ -208,18 +198,24 @@ export async function invokeDemoPolicy(
   });
 }
 
-export async function expectSinglePendingApproval(
+export async function expectSinglePendingApproval<T>(
   manager: ExecApprovalManager<PluginApprovalRequestPayload>,
-  operation: Promise<unknown>,
-  approvalRequested: Promise<void>,
-): Promise<PluginApprovalRecord> {
-  await waitForTestApprovalRequest(manager, operation, approvalRequested);
-  expect(await manager.listPendingRecords()).toHaveLength(1);
-  const [record] = await manager.listPendingRecords();
+  context: GatewayRequestContext,
+  start: () => Promise<T>,
+) {
+  const { pending, payload } = await waitForApprovalRequested(
+    context,
+    "plugin.approval.requested",
+    start,
+  );
+  const records = await manager.listPendingRecords();
+  expect(records).toHaveLength(1);
+  const [record] = records;
   if (!record) {
     throw new Error("expected pending approval");
   }
-  return record;
+  expect(payload).toMatchObject({ id: record.id });
+  return { record, pending };
 }
 
 export async function expectApprovalResolution(
