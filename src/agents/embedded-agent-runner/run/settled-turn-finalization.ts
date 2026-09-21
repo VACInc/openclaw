@@ -4,7 +4,7 @@ import {
   setReplyPayloadMetadata,
   type ReplyPayloadMetadata,
 } from "../../../auto-reply/reply-payload.js";
-import { isSilentReplyText } from "../../../auto-reply/tokens.js";
+import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../../../auto-reply/tokens.js";
 import {
   SessionTranscriptWriterClaimReboundError,
   withOwnedSessionTranscriptWrites,
@@ -269,7 +269,13 @@ export async function prepareTerminalWithSettledTurnFinalization(input: {
     };
   }
   if (finalizationOutcome !== "answered" && terminalFallbackAllowed) {
+    // Scheduled runs have no useful announcement when only a host placeholder remains.
+    const fallbackText =
+      runParams.trigger === "cron"
+        ? SILENT_REPLY_TOKEN
+        : SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT;
     const transcriptIdempotencyKey = await persistSettledToolFallbackTranscript({
+      text: fallbackText,
       attempt: input.finalization.preparedAttempt,
       abortSignal: input.finalization.abortSignal,
       assertActive: assertFinalizationActive,
@@ -289,6 +295,7 @@ export async function prepareTerminalWithSettledTurnFinalization(input: {
       };
     }
     attempt = buildSettledToolFallbackAttemptResult({
+      text: fallbackText,
       settledAttempt: initial.attempt,
       sourceAttempt: attempt,
       prompt,
@@ -529,6 +536,7 @@ function buildSettledTurnFinalizationAttemptResult(input: {
 }
 
 function buildSettledToolFallbackAttemptResult(input: {
+  text: string;
   settledAttempt: EmbeddedRunAttemptWithReceiptEvidence;
   sourceAttempt: EmbeddedRunAttemptWithReceiptEvidence;
   prompt: string;
@@ -549,7 +557,7 @@ function buildSettledToolFallbackAttemptResult(input: {
   }
   const assistant = {
     ...sourceAssistant,
-    content: [{ type: "text" as const, text: SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT }],
+    content: [{ type: "text" as const, text: input.text }],
     openclawDelivery: undefined,
     stopReason: "stop" as const,
     errorMessage: undefined,
@@ -579,6 +587,7 @@ function buildSettledToolFallbackAttemptResult(input: {
 }
 
 async function persistSettledToolFallbackTranscript(input: {
+  text: string;
   attempt: EmbeddedRunAttemptParams;
   abortSignal: AbortSignal;
   assertActive: () => void;
@@ -630,7 +639,7 @@ async function persistSettledToolFallbackTranscript(input: {
           config: input.attempt.config,
           idempotencyKey,
           signal: input.abortSignal,
-          text: SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT,
+          text: input.text,
         }),
     );
     if (input.abortSignal.aborted) {
