@@ -20,7 +20,6 @@ import {
 import * as commandQueueModule from "../../process/command-queue.js";
 import { resetCommandQueueStateForTest } from "../../process/command-queue.test-support.js";
 import { onSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
-import { createDeferredCore } from "../../shared/deferred.js";
 import { createQueuedTaskRunCore as createQueuedTaskRunOrNull } from "../../tasks/task-executor.js";
 import { getTaskFlowById } from "../../tasks/task-flow-registry.js";
 import { captureTaskDeliveryWork } from "../../tasks/task-registry-delivery.test-support.js";
@@ -1583,20 +1582,30 @@ describe("runContextEngineMaintenance", () => {
 
   it("surfaces long-running deferred maintenance and completion via task updates", async () => {
     await withStateDirEnv("openclaw-turn-maintenance-", async () => {
-      vi.useFakeTimers();
-      const sessionKey = "agent:main:session-long";
-      const result = { changed: false, bytesFreed: 0, rewrittenEntries: 0 };
-      const maintenance = createDeferredCore<typeof result>();
       using deliveries = captureTaskDeliveryWork();
+      vi.useFakeTimers();
       try {
         resetCommandQueueStateForTest();
         resetTaskRegistryForTests({ persist: false });
         resetTaskFlowRegistryForTests({ persist: false });
         resetSystemEventsForTest();
 
-        const maintain = vi.fn(() => maintenance.promise);
+        const sessionKey = "agent:main:session-long";
+        let releaseMaintenance: (() => void) | undefined;
+        const maintain = vi.fn(async () => {
+          await new Promise<void>((resolve) => {
+            releaseMaintenance = resolve;
+          });
+          return {
+            changed: false,
+            bytesFreed: 0,
+            rewrittenEntries: 0,
+          };
+        });
+        const backgroundEngine = createBackgroundMaintenanceEngine(maintain);
+
         await runContextEngineMaintenance({
-          contextEngine: createBackgroundMaintenanceEngine(maintain),
+          contextEngine: backgroundEngine,
           sessionId: "session-long",
           sessionKey,
           sessionFile: "/tmp/session-long.jsonl",
@@ -1620,7 +1629,10 @@ describe("runContextEngineMaintenance", () => {
         }
         expect(getTaskFlowById(parentFlowId)?.status).toBe("running");
 
-        maintenance.resolve(result);
+        if (!releaseMaintenance) {
+          throw new Error("Expected maintenance release callback to be initialized");
+        }
+        releaseMaintenance();
         await waitForAssertion(() =>
           expectSystemEventContaining(
             sessionKey,
@@ -1629,22 +1641,15 @@ describe("runContextEngineMaintenance", () => {
         );
         expect(getTaskFlowById(parentFlowId)?.status).toBe("succeeded");
       } finally {
-        maintenance.resolve(result);
-        try {
-          try {
-            await waitForDeferredTurnMaintenanceForSession(sessionKey);
-          } finally {
-            await deliveries.settle();
-          }
-        } finally {
-          vi.useRealTimers();
-        }
+        vi.useRealTimers();
+        await deliveries.settle();
       }
     });
   });
 
   it("surfaces unrelated maintenance failures during shutdown", async () => {
     await withStateDirEnv("openclaw-turn-maintenance-", async () => {
+      using deliveries = captureTaskDeliveryWork();
       vi.useFakeTimers();
       const keepProcessAlive = () => {};
       process.on("SIGTERM", keepProcessAlive);
@@ -1717,6 +1722,7 @@ describe("runContextEngineMaintenance", () => {
         process.off("SIGTERM", keepProcessAlive);
         resetDeferredTurnMaintenanceStateForTest();
         vi.useRealTimers();
+        await deliveries.settle();
       }
     });
   });
