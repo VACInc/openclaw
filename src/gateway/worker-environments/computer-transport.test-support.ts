@@ -144,7 +144,7 @@ export function createHarness(sharedHost = false, withPolicy = true) {
     privateCurrent: true,
     config: {},
   };
-  const { context } = createContext({
+  const { context, approvalRequested } = createContext({
     nodeSession: node,
     getRuntimeConfig: () => state.config,
     validateAgentRuntimeApprovalAuthority: createAgentRuntimeApprovalAuthorityValidator({
@@ -266,6 +266,7 @@ export function createHarness(sharedHost = false, withPolicy = true) {
   const authority = claimAgentRunDelegatedAuthority(run);
   return {
     claim,
+    approvalRequested,
     options,
     state,
     run,

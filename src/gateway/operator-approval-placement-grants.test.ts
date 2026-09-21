@@ -7,14 +7,17 @@ import { resolveCanonicalPluginApprovalRequestAllowedDecisions } from "../infra/
 import type { PluginApprovalRequestPayload } from "../infra/plugin-approvals.js";
 import { resetPluginRuntimeStateForTest } from "../plugins/runtime.js";
 import { withPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
+import { createDeferredCore } from "../shared/deferred.js";
 import { tableExists } from "../state/openclaw-state-db-schema-helpers.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
+  closeOpenClawStateDatabaseAsync,
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
+import { drainTestApprovalRequests } from "./exec-approval-manager.test-support.js";
 import { applyPluginNodeInvokePolicy } from "./node-invoke-plugin-policy.js";
 import {
   createApprovalClientLookup,
@@ -46,7 +49,19 @@ const ENVIRONMENT_ID = "environment-1";
 const NODE_ID = "node-1";
 const PAIRING_GENERATION = "pairing-1";
 const CWD = "/worker/workspace";
-const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const approvalManagers = new Set<ExecApprovalManager<PluginApprovalRequestPayload>>();
+const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
+  afterEach(async () => {
+    for (const manager of approvalManagers) {
+      await drainTestApprovalRequests(manager);
+      approvalManagers.delete(manager);
+    }
+    resetPluginRuntimeStateForTest();
+    await closeOpenClawStateDatabaseAsync();
+    closeOpenClawStateDatabaseForTest();
+    cleanup();
+  }),
+);
 
 function createDatabaseOptions(): OpenClawStateDatabaseOptions {
   const stateDir = tempDirs.make("openclaw-placement-grant-");
@@ -54,11 +69,6 @@ function createDatabaseOptions(): OpenClawStateDatabaseOptions {
 }
 
 beforeEach(resetPluginRuntimeStateForTest);
-
-afterEach(() => {
-  resetPluginRuntimeStateForTest();
-  closeOpenClawStateDatabaseForTest();
-});
 
 function seedActivePlacement(databaseOptions: OpenClawStateDatabaseOptions): void {
   const database = openOpenClawStateDatabase(databaseOptions);
@@ -180,13 +190,13 @@ function resolveBinding(
   return binding!;
 }
 
-function mintGrant(
+async function mintGrant(
   databaseOptions: OpenClawStateDatabaseOptions,
   now: () => number = () => NOW_MS + 2_000,
-): {
+): Promise<{
   binding: PlacementStandingGrantMintSpec;
   runtime: ReturnType<typeof createPlacementStandingGrantRuntime>;
-} {
+}> {
   seedActivePlacement(databaseOptions);
   const runtime = createPlacementStandingGrantRuntime({
     runtimeEpoch: "runtime-1",
@@ -194,15 +204,17 @@ function mintGrant(
     now,
   });
   const binding = resolveBinding(databaseOptions, runtime);
-  insertOperatorApproval({ approval: approval("approval-1"), databaseOptions });
+  await insertOperatorApproval({ approval: approval("approval-1"), databaseOptions });
   expect(
-    resolveOperatorApproval({
-      id: "approval-1",
-      decision: "allow-always",
-      resolver: { kind: "device", id: "reviewer-1" },
-      nowMs: NOW_MS + 1_000,
-      databaseOptions,
-    }).outcome,
+    (
+      await resolveOperatorApproval({
+        id: "approval-1",
+        decision: "allow-always",
+        resolver: { kind: "device", id: "reviewer-1" },
+        nowMs: NOW_MS + 1_000,
+        databaseOptions,
+      })
+    ).outcome,
   ).toBe("resolved");
   expect(
     runtime.retain({
@@ -216,7 +228,7 @@ function mintGrant(
 }
 
 describe("placement standing grants", () => {
-  it("retains the exact binding only for the current Gateway runtime", () => {
+  it("retains the exact binding only for the current Gateway runtime", async () => {
     const databaseOptions = createDatabaseOptions();
     seedActivePlacement(databaseOptions);
     const database = openOpenClawStateDatabase(databaseOptions);
@@ -246,15 +258,17 @@ describe("placement standing grants", () => {
       placementGeneration: 4,
       cwd: CWD,
     });
-    insertOperatorApproval({ approval: approval("approval-1"), databaseOptions });
+    await insertOperatorApproval({ approval: approval("approval-1"), databaseOptions });
     expect(
-      resolveOperatorApproval({
-        id: "approval-1",
-        decision: "allow-always",
-        resolver: { kind: "device", id: "reviewer-1" },
-        nowMs: NOW_MS + 1_000,
-        databaseOptions,
-      }).outcome,
+      (
+        await resolveOperatorApproval({
+          id: "approval-1",
+          decision: "allow-always",
+          resolver: { kind: "device", id: "reviewer-1" },
+          nowMs: NOW_MS + 1_000,
+          databaseOptions,
+        })
+      ).outcome,
     ).toBe("resolved");
     expect(
       runtime.retain({
@@ -286,7 +300,7 @@ describe("placement standing grants", () => {
     ).toEqual(metadataBefore);
   });
 
-  it("does not retain a grant before the parent allow-always decision", () => {
+  it("does not retain a grant before the parent allow-always decision", async () => {
     const databaseOptions = createDatabaseOptions();
     seedActivePlacement(databaseOptions);
     const runtime = createPlacementStandingGrantRuntime({
@@ -295,7 +309,7 @@ describe("placement standing grants", () => {
       now: () => NOW_MS + 2_000,
     });
     const binding = resolveBinding(databaseOptions, runtime);
-    insertOperatorApproval({ approval: approval("approval-1"), databaseOptions });
+    await insertOperatorApproval({ approval: approval("approval-1"), databaseOptions });
     expect(
       runtime.retain({
         ...binding,
@@ -307,9 +321,9 @@ describe("placement standing grants", () => {
     expect(runtime.validate(binding).outcome).toBe("no-grant");
   });
 
-  it("keeps operation families isolated", () => {
+  it("keeps operation families isolated", async () => {
     const databaseOptions = createDatabaseOptions();
-    const { binding, runtime } = mintGrant(databaseOptions);
+    const { binding, runtime } = await mintGrant(databaseOptions);
     expect(
       runtime.validate({
         ...binding,
@@ -332,9 +346,9 @@ describe("placement standing grants", () => {
         pairingGeneration: "pairing-2",
       }),
     },
-  ])("fails closed after $name", ({ expected, change }) => {
+  ])("fails closed after $name", async ({ expected, change }) => {
     const databaseOptions = createDatabaseOptions();
-    const { binding, runtime } = mintGrant(databaseOptions);
+    const { binding, runtime } = await mintGrant(databaseOptions);
     expect(runtime.consume(change(binding)).outcome).toBe(expected);
   });
 
@@ -342,9 +356,9 @@ describe("placement standing grants", () => {
     ["placement generation bump", { transition_generation: 5 }],
     ["gateway owner-epoch rotation", { active_owner_epoch: 8 }],
     ["placement drain", { state: "draining" }],
-  ] as const)("fails closed after %s", (_name, update) => {
+  ] as const)("fails closed after %s", async (_name, update) => {
     const databaseOptions = createDatabaseOptions();
-    const { binding, runtime } = mintGrant(databaseOptions);
+    const { binding, runtime } = await mintGrant(databaseOptions);
     const database = openOpenClawStateDatabase(databaseOptions);
     const stateDb = getNodeSqliteKysely<PlacementTestDatabase>(database.db);
     executeSqliteQuerySync(
@@ -357,12 +371,12 @@ describe("placement standing grants", () => {
     expect(runtime.consume(binding).outcome).toBe("placement-changed");
   });
 
-  it("fails closed after expiry, parent removal or reversal, or placement removal", () => {
+  it("fails closed after expiry, parent removal or reversal, or placement removal", async () => {
     const scenarios = ["expired", "parent-missing", "parent", "placement"] as const;
     for (const scenario of scenarios) {
       let nowMs = NOW_MS + 2_000;
       const databaseOptions = createDatabaseOptions();
-      const { binding, runtime } = mintGrant(databaseOptions, () => nowMs);
+      const { binding, runtime } = await mintGrant(databaseOptions, () => nowMs);
       const database = openOpenClawStateDatabase(databaseOptions);
       const stateDb = getNodeSqliteKysely<PlacementTestDatabase>(database.db);
       if (scenario === "parent-missing") {
@@ -393,6 +407,7 @@ describe("placement standing grants", () => {
               ? "approval-not-allow-always"
               : "placement-missing",
       );
+      await closeOpenClawStateDatabaseAsync();
       closeOpenClawStateDatabaseForTest();
     }
   });
@@ -413,6 +428,7 @@ describe("placement standing grants", () => {
       retainPlacementStandingGrant: placementStandingGrants.retain,
       validateAgentRuntimeDelegatedAuthority: () => true,
     });
+    approvalManagers.add(manager);
     const policy = createDemoPolicy(async (context) => {
       const placementApproval = await context.approvals?.request({
         title: "Run on placement",
@@ -431,11 +447,13 @@ describe("placement standing grants", () => {
     setDangerousDemoCommandRegistry([policy]);
 
     const nodeSession = { ...createNodeSession(), pairingGeneration: PAIRING_GENERATION };
+    let approvalRequested = createDeferredCore();
     const { context } = createContext({
       pluginApprovalManager: manager,
       nodeSession,
       getApprovalClientConnIds: createApprovalClientLookup([createOperatorClient("reviewer")]),
       validateAgentRuntimeApprovalAuthority: () => true,
+      onApprovalRequested: () => approvalRequested.resolve(),
     });
     context.placementStandingGrants = placementStandingGrants;
     const invoke = vi.fn(async (input: Parameters<typeof context.nodeRegistry.invoke>[0]) => {
@@ -488,14 +506,19 @@ describe("placement standing grants", () => {
       params: DEMO_PARAMS,
       sessionKey: SESSION_KEY,
     });
-    const identityOnlyApproval = await expectSinglePendingApproval(manager);
+    const identityOnlyApproval = await expectSinglePendingApproval(
+      manager,
+      identityOnlyLaunch,
+      approvalRequested.promise,
+    );
     expect(identityOnlyApproval.request.allowedDecisions).not.toContain("allow-always");
     expect(identityOnlyApproval.request.placementGrant).toBeNull();
-    expect(manager.resolve(identityOnlyApproval.id, "deny")).toBe(true);
+    expect(await manager.resolve(identityOnlyApproval.id, "deny")).toBe(true);
     await expect(identityOnlyLaunch).resolves.toMatchObject({ ok: false, code: "DENIED" });
 
-    const launch = () =>
-      withPluginRuntimeGatewayRequestScope(
+    const launch = () => {
+      approvalRequested = createDeferredCore();
+      return withPluginRuntimeGatewayRequestScope(
         { isWebchatConnect: () => false, nodePlacementGrantAuthority },
         () =>
           applyPluginNodeInvokePolicy({
@@ -507,29 +530,38 @@ describe("placement standing grants", () => {
             sessionKey: SESSION_KEY,
           }),
       );
+    };
 
     const legacyLaunch = launch();
-    const legacyApproval = await expectSinglePendingApproval(manager);
+    const legacyApproval = await expectSinglePendingApproval(
+      manager,
+      legacyLaunch,
+      approvalRequested.promise,
+    );
     expect(legacyApproval.request.allowedDecisions).not.toContain("allow-always");
     expect(legacyApproval.request.placementGrant).toBeNull();
-    expect(manager.resolve(legacyApproval.id, "deny")).toBe(true);
+    expect(await manager.resolve(legacyApproval.id, "deny")).toBe(true);
     await expect(legacyLaunch).resolves.toMatchObject({ ok: false, code: "DENIED" });
 
     policy.policy.standingApproval = { kind: "placement", scope: "demo.exec-placement" };
     const firstLaunch = launch();
-    const firstApproval = await expectSinglePendingApproval(manager);
+    const firstApproval = await expectSinglePendingApproval(
+      manager,
+      firstLaunch,
+      approvalRequested.promise,
+    );
     expect(firstApproval.request.placementGrant).toMatchObject({
       sessionId: SESSION_ID,
       nodeId: NODE_ID,
       approvalScope: "demo.exec-placement",
       placementGeneration: 4,
     });
-    expect(manager.resolve(firstApproval.id, "allow-always")).toBe(true);
+    expect(await manager.resolve(firstApproval.id, "allow-always")).toBe(true);
     await expect(firstLaunch).resolves.toMatchObject({ ok: true });
     expect(invoke).toHaveBeenCalledTimes(1);
 
     await expect(launch()).resolves.toMatchObject({ ok: true });
-    expect(manager.listPendingRecords()).toEqual([]);
+    expect(await manager.listPendingRecords()).toEqual([]);
     expect(invoke).toHaveBeenCalledTimes(2);
 
     const database = openOpenClawStateDatabase(databaseOptions);
@@ -542,17 +574,25 @@ describe("placement standing grants", () => {
         .where("session_id", "=", SESSION_ID),
     );
     const staleLaunch = launch();
-    const staleApproval = await expectSinglePendingApproval(manager);
+    const staleApproval = await expectSinglePendingApproval(
+      manager,
+      staleLaunch,
+      approvalRequested.promise,
+    );
     placementAuthorityActive = false;
-    expect(manager.resolve(staleApproval.id, "allow-always")).toBe(false);
+    expect(await manager.resolve(staleApproval.id, "allow-always")).toBe(false);
     await expect(staleLaunch).resolves.toMatchObject({ ok: false, code: "DENIED" });
     placementAuthorityActive = true;
 
     const movedLaunch = launch();
-    const movedApproval = await expectSinglePendingApproval(manager);
+    const movedApproval = await expectSinglePendingApproval(
+      manager,
+      movedLaunch,
+      approvalRequested.promise,
+    );
     expect(movedApproval.id).not.toBe(firstApproval.id);
     expect(movedApproval.request.placementGrant).toMatchObject({ placementGeneration: 5 });
-    expect(manager.resolve(movedApproval.id, "deny")).toBe(true);
+    expect(await manager.resolve(movedApproval.id, "deny")).toBe(true);
     await expect(movedLaunch).resolves.toMatchObject({ ok: false, code: "DENIED" });
     expect(invoke).toHaveBeenCalledTimes(2);
   });

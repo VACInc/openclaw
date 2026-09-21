@@ -7,7 +7,9 @@ import type { PluginRegistry } from "../plugins/registry-types.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import type { OpenClawPluginNodeInvokePolicyContext } from "../plugins/types.js";
 import { trackAsyncWork } from "../shared/async-work-scope.js";
+import { createDeferredCore } from "../shared/deferred.js";
 import type { ExecApprovalManager } from "./exec-approval-manager.js";
+import { waitForTestApprovalRequest } from "./exec-approval-manager.test-support.js";
 import { applyPluginNodeInvokePolicy } from "./node-invoke-plugin-policy.js";
 import type { NodeRegistry, NodeSession } from "./node-registry.js";
 import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
@@ -45,8 +47,16 @@ export function createContext(opts?: {
   forwardPluginApprovalRequest?: GatewayRequestContext["forwardPluginApprovalRequest"];
   pluginApprovalIosPushDelivery?: GatewayRequestContext["pluginApprovalIosPushDelivery"];
   validateAgentRuntimeApprovalAuthority?: GatewayRequestContext["validateAgentRuntimeApprovalAuthority"];
+  onApprovalRequested?: () => void;
 }) {
   const nodeSession = opts?.nodeSession ?? createNodeSession();
+  const approvalRequested = createDeferredCore();
+  const observeApprovalRequested = (event: string) => {
+    if (event === "plugin.approval.requested") {
+      approvalRequested.resolve();
+      opts?.onApprovalRequested?.();
+    }
+  };
   const invoke = vi.fn<NodeRegistry["invoke"]>(async (params) => {
     params.onDispatchReady?.("invoke-1");
     return {
@@ -66,8 +76,8 @@ export function createContext(opts?: {
         getForPairingGeneration: () => nodeSession,
         invoke,
       },
-      broadcast: vi.fn(),
-      broadcastToConnIds: vi.fn(),
+      broadcast: vi.fn(observeApprovalRequested),
+      broadcastToConnIds: vi.fn(observeApprovalRequested),
       pluginApprovalManager: opts?.pluginApprovalManager,
       getApprovalClientConnIds: opts?.getApprovalClientConnIds,
       hasExecApprovalClients: opts?.hasExecApprovalClients,
@@ -76,6 +86,7 @@ export function createContext(opts?: {
       validateAgentRuntimeApprovalAuthority: opts?.validateAgentRuntimeApprovalAuthority,
     } as unknown as GatewayRequestContext,
     invoke,
+    approvalRequested: approvalRequested.promise,
   };
 }
 
@@ -121,8 +132,8 @@ export function createOperatorClient(connId = "conn-requester"): GatewayClient {
 
 export type NodeInvokePolicyRegistration = PluginRegistry["nodeInvokePolicies"][number];
 type NodeInvokePolicyHandler = NodeInvokePolicyRegistration["policy"]["handle"];
-export type PluginApprovalRecord = ReturnType<
-  ExecApprovalManager<PluginApprovalRequestPayload>["listPendingRecords"]
+export type PluginApprovalRecord = Awaited<
+  ReturnType<ExecApprovalManager<PluginApprovalRequestPayload>["listPendingRecords"]>
 >[number];
 
 export function createDemoPolicy(handle: NodeInvokePolicyHandler): NodeInvokePolicyRegistration {
@@ -199,11 +210,12 @@ export async function invokeDemoPolicy(
 
 export async function expectSinglePendingApproval(
   manager: ExecApprovalManager<PluginApprovalRequestPayload>,
+  operation: Promise<unknown>,
+  approvalRequested: Promise<void>,
 ): Promise<PluginApprovalRecord> {
-  await vi.waitFor(() => {
-    expect(manager.listPendingRecords()).toHaveLength(1);
-  });
-  const [record] = manager.listPendingRecords();
+  await waitForTestApprovalRequest(manager, operation, approvalRequested);
+  expect(await manager.listPendingRecords()).toHaveLength(1);
+  const [record] = await manager.listPendingRecords();
   if (!record) {
     throw new Error("expected pending approval");
   }
@@ -215,11 +227,11 @@ export async function expectApprovalResolution(
   manager: ExecApprovalManager<PluginApprovalRequestPayload>,
   record: PluginApprovalRecord,
 ) {
-  expect(manager.resolve(record.id, "allow-once")).toBe(true);
+  expect(await manager.resolve(record.id, "allow-once")).toBe(true);
   await expect(resultPromise).resolves.toStrictEqual({
     ok: true,
     payload: { id: record.id, decision: "allow-once" },
   });
-  expect(manager.getSnapshot(record.id)?.consumedDecision).toBe("allow-once");
-  expect(manager.consumeAllowOnce(record.id)).toBe(false);
+  expect((await manager.getSnapshot(record.id))?.consumedDecision).toBe("allow-once");
+  expect(await manager.consumeAllowOnce(record.id)).toBe(false);
 }

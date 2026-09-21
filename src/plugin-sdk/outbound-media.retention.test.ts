@@ -1,4 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { sqliteWorkerPreloadEnv } from "../infra/sqlite-worker-preload.test-support.js";
+import { pluginStateDoctorEntriesInKeyRange } from "../plugin-state/plugin-state-store.js";
+import { closeOpenClawStateDatabaseAsync } from "../state/openclaw-state-db.js";
+import {
+  createOpenClawTestState,
+  type OpenClawTestState,
+} from "../test-utils/openclaw-test-state.js";
 import type {
   HostedOutboundMediaChunkRecord,
   HostedOutboundMediaMetaRecord,
@@ -22,7 +29,23 @@ function prepare(store: ReturnType<typeof createHostedOutboundMediaStore>) {
 }
 
 describe("hosted outbound media post-expiry retention", () => {
+  let testState: OpenClawTestState | undefined;
+
+  beforeAll(async () => {
+    await closeOpenClawStateDatabaseAsync();
+    testState = await createOpenClawTestState({ label: "hosted-media-retention" });
+    // Keep the real SQLite workers' physical TTL clock fixed while hosted-media
+    // observation time advances, so worker startup cannot consume serving grace.
+    const preload = await testState.writeText("retention-clock.cjs", "Date.now = () => 1_000;\n");
+    for (const [key, value] of Object.entries(sqliteWorkerPreloadEnv(preload))) {
+      testState.envVars[key] = key.endsWith("_OPTIONS")
+        ? [process.env[key], value].filter(Boolean).join(" ")
+        : value;
+    }
+  });
+
   beforeEach(() => {
+    testState?.applyEnv();
     resetPluginStateStoreForTests();
     vi.restoreAllMocks();
     vi.useFakeTimers();
@@ -34,11 +57,27 @@ describe("hosted outbound media post-expiry retention", () => {
     });
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
+  afterEach(async () => {
+    try {
+      await closeOpenClawStateDatabaseAsync();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  afterAll(async () => {
+    // The fixture drains workers before restoring preload env and removing its files.
+    await testState?.cleanup();
   });
 
   it("denies new reads at logical expiry and deletes rows after serving grace", async () => {
+    const readStoredRows = (namespace: string) =>
+      pluginStateDoctorEntriesInKeyRange({
+        pluginId: "fixture-plugin",
+        namespace,
+        prefix: `media:${MEDIA_ID}:`,
+        limit: 100,
+      });
     const metadataStore = createPluginStateKeyedStoreForTests<HostedOutboundMediaMetaRecord>(
       "fixture-plugin",
       { namespace: "retained-ttl-media", maxEntries: 10 },
@@ -61,16 +100,18 @@ describe("hosted outbound media post-expiry retention", () => {
     });
 
     await prepare(store);
-    vi.setSystemTime(1_101);
-    await expect(store.readMetadata(MEDIA_ID)).resolves.toBeNull();
-    await store.cleanupExpired();
+    expect(await metadataStore.entries()).toMatchObject([{ createdAt: 1_000, expiresAt: 1_200 }]);
+    await expect(store.readMetadata(MEDIA_ID, 1_101)).resolves.toBeNull();
+    await store.cleanupExpired(1_101);
     expect(await metadataStore.entries()).toHaveLength(1);
     expect(await chunkStore.entries()).toHaveLength(3);
 
-    vi.setSystemTime(1_201);
-    await store.cleanupExpired();
+    // Backing rows remain live at 1_000: cleanup must delete them, not just hide expiry.
+    await store.cleanupExpired(1_201);
     expect(await metadataStore.entries()).toEqual([]);
     expect(await chunkStore.entries()).toEqual([]);
+    expect(readStoredRows("retained-ttl-media")).toEqual([]);
+    expect(readStoredRows("retained-ttl-media-chunks")).toEqual([]);
   });
 
   it("counts retained rows under reject-new capacity", async () => {

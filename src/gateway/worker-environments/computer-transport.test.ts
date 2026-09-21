@@ -441,7 +441,7 @@ describe("session computer transport", () => {
       return await policy.invokeNode();
     });
     const operation = transport.invoke(request("type"));
-    const record = await expectSinglePendingApproval(manager);
+    const record = await expectSinglePendingApproval(manager, operation, h.approvalRequested);
     expect(record.request).toMatchObject({
       agentId: "main",
       sessionKey: h.state.placement.sessionKey,
@@ -452,15 +452,15 @@ describe("session computer transport", () => {
       turnClaim: h.claim,
       operationalRunInstance: h.run,
     });
-    expect(manager.resolve(record.id, "allow-once")).toBe(true);
+    expect(await manager.resolve(record.id, "allow-once")).toBe(true);
     await expect(operation).resolves.toMatchObject({ ok: true });
-    expect(manager.getSnapshot(record.id)?.consumedDecision).toBe("allow-once");
+    expect((await manager.getSnapshot(record.id))?.consumedDecision).toBe("allow-once");
     releaseAgentRunDelegatedAuthority(h.authority);
     h.releaseClaim();
     h.policyHandle.mockClear();
     await prepared.close("completion");
     expect(h.policyHandle).not.toHaveBeenCalled();
-    expect(manager.listPendingRecords()).toEqual([]);
+    expect(await manager.listPendingRecords()).toEqual([]);
   });
 
   it.each([
