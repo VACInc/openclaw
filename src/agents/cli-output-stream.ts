@@ -45,6 +45,7 @@ import {
   readGeminiCliStreamJsonError,
   supportsCliJsonlToolEvents,
 } from "./cli-output-records.js";
+import { appendCliResultText } from "./cli-output-results.js";
 import {
   CLI_STREAM_JSON_OUTPUT_LIMITS,
   frameBoundedCliJsonlChunk,
@@ -423,21 +424,7 @@ export function createCliJsonlStreamingParser(params: CliJsonlStreamingParserOpt
       const nextText = (
         keepStreamed ? preservedCandidate : result.text || streamedText || texts.join("\n").trim()
       ).trim();
-      const previousText = output?.text?.trim() ?? "";
-      // Claude Code may emit an interim result while background agents run, then
-      // a second result after task-notification. Preserve earlier result text
-      // when the later envelope does not already include it.
-      let text = nextText;
-      if (
-        previousText &&
-        nextText &&
-        previousText !== nextText &&
-        !nextText.startsWith(previousText)
-      ) {
-        text = `${previousText}\n${nextText}`;
-      } else if (!nextText) {
-        text = previousText;
-      }
+      const { text, textParts, completedText } = appendCliResultText(output, nextText);
       const syntheticNoResponse =
         sawClaudeSyntheticNoResponse &&
         parsed.subtype === "success" &&
@@ -448,6 +435,7 @@ export function createCliJsonlStreamingParser(params: CliJsonlStreamingParserOpt
       output = {
         ...result,
         text,
+        ...(textParts.length > 1 && !(stoppedTurn && !nextText) ? { textParts } : {}),
         ...(syntheticNoResponse
           ? {
               errorText: CLAUDE_SYNTHETIC_NO_RESPONSE_ERROR,
@@ -464,6 +452,14 @@ export function createCliJsonlStreamingParser(params: CliJsonlStreamingParserOpt
         ...(resumeCheckpointId ? { resumeCheckpointId } : {}),
         ...(diagnosticUsage ? { diagnosticUsage } : {}),
       };
+      if (
+        parsed.openclaw_interim_result === true &&
+        completedText &&
+        !output.errorText &&
+        !output.terminalFailure
+      ) {
+        params.onCompletedReply?.(completedText);
+      }
       // An interim result commits its segment. Rebase boundary state so later
       // text is judged on its own, while delta snapshots stay cumulative.
       segmentStart = assistantText.length;

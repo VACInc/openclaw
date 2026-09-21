@@ -137,8 +137,8 @@ export function createBlockReplyDeliveryHandler(params: {
   blockStreamingEnabled: boolean;
   blockReplyPipeline: BlockReplyPipeline | null;
   directBlockDeliveries: DirectBlockDelivery[];
-}): (payload: ReplyPayload) => Promise<void> {
-  return async (payload) => {
+}): (payload: ReplyPayload, options?: { completed?: boolean }) => Promise<void> {
+  return async (payload, options) => {
     // Suppressed display lanes must not enter delivery bookkeeping: callers use
     // that evidence to decide whether an otherwise empty turn needs a fallback.
     if (
@@ -214,6 +214,7 @@ export function createBlockReplyDeliveryHandler(params: {
       params.blockReplyPipeline.enqueue(blockPayload);
     } else if (
       params.blockStreamingEnabled ||
+      options?.completed === true ||
       blockHasNonTextContent ||
       blockPayload.isReasoning === true ||
       blockPayload.isCommentary === true

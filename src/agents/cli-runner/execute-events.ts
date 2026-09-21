@@ -324,6 +324,20 @@ export function createCliEventHandlers(params: {
       });
     }
   };
+  const emitCliCompletedReply = (text: string) => {
+    if (emitLiveEvents) {
+      emitAgentEvent({
+        runId: runParams.runId,
+        stream: "assistant",
+        data: {
+          completedText: applyPluginTextReplacements(
+            text,
+            context.backendResolved.textTransforms?.output,
+          ),
+        },
+      });
+    }
+  };
 
   // Emit-always: thinking reaches the event bus and session archive like the
   // embedded reasoning stream; /reasoning and /verbose gate presentation only.
@@ -363,6 +377,7 @@ export function createCliEventHandlers(params: {
     finalizeParsedTools,
     emitCliCommentaryText,
     emitCliAssistantDelta,
+    emitCliCompletedReply,
     emitCliThinkingDelta,
     emitCliThinkingProgress,
     hasObservedCliActivity: () => observedCliActivity,

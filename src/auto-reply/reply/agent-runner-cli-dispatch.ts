@@ -33,6 +33,7 @@ import {
   createAgentEventDeliveryStartOrder,
 } from "./agent-event-bridge.js";
 import { resolveAgentLifecycleTerminalMetadata } from "./agent-lifecycle-terminal.js";
+import { createAssistantTextBridge } from "./cli-assistant-bridge.js";
 
 type RunCliAgentInternalParams = RunCliAgentParams & {
   mediaImageLayout?: MediaImageLayout;
@@ -50,32 +51,6 @@ async function stopAgentEventBridges(bridges: readonly AgentEventBridge[]): Prom
   for (const bridge of bridges) {
     await bridge.drain();
   }
-}
-
-function createAssistantTextBridge(params: {
-  runId: string;
-  suppressed?: boolean;
-  deliver?: (text: string) => Promise<boolean | void>;
-  startOrder?: AgentEventDeliveryStartOrder;
-}) {
-  let lastText: string | undefined;
-  return createAgentEventBridge({
-    runId: params.runId,
-    suppressed: params.suppressed,
-    deliver: params.deliver,
-    startOrder: params.startOrder,
-    read: (evt) => {
-      if (evt.stream !== "assistant") {
-        return undefined;
-      }
-      const text = typeof evt.data.text === "string" ? evt.data.text : undefined;
-      if (text === undefined || text === lastText) {
-        return undefined;
-      }
-      lastText = text;
-      return text;
-    },
-  });
 }
 
 type ReasoningTextPayload = {
@@ -408,6 +383,7 @@ type RunCliAgentWithLifecycleParams = {
   onActivity?: () => void;
   preserveProgressCallbackStartOrder?: boolean;
   onAssistantText?: (text: string) => Promise<boolean | void>;
+  onCompletedReply?: (text: string) => Promise<void>;
   onReasoningText?: (payload: ReasoningTextPayload) => Promise<void>;
   onReasoningProgress?: (payload: ReasoningProgressPayload) => Promise<void>;
   onCompactionStart?: GetReplyOptions["onCompactionStart"];
@@ -533,6 +509,7 @@ async function runCliAgentWithLifecycleInternal(
     runId: params.runId,
     suppressed: params.suppressAssistantBridge,
     deliver: params.onAssistantText,
+    deliverCompleted: params.onCompletedReply,
     startOrder: progressStartOrder,
   });
   let finalReasoningText: string | undefined;

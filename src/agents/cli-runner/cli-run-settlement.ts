@@ -451,7 +451,7 @@ export function buildCliRunResult(params: {
       : sourceReplyMirror.delivered
         ? undefined
         : text
-          ? [
+          ? (output.textParts ?? [text]).map((text) =>
               assistantTranscriptOwned
                 ? setReplyPayloadMetadata(
                     { text },
@@ -463,7 +463,7 @@ export function buildCliRunResult(params: {
                     },
                   )
                 : { text },
-            ]
+            )
           : resolveReplyExpectation(runParams) === "optional"
             ? [{ text: SILENT_REPLY_TOKEN }]
             : undefined;
