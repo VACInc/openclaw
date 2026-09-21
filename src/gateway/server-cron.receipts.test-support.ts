@@ -242,7 +242,6 @@ export function registerGatewayCronHandoffTests({
       const exits = [watched[0].exit, watched[1].exit] as const;
       const firstStarted = createDeferred();
       const secondStarted = createDeferred();
-      const secondFinished = createDeferred();
       const releaseFirst = createDeferred();
       const releaseSecond = createDeferred();
       const { spawn } = mockCronSupervisor(...watched);
@@ -269,15 +268,7 @@ export function registerGatewayCronHandoffTests({
               .mockRejectedValueOnce(new Error("start failed"))
           : undefined;
       const next = loadCronService(cfg);
-      const nextCron = getConcreteCron(next);
-      const runOnExit = nextCron.runOnExit.bind(nextCron);
-      const nextRun = vi.spyOn(nextCron, "runOnExit").mockImplementation(async (id, options) => {
-        try {
-          return await runOnExit(id, options);
-        } finally {
-          secondFinished.resolve();
-        }
-      });
+      const nextRun = vi.spyOn(getConcreteCron(next), "runOnExit");
       let adoption: void | Promise<void> = undefined;
       try {
         const jobs = [];
@@ -327,13 +318,18 @@ export function registerGatewayCronHandoffTests({
           await next.cron.start();
           await secondStarted.promise;
           expect(requestHeartbeatAndWaitMock).toHaveBeenCalledTimes(2);
+          expect(nextRun).toHaveBeenCalledOnce();
           expect(requestHeartbeatAndWaitMock).toHaveBeenNthCalledWith(
             2,
             expect.objectContaining({ reason: "cron:" + secondId }),
             expect.anything(),
           );
           releaseSecond.resolve();
-          await secondFinished.promise;
+          const completion = expectDefined(nextRun.mock.results[0], "adopted on-exit run");
+          if (completion.type !== "return") {
+            throw new Error("Adopted on-exit run did not return a completion");
+          }
+          await completion.value;
           expect(next.cron.getJob(secondId)?.state.lastRunStatus).toBe("ok");
           expect(enqueueSystemEventMock).toHaveBeenLastCalledWith(
             expect.stringContaining("completed before reload"),
