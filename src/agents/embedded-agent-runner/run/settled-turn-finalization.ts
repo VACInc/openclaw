@@ -174,7 +174,7 @@ export async function prepareTerminalWithSettledTurnFinalization(input: {
     `settled post-tool turn lacked a final answer: runId=${runParams.runId} sessionId=${runParams.sessionId} ` +
       `provider=${errorContext.provider}/${errorContext.model} — running isolated finalization`,
   );
-  let finalizationOutcome: "answered" | "empty" | "failed" = "failed";
+  let finalizationOutcome: "answered" | "empty" | "failed" | "silent-fallback" = "failed";
   try {
     let finalization: Awaited<ReturnType<typeof runPreparedSettledTurnFinalization>>;
     let finalizationAttempt = 0;
@@ -271,9 +271,7 @@ export async function prepareTerminalWithSettledTurnFinalization(input: {
   if (finalizationOutcome !== "answered" && terminalFallbackAllowed) {
     // Scheduled runs have no useful announcement when only a host placeholder remains.
     const fallbackText =
-      runParams.trigger === "cron"
-        ? SILENT_REPLY_TOKEN
-        : SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT;
+      runParams.trigger === "cron" ? SILENT_REPLY_TOKEN : SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT;
     const transcriptIdempotencyKey = await persistSettledToolFallbackTranscript({
       text: fallbackText,
       attempt: input.finalization.preparedAttempt,
@@ -303,6 +301,9 @@ export async function prepareTerminalWithSettledTurnFinalization(input: {
       runtimePlan: input.finalization.preparedAttempt.runtimePlan,
       transcriptIdempotencyKey,
     });
+    if (runParams.trigger === "cron") {
+      finalizationOutcome = "silent-fallback";
+    }
   }
   // Only an actual recovery replaces a failed or timed-out turn's terminal ownership.
   const completion =
@@ -567,7 +568,7 @@ function buildSettledToolFallbackAttemptResult(input: {
     timestamp: Date.now(),
   };
   return buildSettledTurnFinalizationAttemptResult({
-    outcome: "answered",
+    outcome: isSilentReplyText(input.text) ? "empty" : "answered",
     result: {
       assistant,
       usage: input.sourceAttempt.attemptUsage,
