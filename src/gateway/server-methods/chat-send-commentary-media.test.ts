@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createFixtureLifetime } from "../../../test/helpers/fixture-lifetime.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { createEmbeddedAttemptTranscriptLifecycle } from "../../agents/embedded-agent-runner/run/attempt-transcript-lifecycle.js";
 import { runAgentHarnessBeforeMessageWriteHook } from "../../agents/harness/hook-helpers.js";
@@ -23,6 +24,7 @@ import {
   SessionTranscriptWriterClaimReboundError,
   withOwnedSessionTranscriptWrites,
 } from "../../config/sessions/transcript-write-context.js";
+import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
 import * as mediaFetch from "../../media/fetch.js";
 import {
   disposeStoreRemoteFixtures,
@@ -77,7 +79,7 @@ afterAll(() => {
 });
 
 describe("webchat commentary media", () => {
-  it.each([
+  it.for([
     "image",
     "worktree",
     "sender-denied",
@@ -94,11 +96,14 @@ describe("webchat commentary media", () => {
     "gc-during-preparation",
     "gc-with-publication-failure",
     "gc-with-revocation-after-commit",
-  ] as const)("materializes authored progress media with %s semantics", async (scenario) => {
-    await withOpenClawTestState({ label: "commentary-media" }, async (state) => {
+  ] as const)("materializes authored progress media with %s semantics", async (scenario, test) => {
+    const fixture = createFixtureLifetime();
+    test.onTestFinished(() => fixture.cleanup());
+    const body = withOpenClawTestState({ label: "commentary-media" }, async (state) => {
+      test.signal.throwIfAborted();
       fetchedUrls.length = 0;
       let requestCount = 0;
-      const requestsArrived = createDeferred();
+      const requestsStarted = createDeferred();
       const abortedResponseClosed = createDeferred<boolean>();
       const abortController = new AbortController();
       const imageResponse = createDeferred();
@@ -109,7 +114,7 @@ describe("webchat commentary media", () => {
       const upstream = http.createServer((_request, response) => {
         requestCount += 1;
         if (requestCount === mediaUrls.length) {
-          requestsArrived.resolve();
+          requestsStarted.resolve();
         }
         const send = () => {
           response.writeHead(200, {
@@ -216,7 +221,7 @@ describe("webchat commentary media", () => {
         requesterContext: { SenderId: "cli" },
         isAgentRunStarted: () => true,
         isRunCurrent: () => current,
-        abortSignal: abortController.signal,
+        abortSignal: AbortSignal.any([abortController.signal, test.signal]),
         logGateway: { warn } as never,
         session: {
           ...scope,
@@ -388,7 +393,10 @@ describe("webchat commentary media", () => {
                   runId,
                 });
                 if (!localMedia) {
-                  await Promise.race([requestsArrived.promise, commentarySettled.promise]);
+                  await racePromiseWithAbortSignal(
+                    Promise.race([requestsStarted.promise, commentarySettled.promise]),
+                    test.signal,
+                  );
                 }
                 expect(warn).not.toHaveBeenCalled();
                 expect(requestCount).toBe(localMedia ? 0 : mediaUrls.length);
@@ -439,7 +447,7 @@ describe("webchat commentary media", () => {
                 if (scenario === "revoked" || scenario === "target-rewrite" || rewriteSpy) {
                   return;
                 }
-                await commentarySettled.promise;
+                await racePromiseWithAbortSignal(commentarySettled.promise, test.signal);
                 expect(readMessage()).toHaveProperty("openclawDisplayContent");
                 const persisted = readMessage();
                 expect(persisted).toMatchObject({
@@ -586,15 +594,15 @@ describe("webchat commentary media", () => {
         );
         void run.catch(() => {});
         if (scenario === "completion") {
-          await Promise.race([cleanupStarted.promise, run]);
+          await racePromiseWithAbortSignal(
+            Promise.race([cleanupStarted.promise, run]),
+            test.signal,
+          );
           await new Promise<void>((resolve) => {
             setImmediate(resolve);
           });
           expect(cleanupSettled).toBe(false);
           imageResponse.resolve();
-        }
-        if (scenario === "aborted") {
-          await expect(abortedResponseClosed.promise).resolves.toBe(true);
         }
         await run;
         if (gcDuringPreparation) {
@@ -624,6 +632,9 @@ describe("webchat commentary media", () => {
           }
         }
         if (scenario === "aborted") {
+          expect(await racePromiseWithAbortSignal(abortedResponseClosed.promise, test.signal)).toBe(
+            true,
+          );
           expect(cleanupSettled).toBe(true);
         }
         if (mixed) {
@@ -676,7 +687,7 @@ describe("webchat commentary media", () => {
         }
       } finally {
         imageResponse.resolve();
-        if (scenario === "aborted") {
+        if (scenario === "aborted" || test.signal.aborted) {
           upstream.closeAllConnections();
         }
         await run?.catch(() => {});
@@ -690,5 +701,6 @@ describe("webchat commentary media", () => {
         rewriteSpy?.mockRestore();
       }
     });
+    await fixture.track(body);
   });
 });
