@@ -3,7 +3,6 @@ import { createDeferred } from "../../../test/helpers/promise.js";
 import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
 import type { callGateway } from "../../gateway/call.js";
 import type { GatewayRecoveryRuntime } from "../../gateway/server-instance-runtime.types.js";
-import * as gatewayAdmission from "../../process/gateway-work-admission.js";
 import { sessionChanges } from "../../sessions/session-row-changes.js";
 
 type RecoveryScope = { storePath: string; sessionKey: string };
@@ -65,22 +64,6 @@ export function createRecoveryRuntimeFixture(params: {
     }
   };
   return {
-    observeQueuedAdmission(expectedOrigin: string): Promise<void> {
-      const queued = createDeferred();
-      const admit = gatewayAdmission.runWithGatewayIndependentRootWorkAdmission;
-      const observer = vi
-        .spyOn(gatewayAdmission, "runWithGatewayIndependentRootWorkAdmission")
-        .mockImplementation(<T>(run: () => Promise<T>, origin?: string, signal?: AbortSignal) => {
-          const pending = admit(run, origin, signal);
-          // The real admission owner has registered its wait before returning.
-          if (origin === expectedOrigin) {
-            queued.resolve();
-          }
-          return pending;
-        });
-      onTestFinished(() => observer.mockRestore());
-      return queued.promise;
-    },
     expectAdmission: (expectedGatewayCalls: number, ...scopes: RecoveryScope[]) =>
       expectState(expectedGatewayCalls, scopes, (entry) => entry.abortedLastRun === false),
     async expectFailedRecovery(
