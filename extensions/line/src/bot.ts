@@ -1,5 +1,6 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { resolveGroupHistoryLimit, type HistoryEntry } from "openclaw/plugin-sdk/reply-history";
+import { resolvePromptHistoryLimit } from "openclaw/plugin-sdk/number-runtime";
+import type { HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import {
   getRuntimeConfig,
   getRuntimeConfigSnapshot,
@@ -106,9 +107,9 @@ export function createLineBot(opts: LineBotOptions): LineBot {
           : {}),
         ...(control.missingParts === undefined ? {} : { missingParts: control.missingParts }),
         groupHistories,
-        historyLimit: resolveGroupHistoryLimit(
+        historyLimit: resolvePromptHistoryLimit(
           account.config.historyLimit ?? cfg.messages?.groupChat?.historyLimit,
-        ),
+        ).limit,
       });
     },
   });

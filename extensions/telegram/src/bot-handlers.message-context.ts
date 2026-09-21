@@ -2,7 +2,7 @@ import type { Message } from "grammy/types";
 import { formatMediaPlaceholderText } from "openclaw/plugin-sdk/channel-inbound";
 import { resolveStoredModelOverride } from "openclaw/plugin-sdk/command-auth-native";
 import type { OpenClawConfig, TelegramAccountConfig } from "openclaw/plugin-sdk/config-contracts";
-import { resolveGroupHistoryLimit } from "openclaw/plugin-sdk/reply-history";
+import { resolvePromptHistoryLimit } from "openclaw/plugin-sdk/number-runtime";
 import {
   getSessionEntry,
   readAmbientTranscriptWatermark,
@@ -457,9 +457,9 @@ export function createTelegramMessageContextRuntime({
       return [];
     }
     const isGroup = msg.chat.type === "group" || msg.chat.type === "supergroup";
-    const groupHistoryLimit = resolveGroupHistoryLimit(
+    const groupHistoryLimit = resolvePromptHistoryLimit(
       runtimeTelegramCfg.historyLimit ?? runtimeCfg.messages?.groupChat?.historyLimit,
-    );
+    ).limit;
     const dmHistoryLimit = resolveTelegramDmHistoryLimit({
       config: runtimeTelegramCfg,
       senderId: msg.from?.id,

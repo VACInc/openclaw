@@ -39,3 +39,6 @@ export {
   resolveExpiresAtMsFromEpochSeconds,
 } from "../../packages/normalization-core/src/number-coercion.js";
 export { MAX_TCP_PORT, parseTcpPort } from "../infra/tcp-port.js";
+
+// Private runtime policy shared by official channel implementations and Doctor.
+export { resolvePromptHistoryLimit } from "../auto-reply/reply/history-limit.js";

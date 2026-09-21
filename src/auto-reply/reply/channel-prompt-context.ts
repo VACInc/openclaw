@@ -1,7 +1,7 @@
 /** Appends channel-supplied prompt context to the user-role body under a marked label. */
 import { truncateUtf16Safe } from "../../utils.js";
 import type { TemplateContext } from "../templating.js";
-import { resolvePromptHistoryLimit } from "./history.js";
+import { resolvePromptHistoryLimit } from "./history-limit.js";
 import { markInboundContextLabel } from "./inbound-context-marker.js";
 import { normalizeInboundTextNewlines } from "./inbound-text.js";
 
@@ -70,7 +70,7 @@ export function selectInboundHistoryContext(
     typeof configuredLimit === "number" &&
     Number.isSafeInteger(configuredLimit) &&
     configuredLimit >= 0
-      ? resolvePromptHistoryLimit(configuredLimit, 20)
+      ? resolvePromptHistoryLimit(configuredLimit, 20).limit
       : 20;
   return {
     boundedHistory: limit > 0 ? history.slice(-limit) : [],

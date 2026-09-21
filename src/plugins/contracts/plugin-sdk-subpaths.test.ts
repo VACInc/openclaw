@@ -645,8 +645,6 @@ describe("plugin-sdk subpath exports", () => {
       "clearHistoryEntriesIfEnabled",
       "createChannelHistoryWindow",
       "recordPendingHistoryEntryIfEnabled",
-      "resolveGroupHistoryLimit",
-      "resolvePromptHistoryLimit",
     ]);
     expectSourceContract("reply-runtime", {
       omits: [

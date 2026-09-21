@@ -1,5 +1,5 @@
 import type { TelegramAccountConfig } from "openclaw/plugin-sdk/config-contracts";
-import { resolvePromptHistoryLimit } from "openclaw/plugin-sdk/reply-history";
+import { resolvePromptHistoryLimit } from "openclaw/plugin-sdk/number-runtime";
 
 const DEFAULT_TELEGRAM_DM_HISTORY_LIMIT = 10;
 
@@ -12,5 +12,5 @@ export function resolveTelegramDmHistoryLimit(params: {
   return resolvePromptHistoryLimit(
     override ?? params.config.dmHistoryLimit,
     DEFAULT_TELEGRAM_DM_HISTORY_LIMIT,
-  );
+  ).limit;
 }

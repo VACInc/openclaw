@@ -1,4 +1,3 @@
-// Imessage provider module implements model/runtime integration.
 import { resolveAgentConfig, resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
 import { CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY } from "openclaw/plugin-sdk/approval-handler-runtime";
 import type { PluginRuntime } from "openclaw/plugin-sdk/channel-core";
@@ -34,7 +33,9 @@ import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
 import { channelReadyPatch } from "openclaw/plugin-sdk/gateway-runtime";
 import { redactIdentifier } from "openclaw/plugin-sdk/logging-core";
 import { isInboundPathAllowed, kindFromMime } from "openclaw/plugin-sdk/media-runtime";
-import { resolveGroupHistoryLimit, type HistoryEntry } from "openclaw/plugin-sdk/reply-history";
+// Imessage provider module implements model/runtime integration.
+import { resolvePromptHistoryLimit } from "openclaw/plugin-sdk/number-runtime";
+import type { HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import { resolveTextChunkLimit, type GetReplyOptions } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveInboundLastRouteSessionKey } from "openclaw/plugin-sdk/routing";
 import {
@@ -353,9 +354,9 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
       capability: CHANNEL_APPROVAL_GATEWAY_RUNTIME_CONTEXT_CAPABILITY,
     });
   const imessageCfg = accountInfo.config;
-  const historyLimit = resolveGroupHistoryLimit(
+  const historyLimit = resolvePromptHistoryLimit(
     imessageCfg.historyLimit ?? cfg.messages?.groupChat?.historyLimit,
-  );
+  ).limit;
   const groupHistories = new Map<string, HistoryEntry[]>();
   const sentMessageCache = createSentMessageCache();
   const selfChatCache = createSelfChatCache();

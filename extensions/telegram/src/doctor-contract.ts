@@ -3,10 +3,7 @@ import type {
   ChannelDoctorLegacyConfigRule,
 } from "openclaw/plugin-sdk/channel-contract";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import {
-  isSchemaMaxHistoryLimit,
-  resolveGroupHistoryLimit,
-} from "openclaw/plugin-sdk/reply-history";
+import { resolvePromptHistoryLimit } from "openclaw/plugin-sdk/number-runtime";
 import {
   asObjectRecord,
   defineChannelAliasMigration,
@@ -14,6 +11,7 @@ import {
   normalizeChannelAccounts,
   type CompatMutationResult,
 } from "openclaw/plugin-sdk/runtime-doctor-migrations";
+import { resolveTelegramDmHistoryLimit } from "./dm-history.js";
 
 const streamingAliasMigration = defineChannelAliasMigration({
   channelId: "telegram",
@@ -219,8 +217,8 @@ function telegramEntryHasSchemaMaxHistoryLimit(value: unknown): boolean {
     return false;
   }
   if (
-    isSchemaMaxHistoryLimit(entry.historyLimit) ||
-    isSchemaMaxHistoryLimit(entry.dmHistoryLimit)
+    resolvePromptHistoryLimit(entry.historyLimit).isSchemaMaximum ||
+    resolvePromptHistoryLimit(entry.dmHistoryLimit).isSchemaMaximum
   ) {
     return true;
   }
@@ -230,43 +228,53 @@ function telegramEntryHasSchemaMaxHistoryLimit(value: unknown): boolean {
   }
   return Object.values(dms).some((nested) => {
     const rec = asObjectRecord(nested);
-    return Boolean(rec && isSchemaMaxHistoryLimit(rec.historyLimit));
+    return Boolean(rec && resolvePromptHistoryLimit(rec.historyLimit).isSchemaMaximum);
   });
 }
 
-function stripSchemaMaxTelegramHistoryLimits(params: {
+function normalizeSchemaMaxTelegramHistoryLimits(params: {
   entry: Record<string, unknown>;
   pathPrefix: string;
   changes: string[];
 }): CompatMutationResult {
   let updated = params.entry;
   let changed = false;
-  const stripKey = (key: "historyLimit" | "dmHistoryLimit") => {
-    if (!isSchemaMaxHistoryLimit(updated[key])) {
+  const normalizeKey = (key: "historyLimit" | "dmHistoryLimit") => {
+    const { limit, isSchemaMaximum } = resolvePromptHistoryLimit(
+      updated[key],
+      key === "historyLimit" ? undefined : resolveTelegramDmHistoryLimit({ config: {} }),
+    );
+    if (!isSchemaMaximum) {
       return;
     }
-    const { [key]: _removed, ...rest } = updated;
-    updated = rest;
+    // Keep an explicit override: deleting it could expose an inherited zero or larger window.
+    updated = { ...updated, [key]: limit };
     params.changes.push(
-      `Removed unbounded ${params.pathPrefix}.${key}; JSON integer maximum is not a prompt history window.`,
+      `Normalized ${params.pathPrefix}.${key} to ${limit}; preserved its effective default history window.`,
     );
     changed = true;
   };
-  stripKey("historyLimit");
-  stripKey("dmHistoryLimit");
+  normalizeKey("historyLimit");
+  normalizeKey("dmHistoryLimit");
   const dms = asObjectRecord(updated.dms);
   if (dms) {
     let dmsChanged = false;
     const nextDms: Record<string, unknown> = { ...dms };
     for (const [id, raw] of Object.entries(dms)) {
       const rec = asObjectRecord(raw);
-      if (!rec || !isSchemaMaxHistoryLimit(rec.historyLimit)) {
+      if (!rec) {
         continue;
       }
-      const { historyLimit: _removed, ...rest } = rec;
-      nextDms[id] = rest;
+      const { limit, isSchemaMaximum } = resolvePromptHistoryLimit(
+        rec.historyLimit,
+        resolveTelegramDmHistoryLimit({ config: {} }),
+      );
+      if (!isSchemaMaximum) {
+        continue;
+      }
+      nextDms[id] = { ...rec, historyLimit: limit };
       params.changes.push(
-        `Removed unbounded ${params.pathPrefix}.dms.${id}.historyLimit; JSON integer maximum is not a prompt history window.`,
+        `Normalized ${params.pathPrefix}.dms.${id}.historyLimit to ${limit}; preserved its effective default history window.`,
       );
       dmsChanged = true;
     }
@@ -342,13 +350,13 @@ export const legacyConfigRules: ChannelDoctorLegacyConfigRule[] = [
   {
     path: ["channels", "telegram"],
     message:
-      'channels.telegram.historyLimit/dmHistoryLimit is the JSON integer maximum, which is not a prompt history window. Run "openclaw doctor --fix" to remove it so the default bound applies.',
+      'channels.telegram.historyLimit/dmHistoryLimit is the JSON integer maximum, which is not a prompt history window. Run "openclaw doctor --fix" to store its effective default bound without changing override precedence.',
     match: telegramEntryHasSchemaMaxHistoryLimit,
   },
   {
     path: ["channels", "telegram", "accounts"],
     message:
-      'channels.telegram.accounts.<id> historyLimit/dmHistoryLimit is the JSON integer maximum, which is not a prompt history window. Run "openclaw doctor --fix" to remove it so the default bound applies.',
+      'channels.telegram.accounts.<id> historyLimit/dmHistoryLimit is the JSON integer maximum, which is not a prompt history window. Run "openclaw doctor --fix" to store its effective default bound without changing override precedence.',
     match: (value) =>
       hasLegacyAccountStreamingAliases(value, telegramEntryHasSchemaMaxHistoryLimit),
   },
@@ -376,11 +384,11 @@ export function normalizeCompatibilityConfig({
     changes.push("Removed retired Telegram tuning knobs.");
   }
   const rootGroupHistoryContextMode = updated.includeGroupHistoryContext;
-  const rootGroupHistoryLimitBeforeMigration = resolveGroupHistoryLimit(
+  const rootGroupHistoryLimitBeforeMigration = resolvePromptHistoryLimit(
     typeof updated.historyLimit === "number"
       ? updated.historyLimit
       : cfg.messages?.groupChat?.historyLimit,
-  );
+  ).limit;
 
   const removedThreadReplies = removeRetiredTelegramDmConfig({
     entry: updated,
@@ -455,7 +463,7 @@ export function normalizeCompatibilityConfig({
           ? { preserveRecentHistoryLimit: rootGroupHistoryLimitBeforeMigration }
           : {}),
       });
-      const unbounded = stripSchemaMaxTelegramHistoryLimits({
+      const unbounded = normalizeSchemaMaxTelegramHistoryLimits({
         entry: history.entry,
         pathPrefix,
         changes: accountChanges,
@@ -469,7 +477,7 @@ export function normalizeCompatibilityConfig({
   updated = accounts.entry;
   changed = changed || accounts.changed;
 
-  const unboundedRoot = stripSchemaMaxTelegramHistoryLimits({
+  const unboundedRoot = normalizeSchemaMaxTelegramHistoryLimits({
     entry: updated,
     pathPrefix: "channels.telegram",
     changes,

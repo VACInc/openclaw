@@ -11,10 +11,6 @@ export {
 } from "../channels/turn/history-window.js";
 export {
   DEFAULT_GROUP_HISTORY_LIMIT,
-  MAX_PROMPT_HISTORY_LIMIT,
-  isSchemaMaxHistoryLimit,
-  resolveGroupHistoryLimit,
-  resolvePromptHistoryLimit,
   HISTORY_CONTEXT_MARKER,
   buildHistoryContext,
   buildHistoryContextFromEntries,

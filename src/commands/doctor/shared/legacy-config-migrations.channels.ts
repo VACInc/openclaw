@@ -1,5 +1,5 @@
 // Legacy channel config migrations for routing, streaming, groups, and account aliases.
-import { isSchemaMaxHistoryLimit } from "../../../auto-reply/reply/history.js";
+import { resolvePromptHistoryLimit } from "../../../auto-reply/reply/history-limit.js";
 import {
   defineLegacyConfigMigration,
   ensureRecord,
@@ -403,7 +403,7 @@ const GROUP_ROUTING_RULES: LegacyConfigRule[] = [
     path: ["messages", "groupChat", "historyLimit"],
     message:
       'messages.groupChat.historyLimit is the JSON integer maximum, which is not a prompt history window. Run "openclaw doctor --fix" to remove it so the default bound applies.',
-    match: (value) => isSchemaMaxHistoryLimit(value),
+    match: (value) => resolvePromptHistoryLimit(value).isSchemaMaximum,
   },
   {
     path: ["channels", "telegram", "requireMention"],
@@ -441,7 +441,7 @@ function migrateRetiredWebchatChannelConfig(raw: Record<string, unknown>, change
 
 function migrateSchemaMaxGroupHistoryLimit(raw: Record<string, unknown>, changes: string[]): void {
   const groupChat = getRecord(getRecord(raw.messages)?.groupChat);
-  if (!groupChat || !isSchemaMaxHistoryLimit(groupChat.historyLimit)) {
+  if (!groupChat || !resolvePromptHistoryLimit(groupChat.historyLimit).isSchemaMaximum) {
     return;
   }
   delete groupChat.historyLimit;

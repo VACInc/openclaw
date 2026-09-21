@@ -15,12 +15,11 @@ import {
   resolveConfiguredBindingRoute,
   resolveRuntimeConversationBindingRoute,
 } from "openclaw/plugin-sdk/conversation-runtime";
-import { parseStrictNonNegativeInteger } from "openclaw/plugin-sdk/number-runtime";
 import {
-  resolveGroupHistoryLimit,
-  createChannelHistoryWindow,
-  type HistoryEntry,
-} from "openclaw/plugin-sdk/reply-history";
+  resolvePromptHistoryLimit,
+  parseStrictNonNegativeInteger,
+} from "openclaw/plugin-sdk/number-runtime";
+import { createChannelHistoryWindow, type HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import { resolveInboundLastRouteSessionKey } from "openclaw/plugin-sdk/routing";
 import {
   resolveDefaultGroupPolicy,
@@ -486,9 +485,9 @@ export async function handleFeishuMessage(params: {
     log(`feishu[${account.accountId}]: detected @ forward request, targets: [${names}]`);
   }
 
-  const historyLimit = resolveGroupHistoryLimit(
+  const historyLimit = resolvePromptHistoryLimit(
     feishuCfg?.historyLimit ?? cfg.messages?.groupChat?.historyLimit,
-  );
+  ).limit;
   const groupConfig = isGroup
     ? resolveFeishuGroupConfig({ cfg: feishuCfg, groupId: ctx.chatId })
     : undefined;

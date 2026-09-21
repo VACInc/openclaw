@@ -4,11 +4,8 @@ import {
 } from "openclaw/plugin-sdk/channel-inbound";
 import { fanInChannelIngressLifecycles } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import { resolveChannelContextVisibilityMode } from "openclaw/plugin-sdk/context-visibility-runtime";
-import {
-  resolveGroupHistoryLimit,
-  createChannelHistoryWindow,
-  type HistoryEntry,
-} from "openclaw/plugin-sdk/reply-history";
+import { resolvePromptHistoryLimit } from "openclaw/plugin-sdk/number-runtime";
+import { createChannelHistoryWindow, type HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import { createRuntimeConfigReader } from "openclaw/plugin-sdk/runtime-config-snapshot";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { formatUnknownError } from "../errors.js";
@@ -53,9 +50,9 @@ export function createMSTeamsMessageHandler(deps: MSTeamsMessageHandlerDeps) {
     cfg,
     channel: "msteams",
   });
-  const historyLimit = resolveGroupHistoryLimit(
+  const historyLimit = resolvePromptHistoryLimit(
     msteamsCfg?.historyLimit ?? cfg.messages?.groupChat?.historyLimit,
-  );
+  ).limit;
   const conversationHistories = new Map<string, HistoryEntry[]>();
   const readConfig = createRuntimeConfigReader(cfg);
   const resolveDebounceMs = () =>
