@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApprovalResolutionRef } from "../infra/approval-resolution-ref.js";
 import {
@@ -9,6 +10,8 @@ import {
   executeSqliteQueryTakeFirstSync,
   getNodeSqliteKysely,
 } from "../infra/kysely-sync.js";
+import { withSqliteWriteAdmissionService } from "../infra/sqlite-transaction.js";
+import * as workerAdmission from "../infra/sqlite-worker-operation-admission.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
   closeOpenClawStateDatabaseAsync,
@@ -30,7 +33,7 @@ import {
   pruneTerminalOperatorApprovals,
   resolveOperatorApproval,
 } from "./operator-approval-store.js";
-import { getOperatorApprovalDetailedInDatabase } from "./operator-approval-store.kernel.js";
+import { executeOperatorApprovalCommand } from "./operator-approval-store.worker.js";
 
 type OperatorApprovalDatabase = Pick<OpenClawStateKyselyDatabase, "operator_approvals">;
 type NewOperatorApproval = Parameters<typeof insertOperatorApproval>[0]["approval"];
@@ -384,39 +387,44 @@ describe("operator approval store", () => {
     ).toMatchObject([{ id: "authorized-after-first-page" }]);
   });
 
-  it("samples the default clock after acquiring the SQLite write transaction", async () => {
+  it("reads the default clock after waiting for the SQLite write lock", async () => {
     const databaseOptions = createDatabaseOptions();
+    const createdAtMs = 1_000;
+    const expiresAtMs = 2_000;
     await insertOperatorApproval({
-      approval: approval("lock-delayed-clock", { createdAtMs: 1_000, expiresAtMs: 2_000 }),
+      approval: approval("lock-delayed-clock", { createdAtMs, expiresAtMs }),
       databaseOptions,
     });
-    const { db } = openOpenClawStateDatabase(databaseOptions);
-    const originalExec = db.exec.bind(db);
-    let transactionBegan = false;
-    const execSpy = vi.spyOn(db, "exec").mockImplementation((sql) => {
-      const result = originalExec(sql);
-      if (sql === "BEGIN IMMEDIATE") {
-        transactionBegan = true;
-      }
-      return result;
+    const database = openOpenClawStateDatabase(databaseOptions);
+    const writer = new DatabaseSync(database.path);
+    using clock = vi.spyOn(Date, "now").mockReturnValue(createdAtMs);
+    // Run the real worker transaction locally so its clock is controlled; transport authority
+    // is covered separately by the worker integration tests.
+    using _ = vi
+      .spyOn(workerAdmission, "requestSqliteWorkerOperationAdmission")
+      .mockImplementation(() => {});
+    const releaseWriter = vi.fn(() => {
+      writer.exec("COMMIT");
+      // Retain the getter's exact-deadline boundary after the real lock wait.
+      clock.mockReturnValue(expiresAtMs);
     });
-    // The worker bridge has separate coverage. This exercises its real store
-    // kernel with a clock that crosses expiry only after write-lock acquisition.
-    const nowSpy = vi
-      .spyOn(Date, "now")
-      .mockImplementation(() => (transactionBegan ? 2_000 : 1_500));
     try {
-      expect(Date.now()).toBeLessThan(2_000);
-      expect(
-        getOperatorApprovalDetailedInDatabase({ id: "lock-delayed-clock", databaseOptions }),
-      ).toMatchObject({
+      writer.exec("BEGIN IMMEDIATE");
+      expect(Date.now()).toBeLessThan(expiresAtMs);
+      const result = await withSqliteWriteAdmissionService(database.db, releaseWriter, async () =>
+        executeOperatorApprovalCommand(
+          { type: "operatorApprovals.get", input: { id: "lock-delayed-clock" } },
+          databaseOptions,
+        ),
+      );
+
+      expect(releaseWriter).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({
         outcome: "found",
         record: { status: "expired", terminalReason: "timeout" },
       });
-      expect(transactionBegan).toBe(true);
     } finally {
-      nowSpy.mockRestore();
-      execSpy.mockRestore();
+      writer.close();
     }
   });
 
