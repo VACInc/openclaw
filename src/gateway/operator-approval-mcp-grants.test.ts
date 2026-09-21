@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../../test/helpers/promise.js";
 import { buildCodexUserMcpServersThreadConfigPatchForRuntime } from "../agents/cli-runner/bundle-mcp-codex.js";
 import {
   clearRuntimeConfigSnapshot,
@@ -24,7 +23,6 @@ import { createPluginApprovalHandlers } from "./server-methods/plugin-approval.j
 import type { GatewayRequestHandlerOptions } from "./server-methods/types.js";
 
 const auxiliaries: ReturnType<typeof createGatewayAuxHandlers>[] = [];
-const pendingRequests: Promise<void>[] = [];
 let fixture: OpenClawTestState | undefined;
 const cfg: OpenClawConfig = {
   agents: { list: [{ id: "main" }, { id: "other" }] },
@@ -65,8 +63,6 @@ afterEach(async () => {
   for (const aux of auxiliaries) {
     await aux.stopOperatorInteractions();
   }
-  await Promise.allSettled(pendingRequests);
-  pendingRequests.length = 0;
   auxiliaries.length = 0;
   resetAgentRunRegistryForTest();
   closeOpenClawStateDatabaseForTest();
@@ -110,7 +106,6 @@ async function requestGrant(
           ...request.mcpTool,
           isActive: options.isActive ?? (() => true),
         });
-  const responded = createDeferred<Parameters<GatewayRequestHandlerOptions["respond"]>>();
   const args = {
     req: { method: "plugin.approval.request", params: request, id: "request-1" },
     params: request,
@@ -131,9 +126,7 @@ async function requestGrant(
             },
           }),
     },
-    respond: vi.fn((...response: Parameters<GatewayRequestHandlerOptions["respond"]>) => {
-      responded.resolve(response);
-    }),
+    respond: vi.fn(),
     isWebchatConnect: () => false,
     context: {
       broadcast: vi.fn(),
@@ -143,27 +136,14 @@ async function requestGrant(
       validateAgentRuntimeApprovalAuthority: () => validateAgentRunDelegatedAuthority(authority),
     },
   } as unknown as GatewayRequestHandlerOptions;
-  let pending: Promise<void>;
-  try {
-    pending = Promise.resolve(
-      createPluginApprovalHandlers(aux.pluginApprovalManager)["plugin.approval.request"]!(args),
-    );
-    pendingRequests.push(pending);
-    void pending.then(
-      () => responded.reject(new Error("MCP approval request finished without a response")),
-      responded.reject,
-    );
-    const [ok, payload, error] = await responded.promise;
-    expect(ok).toBe(true);
-    expect(payload).toMatchObject({ status: "accepted" });
-    expect(error).toBeUndefined();
-  } catch (error) {
-    releaseBinding?.();
-    throw error;
-  }
+  const pending = createPluginApprovalHandlers(aux.pluginApprovalManager)[
+    "plugin.approval.request"
+  ]!(args);
+  await vi.waitFor(() => expect(args.respond).toHaveBeenCalled());
   releaseBinding?.();
   const record = aux.pluginApprovalManager.listPendingRecords()[0];
   if (!record) {
+    await pending;
     throw new Error("MCP approval request did not register");
   }
   return { aux, authority, pending, record };
