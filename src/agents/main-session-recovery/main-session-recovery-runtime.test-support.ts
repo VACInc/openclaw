@@ -3,75 +3,85 @@ import { createDeferred } from "../../../test/helpers/promise.js";
 import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
 import type { callGateway } from "../../gateway/call.js";
 import type { GatewayRecoveryRuntime } from "../../gateway/server-instance-runtime.types.js";
-import * as gatewayAdmission from "../../process/gateway-work-admission.js";
 import { sessionChanges } from "../../sessions/session-row-changes.js";
+
+type RecoveryScope = { storePath: string; sessionKey: string };
 
 export function createRecoveryRuntimeFixture(params: {
   callGateway: typeof callGateway;
   getDispatchSettlement: () => Promise<void>;
   sendRecoveryNotice: GatewayRecoveryRuntime["sendRecoveryNotice"];
 }) {
-  const waitForSessionState = async (sessionKeys: readonly string[], isReady: () => boolean) => {
-    const ready = createDeferred();
+  const expectState = async (
+    expectedGatewayCalls: number,
+    scopes: RecoveryScope[],
+    matches: (entry: NonNullable<ReturnType<typeof loadSessionEntry>>) => boolean,
+    signal?: AbortSignal,
+  ) => {
+    signal?.throwIfAborted();
+    const targets = scopes.map((scope) => {
+      const entry = loadSessionEntry(scope);
+      expect(entry, "recovery fixture session must exist").toBeDefined();
+      return { scope, sessionId: entry?.sessionId };
+    });
+    const settled = createDeferred();
     const observe = () => {
       try {
-        if (isReady()) {
-          ready.resolve();
+        if (
+          targets.every(({ scope, sessionId }) => {
+            const entry = loadSessionEntry(scope);
+            return entry !== undefined && entry.sessionId === sessionId && matches(entry);
+          })
+        ) {
+          settled.resolve();
         }
       } catch (error) {
-        ready.reject(error);
+        // Session-change listeners isolate throws, so this wait must retain its read failure.
+        settled.reject(error);
       }
     };
     const unsubscribe = sessionChanges.subscribe((change) => {
-      if ("sessionKey" in change && sessionKeys.includes(change.sessionKey)) {
+      if (
+        "sessionKey" in change &&
+        targets.some(({ scope }) => scope.sessionKey === change.sessionKey)
+      ) {
         observe();
       }
     });
+    const abort = () => settled.reject(signal?.reason);
+    signal?.addEventListener("abort", abort, { once: true });
     onTestFinished(unsubscribe);
     try {
+      signal?.throwIfAborted();
       // Subscribe before reading so an already committed state also completes.
       observe();
-      await ready.promise;
+      await settled.promise;
+      signal?.throwIfAborted();
+      expect(params.callGateway).toHaveBeenCalledTimes(expectedGatewayCalls);
     } finally {
       unsubscribe();
+      signal?.removeEventListener("abort", abort);
     }
   };
   return {
-    waitForSessionState,
-    observeQueuedAdmission(expectedOrigin: string): Promise<void> {
-      const queued = createDeferred();
-      const admit = gatewayAdmission.runWithGatewayIndependentRootWorkAdmission;
-      const observer = vi
-        .spyOn(gatewayAdmission, "runWithGatewayIndependentRootWorkAdmission")
-        .mockImplementation(<T>(run: () => Promise<T>, origin?: string, signal?: AbortSignal) => {
-          const pending = admit(run, origin, signal);
-          // The real admission owner has registered its wait before returning.
-          if (origin === expectedOrigin) {
-            queued.resolve();
-          }
-          return pending;
-        });
-      onTestFinished(() => observer.mockRestore());
-      return queued.promise;
-    },
-    async expectAdmission(
+    expectAdmission: (expectedGatewayCalls: number, ...scopes: RecoveryScope[]) =>
+      expectState(expectedGatewayCalls, scopes, (entry) => entry.abortedLastRun === false),
+    async expectFailedRecovery(
       expectedGatewayCalls: number,
-      ...scopes: Array<{ storePath: string; sessionKey: string }>
+      recovery: { stop: () => Promise<void> },
+      signal: AbortSignal,
+      ...scopes: RecoveryScope[]
     ) {
-      const targets = scopes.map((scope) => {
-        const entry = loadSessionEntry(scope);
-        expect(entry, "recovery fixture session must exist").toBeDefined();
-        return { scope, sessionId: entry?.sessionId };
-      });
-      await waitForSessionState(
-        scopes.map((scope) => scope.sessionKey),
-        () =>
-          targets.every(({ scope, sessionId }) => {
-            const entry = loadSessionEntry(scope);
-            return entry?.sessionId === sessionId && entry?.abortedLastRun === false;
-          }),
-      );
-      expect(params.callGateway).toHaveBeenCalledTimes(expectedGatewayCalls);
+      try {
+        await expectState(
+          expectedGatewayCalls,
+          scopes,
+          (entry) => entry.status === "failed" && entry.abortedLastRun === false,
+          signal,
+        );
+      } finally {
+        await recovery.stop();
+      }
     },
     dispatchSessionMethod: vi.fn(),
     dispatchAgent: async <T>(

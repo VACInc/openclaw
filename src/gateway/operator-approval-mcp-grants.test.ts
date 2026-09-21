@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
 import { buildCodexUserMcpServersThreadConfigPatchForRuntime } from "../agents/cli-runner/bundle-mcp-codex.js";
 import {
   clearRuntimeConfigSnapshot,
@@ -21,13 +22,10 @@ import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../test-utils/openclaw-test-state.js";
-import {
-  drainTestApprovalRequests,
-  startTestApprovalRpcRequest,
-} from "./exec-approval-manager.test-support.js";
 import { createGatewayAuxHandlers } from "./server-aux-handlers.js";
 import { createPluginApprovalHandlers } from "./server-methods/plugin-approval.js";
 import type { GatewayRequestHandlerOptions } from "./server-methods/types.js";
+import { createTestRuntimeSecretsActivator } from "./server-startup-config.test-support.js";
 
 const auxiliaries: ReturnType<typeof createGatewayAuxHandlers>[] = [];
 let fixture: OpenClawTestState | undefined;
@@ -40,9 +38,7 @@ function gateway() {
   const aux = createGatewayAuxHandlers({
     log: {},
     getNativeApprovalRouteCoordinator: () => undefined,
-    activateRuntimeSecrets: async () => {
-      throw new Error("unexpected secrets reload");
-    },
+    activateRuntimeSecrets: createTestRuntimeSecretsActivator(),
     sharedGatewaySessionGenerationState: { current: undefined, required: null },
     resolveSharedGatewaySessionGenerationForConfig: () => undefined,
     clients: [],
@@ -69,7 +65,6 @@ beforeEach(async () => {
 afterEach(async () => {
   for (const aux of auxiliaries) {
     await aux.stopOperatorInteractions();
-    await drainTestApprovalRequests(aux.pluginApprovalManager);
   }
   auxiliaries.length = 0;
   resetAgentRunRegistryForTest();
@@ -115,6 +110,7 @@ async function requestGrant(
           ...request.mcpTool,
           isActive: options.isActive ?? (() => true),
         });
+  const acknowledged = createDeferred();
   const args = {
     req: { method: "plugin.approval.request", params: request, id: "request-1" },
     params: request,
@@ -135,7 +131,7 @@ async function requestGrant(
             },
           }),
     },
-    respond: vi.fn(),
+    respond: vi.fn(() => acknowledged.resolve()),
     isWebchatConnect: () => false,
     context: {
       broadcast: vi.fn(),
@@ -145,22 +141,21 @@ async function requestGrant(
       validateAgentRuntimeApprovalAuthority: () => validateAgentRunDelegatedAuthority(authority),
     },
   } as unknown as GatewayRequestHandlerOptions;
-  const { pending, ready } = startTestApprovalRpcRequest(
-    aux.pluginApprovalManager,
-    createPluginApprovalHandlers(aux.pluginApprovalManager)["plugin.approval.request"]!,
-    args,
-  );
+  const pending = createPluginApprovalHandlers(aux.pluginApprovalManager)[
+    "plugin.approval.request"
+  ]!(args);
   try {
-    await ready;
+    await Promise.race([acknowledged.promise, pending]);
+    expect(args.respond).toHaveBeenCalled();
+    const record = (await aux.pluginApprovalManager.listPendingRecords())[0];
+    if (!record) {
+      await pending;
+      throw new Error("MCP approval request did not register");
+    }
+    return { aux, authority, pending, record };
   } finally {
     releaseBinding?.();
   }
-  const record = (await aux.pluginApprovalManager.listPendingRecords())[0];
-  if (!record) {
-    await pending;
-    throw new Error("MCP approval request did not register");
-  }
-  return { aux, authority, pending, record };
 }
 
 describe("gateway MCP tool grants", () => {
