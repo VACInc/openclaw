@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
-import { closeOpenClawStateDatabaseByPath } from "../../state/openclaw-state-db-cache.js";
+import { closeOpenClawStateDatabaseByPathAsync } from "../../state/openclaw-state-db-cache.js";
 import {
   openOpenClawStateDatabase,
   type OpenClawStateDatabaseOptions,
@@ -9,7 +9,11 @@ import {
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
 import type { AgentRuntimeIdentity } from "../agent-runtime-identity-token.js";
 import { ExecApprovalManager } from "../exec-approval-manager.js";
-import { createTestApprovalManager } from "../exec-approval-manager.test-support.js";
+import {
+  createTestApprovalManager,
+  drainTestApprovalRequests,
+  startTestApprovalRpcRequest,
+} from "../exec-approval-manager.test-support.js";
 import { createChatRunState } from "../server-chat-state.js";
 import { createExecApprovalHandlers } from "./exec-approval.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
@@ -18,10 +22,17 @@ vi.mock("../../infra/command-analysis/explain.js", () => ({
   resolveCommandAnalysisSummaryForDisplay: vi.fn(async () => null),
 }));
 
+const approvalManagers = new Set<ExecApprovalManager>();
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
-  afterEach(() => {
+  afterEach(async () => {
+    for (const manager of approvalManagers) {
+      await drainTestApprovalRequests(manager);
+      approvalManagers.delete(manager);
+    }
     for (const dir of tempDirs.dirs) {
-      closeOpenClawStateDatabaseByPath(resolveOpenClawStateSqlitePath({ OPENCLAW_STATE_DIR: dir }));
+      await closeOpenClawStateDatabaseByPathAsync(
+        resolveOpenClawStateSqlitePath({ OPENCLAW_STATE_DIR: dir }),
+      );
     }
     cleanup();
   }),
@@ -130,8 +141,9 @@ describe("exec approval signed agent runtime", () => {
     // are closed enums (arbitrary values null out), host is escape-hardened.
     (opts.params as Record<string, unknown>).security = "full‮looks-deny";
     (opts.params as Record<string, unknown>).ask = "always​ish";
-    const pending = handler(opts);
-    await vi.waitFor(async () => expect(await manager.listPendingRecords()).toHaveLength(1));
+    const { pending, ready } = startTestApprovalRpcRequest(manager, handler, opts);
+    await ready;
+    expect(await manager.listPendingRecords()).toHaveLength(1);
     const record = (await manager.listPendingRecords())[0]!;
     expect(record.request.cwd).toBe("/tmp/safe\\u{202E}evil");
     expect(record.request.resolvedPath).toBe("/usr/bin/echo\\u{200B}x");
@@ -148,8 +160,9 @@ describe("exec approval signed agent runtime", () => {
     });
     const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
     const opts = requestOptions(identity(false), () => active);
-    const pending = handler(opts);
-    await vi.waitFor(async () => expect(await manager.listPendingRecords()).toHaveLength(1));
+    const { pending, ready } = startTestApprovalRpcRequest(manager, handler, opts);
+    await ready;
+    expect(await manager.listPendingRecords()).toHaveLength(1);
     const record = (await manager.listPendingRecords())[0]!;
     active = false;
 
@@ -168,14 +181,16 @@ describe("exec approval signed agent runtime", () => {
       persistence: { runtimeEpoch: "runtime-a", databaseOptions: options },
       validateAgentRuntimeDelegatedAuthority: () => true,
     });
+    approvalManagers.add(manager);
     const handler = createExecApprovalHandlers(manager)["exec.approval.request"];
     if (!handler) {
       throw new Error("exec approval request handler is unavailable");
     }
     const opts = requestOptions(identity(enabled));
 
-    const pending = handler(opts);
-    await vi.waitFor(() => expect(opts.context.broadcast).toHaveBeenCalled());
+    const { pending, ready } = startTestApprovalRpcRequest(manager, handler, opts);
+    await ready;
+    expect(opts.context.broadcast).toHaveBeenCalled();
     const approvalId = String(
       (vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as { id?: unknown } | undefined)?.id,
     );
