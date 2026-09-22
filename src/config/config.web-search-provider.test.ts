@@ -2,13 +2,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveWebSearchProviderId } from "../web-search/runtime.js";
 import { buildWebSearchProviderConfig } from "./test-helpers.js";
-import { validateConfigObjectWithPlugins } from "./validation.js";
+import { validateConfigObjectWithPlugins as validateConfigObjectWithPluginsCore } from "./validation.js";
 
 vi.mock("../runtime.js", () => ({
   defaultRuntime: { log: vi.fn(), error: vi.fn() },
 }));
 
-const mockWebSearchProviders = vi.hoisted(() => {
+const mockWebSearchFixture = vi.hoisted(() => {
   const getScopedWebSearchCredential = (key: string) => (search?: Record<string, unknown>) =>
     (search?.[key] as { apiKey?: unknown } | undefined)?.apiKey;
   const getConfiguredPluginWebSearchConfig =
@@ -27,7 +27,7 @@ const mockWebSearchProviders = vi.hoisted(() => {
     (pluginId: string) => (config?: Record<string, unknown>) =>
       getConfiguredPluginWebSearchConfig(pluginId)(config)?.apiKey;
 
-  return [
+  const providers = [
     {
       id: "brave",
       pluginId: "brave",
@@ -108,15 +108,6 @@ const mockWebSearchProviders = vi.hoisted(() => {
       getConfiguredCredentialValue: getConfiguredPluginWebSearchCredential("tavily"),
     },
   ] as const;
-});
-
-vi.mock("../plugins/web-search-providers.runtime.js", () => {
-  return {
-    resolvePluginWebSearchProviders: () => mockWebSearchProviders,
-  };
-});
-
-vi.mock("../plugins/manifest-registry.js", () => {
   const buildSchema = () => ({
     type: "object",
     additionalProperties: false,
@@ -160,47 +151,55 @@ vi.mock("../plugins/manifest-registry.js", () => {
       },
     },
   });
+  const createManifestRegistry = () => ({
+    plugins: [
+      ...providers.map((provider) => ({
+        id: provider.pluginId,
+        origin: "bundled" as const,
+        channels: [],
+        providers: [],
+        contracts: { webSearchProviders: [provider.id] },
+        cliBackends: [],
+        skills: [],
+        hooks: [],
+        rootDir: `/tmp/plugins/${provider.pluginId}`,
+        source: "test",
+        manifestPath: `/tmp/plugins/${provider.pluginId}/openclaw.plugin.json`,
+        schemaCacheKey: `test:${provider.pluginId}`,
+        configSchema: buildSchema(),
+      })),
+      {
+        id: "acme-search",
+        origin: "global" as const,
+        channels: [],
+        providers: [],
+        contracts: { webSearchProviders: ["acme-search"] },
+        cliBackends: [],
+        skills: [],
+        hooks: [],
+        rootDir: "/tmp/plugins/acme-search",
+        source: "test",
+        manifestPath: "/tmp/plugins/acme-search/openclaw.plugin.json",
+        schemaCacheKey: "test:acme-search",
+        configSchema: buildSchema(),
+      },
+    ],
+    diagnostics: [],
+  });
+  return { providers, createManifestRegistry };
+});
 
+const mockWebSearchProviders = mockWebSearchFixture.providers;
+
+vi.mock("../plugins/web-search-providers.runtime.js", () => {
   return {
-    loadPluginManifestRegistryCore: () => ({
-      plugins: [
-        ...mockWebSearchProviders.map((provider) => ({
-          id: provider.pluginId,
-          origin: "bundled",
-          channels: [],
-          providers: [],
-          contracts: {
-            webSearchProviders: [provider.id],
-          },
-          cliBackends: [],
-          skills: [],
-          hooks: [],
-          rootDir: `/tmp/plugins/${provider.pluginId}`,
-          source: "test",
-          manifestPath: `/tmp/plugins/${provider.pluginId}/openclaw.plugin.json`,
-          schemaCacheKey: `test:${provider.pluginId}`,
-          configSchema: buildSchema(),
-        })),
-        {
-          id: "acme-search",
-          origin: "installed",
-          channels: [],
-          providers: [],
-          contracts: {
-            webSearchProviders: ["acme-search"],
-          },
-          cliBackends: [],
-          skills: [],
-          hooks: [],
-          rootDir: "/tmp/plugins/acme-search",
-          source: "test",
-          manifestPath: "/tmp/plugins/acme-search/openclaw.plugin.json",
-          schemaCacheKey: "test:acme-search",
-          configSchema: buildSchema(),
-        },
-      ],
-      diagnostics: [],
-    }),
+    resolvePluginWebSearchProviders: () => mockWebSearchProviders,
+  };
+});
+
+vi.mock("../plugins/manifest-registry.js", () => {
+  return {
+    loadPluginManifestRegistryCore: () => mockWebSearchFixture.createManifestRegistry(),
     resolveManifestContractPluginIds: (params?: { contract?: string; origin?: string }) =>
       params?.contract === "webSearchProviders" && params.origin === "bundled"
         ? mockWebSearchProviders
@@ -214,6 +213,19 @@ vi.mock("../plugins/manifest-registry.js", () => {
         : undefined,
   };
 });
+
+const validateConfigObjectWithPlugins = (
+  config: Parameters<typeof validateConfigObjectWithPluginsCore>[0],
+  params?: Parameters<typeof validateConfigObjectWithPluginsCore>[1],
+) =>
+  validateConfigObjectWithPluginsCore(
+    config,
+    params ?? {
+      pluginMetadataSnapshot: {
+        manifestRegistry: mockWebSearchFixture.createManifestRegistry(),
+      },
+    },
+  );
 
 const resolveSearchProvider = (
   search?: Parameters<typeof resolveWebSearchProviderId>[0]["search"],
