@@ -1,6 +1,7 @@
 import { parseModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import { getConfiguredModelAliases } from "./model-aliases.js";
 
 const MODEL_POLICY_COMPAT_SELECTORS = new Set(["openrouter:auto", "openrouter:free"]);
 
@@ -73,12 +74,14 @@ function isValidExactModelPolicyRef(raw: string): boolean {
 
 /** Share policy grammar and owner-scoped aliases between validation and migration. */
 export function createModelPolicyRefValidator(
-  ...modelMaps: Array<Record<string, { alias?: string }> | undefined>
+  ...modelMaps: Array<Record<string, { alias?: string; aliases?: string[] }> | undefined>
 ): (raw: string) => boolean {
   const aliases = new Set(
     modelMaps
       .flatMap((models) =>
-        Object.values(models ?? {}).map((entry) => normalizeLowercaseStringOrEmpty(entry?.alias)),
+        Object.values(models ?? {}).flatMap((entry) =>
+          getConfiguredModelAliases(entry).map(normalizeLowercaseStringOrEmpty),
+        ),
       )
       .filter(Boolean),
   );

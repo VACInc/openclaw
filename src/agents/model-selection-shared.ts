@@ -6,6 +6,7 @@ import {
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
 import { sanitizeForLog, stripAnsi } from "../../packages/terminal-core/src/ansi.js";
+import { getConfiguredModelAliases } from "../config/model-aliases.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import {
   computeModelPolicyAllowlist,
@@ -76,6 +77,7 @@ type ModelManifestPluginContext = {
 type ModelAliasCandidate = {
   keyRaw: string;
   alias: string;
+  reset?: boolean;
 };
 
 type EffectiveModelAlias = ModelAliasCandidate & {
@@ -173,11 +175,17 @@ export function listModelAliasCandidates(cfg: OpenClawConfig, agentId?: string) 
       if (parseModelPolicyWildcardRef(keyRaw)) {
         return [];
       }
-      if (!entryRaw || typeof entryRaw !== "object" || !Object.hasOwn(entryRaw, "alias")) {
+      if (
+        !entryRaw ||
+        typeof entryRaw !== "object" ||
+        (!Object.hasOwn(entryRaw, "alias") && !Object.hasOwn(entryRaw, "aliases"))
+      ) {
         return [];
       }
-      const alias = normalizeOptionalString((entryRaw as { alias?: unknown }).alias) ?? "";
-      return [{ keyRaw, alias }];
+      const aliases = getConfiguredModelAliases(entryRaw);
+      return aliases.length
+        ? aliases.map((alias, index) => ({ keyRaw, alias, reset: index === 0 }))
+        : [{ keyRaw, alias: "", reset: true }];
     }),
   );
 }
@@ -187,7 +195,7 @@ function buildEffectiveModelAliases(
     manifestPluginContext: ModelManifestPluginContext;
   },
 ): { aliases: EffectiveModelAlias[]; disabledKeys: Set<string> } {
-  const aliasesByKey = new Map<string, EffectiveModelAlias | null>();
+  const aliasesByKey = new Map<string, EffectiveModelAlias[] | null>();
   const candidates = listModelAliasCandidates(params.cfg, params.agentId);
   if (candidates.length === 0) {
     return { aliases: [], disabledKeys: new Set() };
@@ -223,13 +231,16 @@ function buildEffectiveModelAliases(
     const key = modelKey(ref.provider, ref.model);
     // Reinsert replacements so agent-owned aliases win duplicate-alias lookup
     // while an omitted agent alias leaves the inherited record untouched.
-    aliasesByKey.delete(key);
-    aliasesByKey.set(key, candidate.alias ? { ...candidate, ref } : null);
+    if (candidate.reset) {
+      aliasesByKey.delete(key);
+      aliasesByKey.set(key, candidate.alias ? [] : null);
+    }
+    if (candidate.alias) {
+      aliasesByKey.get(key)?.push({ ...candidate, ref });
+    }
   }
   return {
-    aliases: [...aliasesByKey.values()].filter(
-      (alias): alias is EffectiveModelAlias => alias !== null,
-    ),
+    aliases: [...aliasesByKey.values()].flatMap((aliases) => aliases ?? []),
     disabledKeys: new Set(
       [...aliasesByKey].flatMap(([key, alias]) => (alias === null ? [key] : [])),
     ),
@@ -540,7 +551,7 @@ function buildModelAliasIndexWithManifestContext(
     // Bare aliases retain their existing last-wins behavior. Provider-qualified
     // aliases stay scoped so duplicate display names cannot select another provider.
     byProviderAlias.set(providerAliasKey(ref.provider, alias), match);
-    byKey.set(key, [alias]);
+    byKey.set(key, [...(byKey.get(key) ?? []), alias]);
   }
 
   return { byAlias, byProviderAlias, byKey, disabledKeys };

@@ -2,6 +2,7 @@
 import { formatCliCommand } from "../../cli/command-format.js";
 import { DEFAULT_MODEL_ALIASES } from "../../config/defaults.js";
 import { logConfigUpdated } from "../../config/logging.js";
+import { getConfiguredModelAliases } from "../../config/model-aliases.js";
 import { normalizeAgentModelMapForConfig } from "../../config/model-input.js";
 import { type RuntimeEnv, writeRuntimeJson, writeRuntimeStdout } from "../../runtime.js";
 import { normalizeAlias } from "./alias-name.js";
@@ -22,10 +23,9 @@ export async function modelsAliasesListCommand(
   const cfg = await loadModelsConfig({ commandName: "models aliases list", runtime });
   const models = cfg.agents?.defaults?.models ?? {};
   const aliases = Object.fromEntries(
-    Object.entries(models).flatMap(([modelKey, entry]) => {
-      const alias = entry?.alias?.trim();
-      return alias ? [[alias, modelKey] as const] : [];
-    }),
+    Object.entries(models).flatMap(([modelKey, entry]) =>
+      getConfiguredModelAliases(entry).map((alias) => [alias, modelKey] as const),
+    ),
   );
   const aliasEntries = Object.entries(aliases).toSorted(([left], [right]) =>
     left.localeCompare(right),
@@ -70,12 +70,27 @@ export async function modelsAliasesAddCommand(
       target = modelKey;
       // Model selection folds alias case, so case variants must not collide.
       for (const [key, entry] of Object.entries(nextModels)) {
-        const existing = entry?.alias?.trim();
-        if (existing && existing.toLowerCase() === normalizedAlias && key !== modelKey) {
+        if (
+          key !== modelKey &&
+          getConfiguredModelAliases(entry).some(
+            (existing) => existing.toLowerCase() === normalizedAlias,
+          )
+        ) {
           throw new Error(`Alias ${alias} already points to ${key}.`);
         }
       }
-      nextModels[modelKey] = { ...nextModels[modelKey], alias };
+      const entry = nextModels[modelKey];
+      const existing = getConfiguredModelAliases(entry);
+      nextModels[modelKey] =
+        existing.length === 0
+          ? { ...entry, alias }
+          : {
+              ...entry,
+              aliases: [
+                ...(entry?.aliases ?? []),
+                ...(existing.some((name) => name.toLowerCase() === normalizedAlias) ? [] : [alias]),
+              ],
+            };
       return {
         ...cfgLocal,
         agents: {
@@ -102,8 +117,16 @@ export async function modelsAliasesRemoveCommand(aliasRaw: string, runtime: Runt
     const nextModels = { ...cfg.agents?.defaults?.models };
     let found = false;
     for (const [key, entry] of Object.entries(nextModels)) {
-      if (entry?.alias?.trim().toLowerCase() === normalizedAlias) {
-        nextModels[key] = { ...entry, alias: undefined };
+      const aliases = entry?.aliases?.filter(
+        (name) => name.trim().toLowerCase() !== normalizedAlias,
+      );
+      const removePrimary = entry?.alias?.trim().toLowerCase() === normalizedAlias;
+      if (removePrimary || aliases?.length !== entry?.aliases?.length) {
+        nextModels[key] = {
+          ...entry,
+          ...(removePrimary ? { alias: undefined } : {}),
+          ...(aliases ? { aliases } : {}),
+        };
         found = true;
       }
     }
@@ -123,7 +146,7 @@ export async function modelsAliasesRemoveCommand(aliasRaw: string, runtime: Runt
       if (
         builtinTarget &&
         normalizedModels[builtinTarget] &&
-        normalizedModels[builtinTarget]?.alias === undefined
+        getConfiguredModelAliases(normalizedModels[builtinTarget]).length === 0
       ) {
         throw new Error(
           `Cannot remove "${alias}": it is a built-in alias for "${builtinTarget}" provided automatically by OpenClaw and is not stored in your config file. To shadow it with a different target, run ${formatCliCommand(`openclaw models aliases add ${alias} <model>`)}.`,
@@ -148,7 +171,9 @@ export async function modelsAliasesRemoveCommand(aliasRaw: string, runtime: Runt
   logConfigUpdated(runtime);
   if (
     !updated.agents?.defaults?.models ||
-    Object.values(updated.agents.defaults.models).every((entry) => !entry?.alias?.trim())
+    Object.values(updated.agents.defaults.models).every(
+      (entry) => getConfiguredModelAliases(entry).length === 0,
+    )
   ) {
     runtime.log("No aliases configured.");
   }
