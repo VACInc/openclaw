@@ -16,6 +16,7 @@ import type { WorktreeRegistryReadOperations } from "../agents/worktrees/registr
 import type { WorktreeRetirementOperations } from "../agents/worktrees/registry-retirement.worker.js";
 import type { AuditEventListQuery, AuditEventListPage } from "../audit/audit-event-types.js";
 import type { AuditWriterOperations } from "../audit/audit-event-writer.types.js";
+import type { ChannelIngressWorkerOperations } from "../channels/message/ingress-queue.worker-contract.js";
 import type { ClawInstallSchemaVersionRow } from "../claws/provenance-runtime-read.kernel.js";
 import type { readSqliteDatabaseBloat } from "../commands/doctor-db-bloat.read.js";
 import type { ConfigHealthPatch } from "../config/io.health-state.kernel.js";
@@ -96,6 +97,7 @@ import type {
   TranscriptReadOperations,
   TranscriptWriteOperations,
 } from "../transcripts/store-worker-contract.js";
+import type { TuiLastSessionWorkerOperations } from "../tui/tui-last-session.contract.js";
 import type { AgentProvenance } from "./agent-provenance.types.js";
 import type { PreparedBackupRunRecord } from "./backup-run-records.kernel.js";
 import type { OnboardingRecommendationWriteOperations } from "./onboarding-recommendations.contract.js";
@@ -107,7 +109,8 @@ import type { UserProfileWorkerOperations } from "./user-profiles.worker.js";
 export type OpenClawStateWorkerOpenPreparation = { type: "deviceIdentity"; identityKey: string };
 
 /** Commands share one physical shared-state actor; bindings belong to commands, not open input. */
-export type OpenClawStateWorkerOperations = WorktreeRetirementOperations &
+export type OpenClawStateWorkerOperations = TuiLastSessionWorkerOperations &
+  WorktreeRetirementOperations &
   PluginAsyncCallbackWorkerOperations &
   WorktreeRegistryReadOperations &
   SessionStateWorkerOperations &
@@ -129,6 +132,7 @@ export type OpenClawStateWorkerOperations = WorktreeRetirementOperations &
   UserPreferenceWorkerOperations &
   OnboardingRecommendationWriteOperations &
   UserProfileWorkerOperations &
+  ChannelIngressWorkerOperations &
   CronStateWorkerOperations &
   FleetRegistryWriteOperations &
   ProjectRegistryWorkerOperations &
