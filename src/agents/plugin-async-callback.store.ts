@@ -18,7 +18,7 @@ import type { DB } from "../state/openclaw-state-db.generated.js";
 
 // One host-owned row is the capability ledger; the session queue is its atomic outbox.
 // Never persist or log the bearer secret. A queued turn targets only the recorded child.
-const LEDGER_PLUGIN_ID = "@openclaw-host";
+const LEDGER_PLUGIN_ID = "core:plugin-async-callback";
 const LEDGER_NAMESPACE = "async-tool-callback";
 const MAX_RESULT_CHARS = 32_000;
 const MAX_TTL_MS = 7 * 24 * 60 * 60_000;

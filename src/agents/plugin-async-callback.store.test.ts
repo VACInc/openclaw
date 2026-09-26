@@ -1,6 +1,11 @@
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
+import {
+  createPluginStateSyncKeyedStore,
+  resetPluginStateStoreForTests,
+} from "../plugin-state/plugin-state-store.js";
 import {
   closeOpenClawStateDatabaseAsync,
   closeOpenClawStateDatabaseForTest,
@@ -28,13 +33,16 @@ const base = {
 
 describe("durable plugin callback claim and outbox", () => {
   let database: OpenClawStateDatabase;
+  let env: NodeJS.ProcessEnv;
   beforeEach(() => {
     const dir = dirs.make("openclaw-plugin-callback-", resolvePreferredOpenClawTmpDir());
-    database = openOpenClawStateDatabase({ path: `${dir}/state.sqlite` });
+    env = { ...process.env, OPENCLAW_STATE_DIR: dir };
+    database = openOpenClawStateDatabase({ env });
   });
   afterEach(async () => {
     await closeOpenClawStateDatabaseAsync();
     closeOpenClawStateDatabaseForTest();
+    resetPluginStateStoreForTests();
   });
 
   const transact = <T>(db: OpenClawStateDatabase, work: () => T): T =>
@@ -48,6 +56,44 @@ describe("durable plugin callback claim and outbox", () => {
       .filter((row) => !JSON.parse(String(row.entry_json)).callbackExpiryKey) as Array<{
       entry_json: string;
     }>;
+
+  it("keeps the host callback binding outside plugin-owned state namespaces", () => {
+    const issued = transact(database, () =>
+      issuePluginAsyncCallbackInDatabase(database, base, 60_000),
+    );
+    const key = createHash("sha256").update(issued.token).digest("hex");
+    const spoofedHost = createPluginStateSyncKeyedStore("@openclaw-host", {
+      namespace: "async-tool-callback",
+      maxEntries: 10,
+      env,
+    });
+    expect(spoofedHost.lookup(key)).toBeUndefined();
+    spoofedHost.register(key, {
+      ...base,
+      status: "pending",
+      childSessionKey: "agent:main:subagent:other",
+      childRunId: "other-run",
+      expiresAt: Date.now() + 60_000,
+    });
+    expect(findPluginAsyncCallbackInDatabase(database, issued.token)).toMatchObject(base);
+    expect(
+      transact(database, () =>
+        completePluginAsyncCallbackInDatabase({
+          database,
+          token: issued.token,
+          resultText: "original child result",
+          assertOwnerCurrent: (owner) => expect(owner).toMatchObject(base),
+        }),
+      ).status,
+    ).toBe("accepted");
+    expect(() =>
+      createPluginStateSyncKeyedStore("core:plugin-async-callback", {
+        namespace: "async-tool-callback",
+        maxEntries: 10,
+        env,
+      }),
+    ).toThrow("reserved for core consumers");
+  });
 
   it("isolates two children and consumes each capability exactly once", () => {
     const first = transact(database, () =>

@@ -123,7 +123,7 @@ it.each(["agent:main:subagent:child", "agent:main:dashboard:visible-child"])(
     const handle = await issueHostPluginAsyncCallback({
       pluginId: "a",
       toolName: "render",
-      runId: "execution",
+      runId: state.runId,
       agentId: "main",
       sessionKey: state.binding.childSessionKey,
       sessionId: state.sessionId,
@@ -149,7 +149,7 @@ it("rejects an ordinary dashboard session without a live native child owner", as
     issueHostPluginAsyncCallback({
       pluginId: "a",
       toolName: "render",
-      runId: "execution",
+      runId: state.runId,
       agentId: "main",
       sessionKey: state.binding.childSessionKey,
       sessionId: state.sessionId,
@@ -169,7 +169,7 @@ it("rejects a collector child despite an exact live dashboard registry entry", a
     issueHostPluginAsyncCallback({
       pluginId: "a",
       toolName: "render",
-      runId: "execution",
+      runId: state.runId,
       agentId: "main",
       sessionKey: state.binding.childSessionKey,
       sessionId: state.sessionId,

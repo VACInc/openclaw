@@ -4,6 +4,7 @@ import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
 type PluginToolCallbackInvocation = {
   pluginId: string;
   toolName: string;
+  owner: (() => void) | undefined;
   /** Detached work inherits this store, so settlement must close it explicitly. */
   isActive: () => boolean;
 };
@@ -18,7 +19,9 @@ const invocation = new AsyncLocalStorage<PluginToolCallbackInvocation>();
 export function withPluginToolCallbackInvocation<T>(
   pluginId: string,
   toolName: string,
+  owner: (() => void) | undefined,
   run: () => T,
+  signal?: AbortSignal,
 ): T {
   let active = true;
   const close = () => {
@@ -26,7 +29,10 @@ export function withPluginToolCallbackInvocation<T>(
   };
   let result: T;
   try {
-    result = invocation.run({ pluginId, toolName, isActive: () => active }, run);
+    result = invocation.run(
+      { pluginId, toolName, owner, isActive: () => active && !signal?.aborted },
+      run,
+    );
   } catch (error) {
     close();
     throw error;

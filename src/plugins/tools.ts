@@ -603,6 +603,8 @@ function resolvePluginToolsFromRegistry(
         assertInvocationCurrent: params.assertInvocationCurrent,
         ownerContinuation: params.ownerContinuation,
       });
+      // Capture host authority before plugin code can mutate the public context.
+      const assertFactoryCurrent = factoryContext.assertInvocationCurrent;
       // Catalog discovery may construct tools without an admitted run; their V2 execution stays fenced.
       params.assertInvocationCurrent?.();
       const factoryResult = factories.resolve(entry, factoryContext, declaredNames, owner.registry);
@@ -672,7 +674,7 @@ function resolvePluginToolsFromRegistry(
           clientCaps,
           entry,
           owner.registry,
-          factoryContext.assertInvocationCurrent,
+          assertFactoryCurrent,
         );
         if (!inspected) {
           continue;
