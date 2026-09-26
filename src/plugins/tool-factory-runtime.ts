@@ -83,10 +83,14 @@ export function bindPluginToolCallbacks(
       invoke(() => {
         const [toolCallId, params, signal, onUpdate] = args;
         const execute = (executionSignal?: AbortSignal) =>
-          tool.execute(toolCallId, params, executionSignal, onUpdate);
-        return withPluginToolCallbackInvocation(entry.pluginId, tool.name, () =>
-          signal ? runWithTrackedCancellation(signal, execute) : execute(),
-        );
+          withPluginToolCallbackInvocation(
+            entry.pluginId,
+            tool.name,
+            assertInvocationCurrent,
+            () => tool.execute(toolCallId, params, executionSignal, onUpdate),
+            executionSignal,
+          );
+        return signal ? runWithTrackedCancellation(signal, execute) : execute();
       }),
     ...(prepare
       ? { prepareArguments: (args: unknown) => invoke(() => prepare.call(tool, args)) }

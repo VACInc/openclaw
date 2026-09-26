@@ -131,23 +131,26 @@ export async function issueHostPluginAsyncCallback(params: {
   assertInvocationCurrent: () => void;
   assertPluginCurrent: () => void;
 }): Promise<OpenClawPluginAsyncToolCallback> {
-  params.assertInvocationCurrent();
   const { sessionKey, sessionId, runId, agentId } = params;
-  const run = runId ? getAgentRunContext(runId) : undefined;
-  if (
-    !run ||
-    !sessionKey ||
-    !sessionId ||
-    !agentId ||
-    run.sessionKey !== sessionKey ||
-    run.sessionId !== sessionId ||
-    run.agentId !== agentId
-  ) {
+  if (!sessionKey || !sessionId || !runId || !agentId) {
     throw new Error("Async callback requires an admitted native child invocation");
   }
+  const assertIssuingRunCurrent = () => {
+    params.assertInvocationCurrent();
+    const run = getAgentRunContext(runId);
+    if (
+      !run ||
+      run.sessionKey !== sessionKey ||
+      run.sessionId !== sessionId ||
+      run.agentId !== agentId
+    ) {
+      throw new Error("Async callback requires an admitted native child invocation");
+    }
+  };
+  assertIssuingRunCurrent();
   const child = getLatestLiveSubagentRunByChildSessionKey(sessionKey);
-  if (!child || child.collect || child.execution.status !== "running") {
-    throw new Error("Async callback requires a running, non-collector native child");
+  if (!child || child.runId !== runId || child.collect || child.execution.status !== "running") {
+    throw new Error("Async callback requires the exact running, non-collector native child");
   }
   const binding: PluginAsyncCallbackBinding = {
     pluginId: params.pluginId,
@@ -161,7 +164,7 @@ export async function issueHostPluginAsyncCallback(params: {
   const issued = await withCallbackChild(
     binding,
     () => {
-      params.assertInvocationCurrent();
+      assertIssuingRunCurrent();
       params.assertPluginCurrent();
     },
     (assertCurrent) =>

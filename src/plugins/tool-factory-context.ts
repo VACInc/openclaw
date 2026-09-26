@@ -58,6 +58,7 @@ export function createPluginToolFactoryContext(params: {
       const toolName = invocation?.toolName;
       if (
         invocation?.pluginId !== entry.pluginId ||
+        invocation.owner !== assertInvocationCurrent ||
         !toolName ||
         (entry.declaredNames && !entry.declaredNames.has(toolName))
       ) {

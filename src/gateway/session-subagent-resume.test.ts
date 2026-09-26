@@ -359,6 +359,252 @@ it("retires queued resume execution when the successor is cancelled", async () =
   );
 });
 
+async function createRunningCallbackTool(
+  state: Awaited<ReturnType<typeof arrangePausedChild>>,
+  execute: (ctx: import("../plugins/tool-types.js").OpenClawPluginToolContext<2>) => Promise<void>,
+  runId = previousRunId,
+) {
+  const { registerAgentRunContext, clearAgentRunContext } =
+    await import("../infra/agent-run-registry.js");
+  const { createPluginRuntimeMock } =
+    await import("../plugin-sdk/test-helpers/plugin-runtime-mock.js");
+  const { createPluginRegistry } = await import("../plugins/registry.js");
+  const { createPluginRecord } = await import("../plugins/status.test-helpers.js");
+  const { createPluginToolFactoryContext } = await import("../plugins/tool-factory-context.js");
+  const { bindPluginToolCallbacks } = await import("../plugins/tool-factory-runtime.js");
+  state.entry.pauseReason = undefined;
+  state.entry.execution.status = "running";
+  delete state.entry.execution.endedAt;
+  registerAgentRunContext(runId, { agentId: "main", sessionKey: state.childSessionKey, sessionId });
+  const builder = createPluginRegistry({
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    runtime: createPluginRuntimeMock(),
+    activateGlobalSideEffects: false,
+  });
+  const record = createPluginRecord({
+    id: "callback-fixture",
+    contracts: { tools: ["callback_probe"] },
+  });
+  builder.registry.plugins.push(record);
+  builder.createApi(record, { config: {}, registrationMode: "full" }).registerTool(
+    {
+      contextVersion: 2,
+      create: (ctx) => ({
+        name: "callback_probe",
+        label: "Callback probe",
+        description: "Exercise callback authority",
+        parameters: { type: "object", properties: {} },
+        execute: async () => {
+          await execute(ctx);
+          return { content: [{ type: "text" as const, text: "pending" }], details: {} };
+        },
+      }),
+    },
+    { name: "callback_probe" },
+  );
+  const entry = builder.registry.tools[0]!;
+  const make = () => {
+    const ctx = createPluginToolFactoryContext({
+      entry,
+      registry: builder.registry,
+      runId,
+      context: { agentId: "main", sessionKey: state.childSessionKey, sessionId },
+      assertInvocationCurrent: () => {},
+    });
+    const raw = entry.factory(ctx);
+    if (!raw || Array.isArray(raw)) {
+      throw new Error("expected one callback tool");
+    }
+    return {
+      ctx,
+      tool: bindPluginToolCallbacks(entry, builder.registry, raw, ctx.assertInvocationCurrent),
+    };
+  };
+  return { make, close: () => clearAgentRunContext(runId) };
+}
+
+it.each(["returned", "rejected"] as const)(
+  "rejects detached callback issuance after the tool %s without durable or Gateway effects",
+  async (outcome) => {
+    const state = await arrangePausedChild();
+    const delayed = createDeferred();
+    let late: Promise<unknown> | undefined;
+    const scope = await createRunningCallbackTool(state, async (ctx) => {
+      // A legitimate live call proves the fixture reaches the real host/worker owner.
+      await ctx.issueAsyncCallback!({ ttlMs: 60_000 });
+      late = delayed.promise.then(() => ctx.issueAsyncCallback!({ ttlMs: 60_000 }));
+      if (outcome === "rejected") {
+        throw new Error("tool rejected");
+      }
+    });
+    const { openOpenClawStateDatabase } = await import("../state/openclaw-state-db.js");
+    const database = openOpenClawStateDatabase();
+    const snapshot = () => ({
+      ledger: database.db
+        .prepare("SELECT * FROM plugin_state_entries ORDER BY plugin_id, namespace, entry_key")
+        .all(),
+      queue: database.db
+        .prepare("SELECT * FROM delivery_queue_entries ORDER BY queue_name, id")
+        .all(),
+    });
+    const dispatch = vi.spyOn(
+      await import("./server-recovery-runtime-context.js"),
+      "dispatchGatewayLifecycleMethod",
+    );
+    try {
+      const call = scope.make().tool.execute("call", {});
+      if (outcome === "rejected") {
+        await expect(call).rejects.toThrow("tool rejected");
+      } else {
+        await call;
+      }
+      const before = snapshot();
+      expect(before.queue).toHaveLength(1);
+      const denied = expect(late).rejects.toThrow("tool execution");
+      delayed.resolve();
+      await denied;
+      expect(snapshot()).toEqual(before);
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally {
+      delayed.resolve();
+      await late?.catch(() => {});
+      scope.close();
+    }
+  },
+);
+
+it("revokes callback issuance on tool abort even while the child run remains live", async () => {
+  const state = await arrangePausedChild();
+  const controller = new AbortController();
+  const scope = await createRunningCallbackTool(state, async (ctx) => {
+    await ctx.issueAsyncCallback!({ ttlMs: 60_000 });
+    controller.abort();
+    await expect(ctx.issueAsyncCallback!({ ttlMs: 60_000 })).rejects.toThrow("tool execution");
+  });
+  const { openOpenClawStateDatabase } = await import("../state/openclaw-state-db.js");
+  const database = openOpenClawStateDatabase();
+  const dispatch = vi.spyOn(
+    await import("./server-recovery-runtime-context.js"),
+    "dispatchGatewayLifecycleMethod",
+  );
+  try {
+    await scope.make().tool.execute("aborted-tool", {}, controller.signal);
+    expect(
+      database.db
+        .prepare(
+          "SELECT count(*) AS count FROM plugin_state_entries WHERE namespace = 'async-tool-callback'",
+        )
+        .get(),
+    ).toEqual({ count: 1 });
+    expect(
+      database.db
+        .prepare(
+          "SELECT count(*) AS count FROM delivery_queue_entries WHERE queue_name = 'session-native-child'",
+        )
+        .get(),
+    ).toEqual({ count: 1 });
+    expect(dispatch).not.toHaveBeenCalled();
+  } finally {
+    scope.close();
+  }
+});
+
+it("rejects a retained callback issuer used by another live factory context", async () => {
+  const state = await arrangePausedChild();
+  let retained: import("../plugins/tool-types.js").OpenClawPluginToolContext<2>["issueAsyncCallback"];
+  const scope = await createRunningCallbackTool(state, async () => {
+    await retained!({ ttlMs: 60_000 });
+  });
+  const { openOpenClawStateDatabase } = await import("../state/openclaw-state-db.js");
+  const database = openOpenClawStateDatabase();
+  const dispatch = vi.spyOn(
+    await import("./server-recovery-runtime-context.js"),
+    "dispatchGatewayLifecycleMethod",
+  );
+  try {
+    retained = scope.make().ctx.issueAsyncCallback;
+    await expect(scope.make().tool.execute("other-context", {})).rejects.toThrow("tool execution");
+    expect(
+      database.db
+        .prepare(
+          "SELECT count(*) AS count FROM plugin_state_entries WHERE namespace = 'async-tool-callback'",
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      database.db
+        .prepare(
+          "SELECT count(*) AS count FROM delivery_queue_entries WHERE queue_name = 'session-native-child'",
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(dispatch).not.toHaveBeenCalled();
+  } finally {
+    scope.close();
+  }
+});
+
+it.each(["different", "retired"] as const)(
+  "rejects a %s issuing run before SQLite or Gateway effects",
+  async (scenario) => {
+    const state = await arrangePausedChild();
+    const scope = await createRunningCallbackTool(
+      state,
+      async (ctx) => {
+        await ctx.issueAsyncCallback!({ ttlMs: 60_000 });
+      },
+      scenario === "different" ? "other-issuing-run" : previousRunId,
+    );
+    const entered = createDeferred();
+    const released = createDeferred();
+    const { openOpenClawStateDatabase } = await import("../state/openclaw-state-db.js");
+    const database = openOpenClawStateDatabase();
+    const dispatch = vi.spyOn(
+      await import("./server-recovery-runtime-context.js"),
+      "dispatchGatewayLifecycleMethod",
+    );
+    if (scenario === "retired") {
+      const reader = await import("../config/sessions/session-entry-read-runtime.js");
+      const read = reader.withSessionEntryReadOnlyInWorker;
+      vi.spyOn(reader, "withSessionEntryReadOnlyInWorker").mockImplementation(async (...args) => {
+        entered.resolve();
+        await released.promise;
+        return read(...args);
+      });
+    }
+    let call: Promise<unknown> | undefined;
+    try {
+      call = scope.make().tool.execute("wrong-run", {});
+      const denied = expect(call).rejects.toThrow(/native child/);
+      if (scenario === "retired") {
+        await entered.promise;
+        scope.close();
+        released.resolve();
+      }
+      await denied;
+      expect(
+        database.db
+          .prepare(
+            "SELECT count(*) AS count FROM plugin_state_entries WHERE namespace = 'async-tool-callback'",
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+      expect(
+        database.db
+          .prepare(
+            "SELECT count(*) AS count FROM delivery_queue_entries WHERE queue_name = 'session-native-child'",
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally {
+      released.resolve();
+      await call?.catch(() => {});
+      scope.close();
+    }
+  },
+);
+
 async function assertCallbackResume(childSessionKey: string) {
   const state = await arrangePausedChild(childSessionKey);
   const { completeHostPluginAsyncCallback } =
