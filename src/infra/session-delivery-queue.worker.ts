@@ -191,7 +191,7 @@ export function executeSessionDeliveryCommand(
         (queueName) => loadDeliveryQueueEntriesInDatabase(database, queueName),
       );
       // SAFETY: All returned rows belong to the canonical session-delivery namespace.
-      return entries.sort((a, b) => a.enqueuedAt - b.enqueuedAt) as QueuedSessionDelivery[];
+      return entries.toSorted((a, b) => a.enqueuedAt - b.enqueuedAt) as QueuedSessionDelivery[];
     }
     case "sessionDelivery.moveToFailed": {
       const { id } = command.input;
