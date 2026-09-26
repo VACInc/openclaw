@@ -63,7 +63,15 @@ export function createPluginToolFactoryContext(params: {
       ) {
         throw new Error("Async callback must be issued during registered tool execution");
       }
-      assertInvocationCurrent();
+      // Rechecked through the async import and worker admission, so a call that
+      // outlives execute cannot persist a callback row.
+      const assertExecutionCurrent = () => {
+        if (!invocation.isActive()) {
+          throw new Error("Async callback must be issued during registered tool execution");
+        }
+        assertInvocationCurrent();
+      };
+      assertExecutionCurrent();
       const { issueHostPluginAsyncCallback } =
         await import("../agents/plugin-async-callback.host.js");
       return issueHostPluginAsyncCallback({
@@ -74,7 +82,7 @@ export function createPluginToolFactoryContext(params: {
         sessionId: context.sessionId,
         agentId: context.agentId,
         ttlMs,
-        assertInvocationCurrent,
+        assertInvocationCurrent: assertExecutionCurrent,
         assertPluginCurrent: () => {
           if (!authority?.()) {
             throw new Error(`Plugin "${entry.pluginId}" tool runtime is no longer active.`);
