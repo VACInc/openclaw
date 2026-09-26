@@ -108,6 +108,31 @@ export function createPluginApiFactory(
         registrationMode === "cli-metadata"
           ? createUnavailableRuntime(registrationMode, record.id)
           : resolvePluginRuntime(record),
+      asyncToolCallbacks: {
+        complete: async ({ token, resultText }) => {
+          if (registrationMode !== "full") {
+            throw new Error("Async callback completion requires an active plugin runtime");
+          }
+          const assertPluginCurrent = () => {
+            if (
+              !capturePluginLifecycleAuthority(getPluginRecordRegistry(registry, record), record, {
+                scopedRuntime: true,
+              })?.()
+            ) {
+              throw new Error(`Plugin "${record.id}" runtime is no longer active.`);
+            }
+          };
+          assertPluginCurrent();
+          const { completeHostPluginAsyncCallback } =
+            await import("../agents/plugin-async-callback.host.js");
+          return completeHostPluginAsyncCallback({
+            pluginId: record.id,
+            token,
+            resultText,
+            assertPluginCurrent,
+          });
+        },
+      },
       logger: {
         info: registryParams.logger.info,
         warn: registryParams.logger.warn,

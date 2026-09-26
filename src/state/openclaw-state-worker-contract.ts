@@ -1,3 +1,4 @@
+import type { PluginAsyncCallbackWorkerOperations } from "../agents/plugin-async-callback.worker-contract.js";
 import type {
   SandboxRegistryInsert,
   SandboxRegistryWrite,
@@ -76,6 +77,7 @@ export type OpenClawStateWorkerOpenPreparation = { type: "deviceIdentity"; ident
 
 /** Commands share one physical shared-state actor; bindings belong to commands, not open input. */
 export type OpenClawStateWorkerOperations = RegisteredStateWorkerOperations &
+  PluginAsyncCallbackWorkerOperations &
   UpdateRunReconciliationOperations &
   UpdateRunWriteOperations &
   RepositoryWorkspaceWorkerOperations &

@@ -26,6 +26,8 @@ import {
 import type { DeliveryQueueStoredStatus } from "./delivery-queue-sqlite.kernel.js";
 import {
   SESSION_DELIVERY_QUEUE_NAME,
+  NATIVE_CHILD_DELIVERY_QUEUE_NAME,
+  resolveSessionDeliveryQueueName,
   type QueuedSessionDelivery,
 } from "./session-delivery-queue.records.js";
 import type { SessionDeliveryAgentRunUpdate } from "./session-delivery-queue.worker-contract.js";
@@ -38,7 +40,7 @@ function readSessionDelivery(
 ): QueuedSessionDelivery | null {
   const entry = loadDeliveryQueueEntryInDatabase(
     database,
-    SESSION_DELIVERY_QUEUE_NAME,
+    resolveSessionDeliveryQueueName(id),
     id,
     "pending",
   );
@@ -47,8 +49,8 @@ function readSessionDelivery(
 }
 
 function readStatus(database: OpenClawStateDatabase, id: string) {
-  return getDeliveryQueueEntryOwnersInDatabase(database, [SESSION_DELIVERY_QUEUE_NAME], id).get(
-    SESSION_DELIVERY_QUEUE_NAME,
+  return getDeliveryQueueEntryOwnersInDatabase(database, [resolveSessionDeliveryQueueName(id)], id).get(
+    resolveSessionDeliveryQueueName(id),
   )?.status;
 }
 
@@ -57,7 +59,7 @@ function update(
   id: string,
   transform: (entry: QueuedSessionDelivery) => QueuedSessionDelivery,
 ) {
-  return updateDeliveryQueueEntryInDatabase(database, SESSION_DELIVERY_QUEUE_NAME, id, (entry) =>
+  return updateDeliveryQueueEntryInDatabase(database, resolveSessionDeliveryQueueName(id), id, (entry) =>
     // SAFETY: Only the session namespace reaches this payload transform.
     transform(entry as QueuedSessionDelivery),
   );
@@ -211,7 +213,7 @@ export const sessionDeliveryOperations = {
     const database = open();
     const { id } = input;
     return finalize(database, id, "completed", () => {
-      completeDeliveryQueueEntryInDatabase(database, SESSION_DELIVERY_QUEUE_NAME, id);
+      completeDeliveryQueueEntryInDatabase(database, resolveSessionDeliveryQueueName(id), id);
     });
   },
   "sessionDelivery.fail": (
@@ -249,9 +251,11 @@ export const sessionDeliveryOperations = {
     readSessionDelivery(open(), input.id),
   "sessionDelivery.list": (_input: undefined, { open }) => {
     const database = open();
-    const entries = loadDeliveryQueueEntriesInDatabase(database, SESSION_DELIVERY_QUEUE_NAME);
+    const entries = [SESSION_DELIVERY_QUEUE_NAME, NATIVE_CHILD_DELIVERY_QUEUE_NAME].flatMap(
+      (queueName) => loadDeliveryQueueEntriesInDatabase(database, queueName),
+    );
     // SAFETY: All returned rows belong to the canonical session-delivery namespace.
-    return entries as QueuedSessionDelivery[];
+    return entries.sort((a, b) => a.enqueuedAt - b.enqueuedAt) as QueuedSessionDelivery[];
   },
   "sessionDelivery.moveToFailed": (input: { id: string }, { open }) => {
     const database = open();
@@ -259,14 +263,14 @@ export const sessionDeliveryOperations = {
     return finalize(database, id, "failed", () => {
       const entry = readSessionDelivery(database, id);
       if (!entry) {
-        throw deliveryQueueEntryNotFoundError(SESSION_DELIVERY_QUEUE_NAME, id);
+        throw deliveryQueueEntryNotFoundError(resolveSessionDeliveryQueueName(id), id);
       }
       const result = terminalizePendingDeliveryQueueEntryInDatabase(
         database,
-        prepareDeliveryQueueTerminalEntry({ queueName: SESSION_DELIVERY_QUEUE_NAME, id, entry }),
+        prepareDeliveryQueueTerminalEntry({ queueName: resolveSessionDeliveryQueueName(id), id, entry }),
       );
       if (result.status !== "terminalized") {
-        throw deliveryQueueEntryNotFoundError(SESSION_DELIVERY_QUEUE_NAME, id);
+        throw deliveryQueueEntryNotFoundError(resolveSessionDeliveryQueueName(id), id);
       }
     });
   },
