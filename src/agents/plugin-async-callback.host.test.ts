@@ -13,6 +13,8 @@ const state = vi.hoisted(() => ({
   runId: "run-original",
   sessionId: "session-original",
   status: "running",
+  registered: true,
+  collect: false,
   closed: false,
   commands: [] as string[],
 }));
@@ -29,12 +31,15 @@ vi.mock("../config/sessions/session-entry-read-runtime.js", () => ({
   },
 }));
 vi.mock("./subagents/registry/subagent-registry-read.js", () => ({
-  getLatestLiveSubagentRunByChildSessionKey: () => ({
-    runId: state.runId,
-    collect: false,
-    createdAt: 1,
-    execution: { status: state.status },
-  }),
+  getLatestLiveSubagentRunByChildSessionKey: (key: string) =>
+    state.registered && key === state.binding.childSessionKey
+      ? {
+          runId: state.runId,
+          collect: state.collect,
+          createdAt: 1,
+          execution: { status: state.status },
+        }
+      : null,
 }));
 vi.mock("./plugin-async-callback.js", () => ({
   runPluginAsyncCallbackCommand: async (
@@ -69,6 +74,9 @@ beforeEach(() => {
   state.runId = "run-original";
   state.sessionId = "session-original";
   state.status = "running";
+  state.registered = true;
+  state.collect = false;
+  state.binding.childSessionKey = "agent:main:subagent:child";
   state.closed = false;
   state.commands.length = 0;
 });
@@ -108,18 +116,68 @@ it.each([
   expect(state.commands).toEqual(["pluginCallback.lookup"]);
 });
 
-it("issues during a running tool invocation rather than requiring an already paused child", async () => {
-  const handle = await issueHostPluginAsyncCallback({
-    pluginId: "a",
-    toolName: "render",
-    runId: "execution",
-    agentId: "main",
-    sessionKey: state.binding.childSessionKey,
-    sessionId: state.sessionId,
-    ttlMs: 1000,
-    assertInvocationCurrent: () => {},
-    assertPluginCurrent: () => {},
-  });
-  expect(handle.token).toBe("private-token");
-  expect(state.commands).toEqual(["pluginCallback.issue"]);
+it.each(["agent:main:subagent:child", "agent:main:dashboard:visible-child"])(
+  "issues during a running native child invocation for %s",
+  async (childSessionKey) => {
+    state.binding.childSessionKey = childSessionKey;
+    const handle = await issueHostPluginAsyncCallback({
+      pluginId: "a",
+      toolName: "render",
+      runId: "execution",
+      agentId: "main",
+      sessionKey: state.binding.childSessionKey,
+      sessionId: state.sessionId,
+      ttlMs: 1000,
+      assertInvocationCurrent: () => {},
+      assertPluginCurrent: () => {},
+    });
+    expect(handle.token).toBe("private-token");
+    expect(state.commands).toEqual(["pluginCallback.issue"]);
+    expect(await complete("a")).toBe("accepted");
+    expect(state.commands).toEqual([
+      "pluginCallback.issue",
+      "pluginCallback.lookup",
+      "pluginCallback.complete",
+    ]);
+  },
+);
+
+it("rejects an ordinary dashboard session without a live native child owner", async () => {
+  state.binding.childSessionKey = "agent:main:dashboard:ordinary";
+  state.registered = false;
+  await expect(
+    issueHostPluginAsyncCallback({
+      pluginId: "a",
+      toolName: "render",
+      runId: "execution",
+      agentId: "main",
+      sessionKey: state.binding.childSessionKey,
+      sessionId: state.sessionId,
+      ttlMs: 1000,
+      assertInvocationCurrent: () => {},
+      assertPluginCurrent: () => {},
+    }),
+  ).rejects.toThrow("running, non-collector native child");
+  await expect(complete("a")).rejects.toThrow("no longer current");
+  expect(state.commands).toEqual(["pluginCallback.lookup"]);
+});
+
+it("rejects a collector child despite an exact live dashboard registry entry", async () => {
+  state.binding.childSessionKey = "agent:main:dashboard:collector";
+  state.collect = true;
+  await expect(
+    issueHostPluginAsyncCallback({
+      pluginId: "a",
+      toolName: "render",
+      runId: "execution",
+      agentId: "main",
+      sessionKey: state.binding.childSessionKey,
+      sessionId: state.sessionId,
+      ttlMs: 1000,
+      assertInvocationCurrent: () => {},
+      assertPluginCurrent: () => {},
+    }),
+  ).rejects.toThrow("running, non-collector native child");
+  await expect(complete("a")).rejects.toThrow("no longer current");
+  expect(state.commands).toEqual(["pluginCallback.lookup"]);
 });
