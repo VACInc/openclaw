@@ -136,6 +136,55 @@ describe("buildStatusText prepared context windows", () => {
     },
   );
 
+  it.each([
+    { name: "selected model on", configured: true, expected: "on" },
+    { name: "selected model off", configured: false, expected: "off" },
+    { name: "selected model auto", configured: "auto", expected: "auto" },
+    {
+      name: "session off overrides model on",
+      configured: true,
+      sessionFast: false,
+      expected: "off",
+    },
+    {
+      name: "session on overrides model off",
+      configured: false,
+      sessionFast: true,
+      expected: "on",
+    },
+    {
+      name: "prepared off overrides model on",
+      configured: true,
+      preparedFast: false,
+      expected: "off",
+    },
+  ] as const)("renders fast mode for $name", async (scenario) => {
+    const parts = await renderPreparedStatus({
+      cfg: {
+        agents: {
+          defaults: {
+            models: {
+              "openai/base-model": { params: { fastMode: !scenario.configured } },
+              "anthropic/selected-model": { params: { fastMode: scenario.configured } },
+            },
+          },
+        },
+      },
+      sessionEntry: {
+        sessionId: "status-fast-selected",
+        updatedAt: 0,
+        providerOverride: "anthropic",
+        modelOverride: "selected-model",
+        ...("sessionFast" in scenario ? { fastMode: scenario.sessionFast } : {}),
+      },
+      resolvedFastMode: "preparedFast" in scenario ? scenario.preparedFast : undefined,
+      provider: "openai",
+      model: "base-model",
+    });
+
+    expect(parts.text).toContain(`fast ${scenario.expected}`);
+  });
+
   async function renderTerminalFallback(
     params: {
       entry?: Partial<InternalSessionEntry>;
