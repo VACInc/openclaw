@@ -8,28 +8,17 @@ import {
   type Locator,
   type Page,
 } from "playwright";
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  inject,
-  vi,
-  type TestContext,
-} from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, inject, vi } from "vitest";
 import { getActiveGatewayRootWorkCount } from "../../../src/process/gateway-work-admission.js";
 import { createDeferredCore } from "../../../src/shared/deferred.ts";
 import { runQaGatewayFixture } from "../../../test/helpers/qa-gateway-cleanup.js";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import {
   captureControlUiE2eFailureDiagnostics,
-  controlUiE2eWaitTimeoutMs,
   installControlUiRpcDiagnostics,
-  startControlUiE2eServer,
-  type ControlUiE2eServer,
-} from "../test-helpers/control-ui-e2e.ts";
+} from "../test-helpers/control-ui-e2e-diagnostics.ts";
+import { controlUiE2eWaitTimeoutMs } from "../test-helpers/control-ui-e2e-readiness.ts";
+import type { ControlUiE2eServer } from "../test-helpers/control-ui-e2e.ts";
 
 declare module "vitest" {
   export interface ProvidedContext {
@@ -57,7 +46,13 @@ type ControlUiE2eScenario<T> = {
   release?: () => Promise<void>;
   retainedState?: () => string | undefined;
 };
-type ControlUiE2eScenarioContext = Pick<TestContext, "signal" | "onTestFinished" | "task">;
+type ControlUiE2eScenarioContext = {
+  readonly signal: AbortSignal;
+  readonly onTestFinished: (cleanup: () => void | Promise<void>, timeout?: number) => void;
+  readonly task: {
+    readonly result?: { errors?: readonly unknown[] };
+  };
+};
 type ControlUiE2eSuite = {
   readonly artifactDir: string;
   readonly browser: Browser;
@@ -497,7 +492,12 @@ export function createControlUiE2eSuite(options: ControlUiE2eSuiteOptions): Cont
           if (!chromiumAvailable && options.unavailableMessage) {
             throw new Error(options.unavailableMessage(chromiumExecutablePath));
           }
-          const startServer = options.startServer ?? startControlUiE2eServer;
+          const startServer =
+            options.startServer ??
+            (async () => {
+              const { startControlUiE2eServer } = await import("../test-helpers/control-ui-e2e.ts");
+              return startControlUiE2eServer();
+            });
           setupPromise = Promise.resolve().then(async () => {
             if (options.startServerBeforeBrowser) {
               server = await startServer();
