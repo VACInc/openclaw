@@ -139,7 +139,12 @@ describe("buildStatusText prepared context windows", () => {
   it.each([
     { name: "selected model on", configured: true, expected: "on" },
     { name: "selected model off", configured: false, expected: "off" },
-    { name: "selected model auto", configured: "auto", expected: "auto" },
+    {
+      name: "selected model auto with a different active fallback cutoff",
+      configured: "auto",
+      activeFallback: true,
+      expected: "auto (120 sec)",
+    },
     {
       name: "session off overrides model on",
       configured: true,
@@ -164,8 +169,12 @@ describe("buildStatusText prepared context windows", () => {
         agents: {
           defaults: {
             models: {
-              "openai/base-model": { params: { fastMode: !scenario.configured } },
-              "anthropic/selected-model": { params: { fastMode: scenario.configured } },
+              "openai/base-model": {
+                params: { fastMode: !scenario.configured, fastAutoOnSeconds: 30 },
+              },
+              "anthropic/selected-model": {
+                params: { fastMode: scenario.configured, fastAutoOnSeconds: 120 },
+              },
             },
           },
         },
@@ -176,6 +185,18 @@ describe("buildStatusText prepared context windows", () => {
         providerOverride: "anthropic",
         modelOverride: "selected-model",
         ...("sessionFast" in scenario ? { fastMode: scenario.sessionFast } : {}),
+        ...("activeFallback" in scenario
+          ? {
+              modelProvider: "openai",
+              model: "base-model",
+              fallbackNotice: {
+                kind: "active" as const,
+                selectedModel: "anthropic/selected-model",
+                activeModel: "openai/base-model",
+                reason: "provider unavailable",
+              },
+            }
+          : {}),
       },
       resolvedFastMode: "preparedFast" in scenario ? scenario.preparedFast : undefined,
       provider: "openai",
