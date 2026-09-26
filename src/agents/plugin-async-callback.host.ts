@@ -3,7 +3,7 @@ import { resolveSessionStorePathCore } from "../config/sessions.js";
 import { withSessionEntryReadOnlyInWorker } from "../config/sessions/session-entry-read-runtime.js";
 import { getAgentRunContext } from "../infra/agent-run-registry.js";
 import type { OpenClawPluginAsyncToolCallback } from "../plugins/tool-types.js";
-import { isSubagentSessionKey, parseAgentSessionKey } from "../routing/session-key.js";
+import { parseAgentSessionKey } from "../routing/session-key.js";
 import { onSessionIdentityMutation } from "../sessions/session-lifecycle-events.js";
 import { runPluginAsyncCallbackCommand } from "./plugin-async-callback.js";
 import type { PluginAsyncCallbackBinding } from "./plugin-async-callback.store.js";
@@ -38,7 +38,7 @@ async function withCallbackChild<T>(
   consume: (assertCurrent: () => void) => Promise<T>,
 ): Promise<T> {
   const agentId = parseAgentSessionKey(binding.childSessionKey)?.agentId;
-  if (!agentId || !isSubagentSessionKey(binding.childSessionKey)) {
+  if (!agentId) {
     throw new Error("Callback requires a native child session");
   }
   let replaced = false;
@@ -141,8 +141,7 @@ export async function issueHostPluginAsyncCallback(params: {
     !agentId ||
     run.sessionKey !== sessionKey ||
     run.sessionId !== sessionId ||
-    run.agentId !== agentId ||
-    !isSubagentSessionKey(sessionKey)
+    run.agentId !== agentId
   ) {
     throw new Error("Async callback requires an admitted native child invocation");
   }

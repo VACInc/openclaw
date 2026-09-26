@@ -383,8 +383,8 @@ it("retires queued resume execution when the successor is cancelled", async () =
   );
 });
 
-it("resumes a durable plugin callback through the original task and requester exactly once", async () => {
-  const state = await arrangePausedChild();
+async function assertCallbackResume(childSessionKey: string) {
+  const state = await arrangePausedChild(childSessionKey);
   const { completeHostPluginAsyncCallback } =
     await import("../agents/plugin-async-callback.host.js");
   const { runPluginAsyncCallbackCommand } = await import("../agents/plugin-async-callback.js");
@@ -511,7 +511,12 @@ it("resumes a durable plugin callback through the original task and requester ex
       roundOneReply: "Verified remote result",
     }),
   );
-});
+}
+
+it.each(["agent:main:subagent:callback-child", "agent:main:dashboard:visible-child"])(
+  "resumes a durable plugin callback through the original task and requester exactly once for %s",
+  assertCallbackResume,
+);
 
 it("dead-letters a callback timeout when its child never yields", async () => {
   const state = await arrangePausedChild();
