@@ -144,12 +144,18 @@ describe("TUI PTY harness", { concurrent: false }, () => {
         );
 
         await modeFixture.run.write("/session agent:main:mode-target\r", { delay: false });
+        await modeFixture.waitForLogEntry(
+          (entry) =>
+            entry.method === "loadHistory" &&
+            objectFieldEquals(entry, "sessionKey", "agent:main:mode-target"),
+        );
+        // Wait for loaded target metadata, not a reset placeholder or late source redraw.
         const targetRows = await waitForSynchronizedFrameRows(
           modeFixture.run,
-          (rows) => rows.some((row) => row.trim() === "session agent:main:mode-target"),
+          (rows) => rows.some((row) => row.includes("| session mode-target | fixture-model")),
           STARTUP_TIMEOUT_MS,
         );
-        const targetOutput = targetRows.join("\n");
+        const targetOutput = targetRows.join(" ");
         expect(targetOutput).toContain("deliver:on");
         expect(targetOutput).not.toContain("fast:auto");
         expect(targetOutput).not.toContain("verbose full");
@@ -574,6 +580,11 @@ describe("TUI PTY harness", { concurrent: false }, () => {
         );
         await compactPickerFixture.run.write("\u001b[B", { delay: false });
         await compactPickerFixture.run.write("\r", { delay: false });
+        await compactPickerFixture.waitForLogEntry(
+          (entry) =>
+            entry.method === "loadHistory" &&
+            objectFieldEquals(entry, "sessionKey", "agent:main:picker-target"),
+        );
         await waitForSynchronizedFrameRows(
           compactPickerFixture.run,
           (rows) => rows.join("").replaceAll(" ", "").includes("sessionagent:main:picker-target"),
@@ -839,6 +850,11 @@ describe("TUI PTY harness", { concurrent: false }, () => {
       try {
         await isolationFixture.run.waitForOutput("local ready", STARTUP_TIMEOUT_MS);
         await isolationFixture.run.write(`/session ${sourceSessionKey}\r`, { delay: false });
+        await isolationFixture.waitForLogEntry(
+          (entry) =>
+            entry.method === "loadHistory" &&
+            objectFieldEquals(entry, "sessionKey", sourceSessionKey),
+        );
         await waitForSynchronizedFrameRows(
           isolationFixture.run,
           (rows) => rows.some((row) => row.trim() === `session ${sourceSessionKey}`),
@@ -859,6 +875,11 @@ describe("TUI PTY harness", { concurrent: false }, () => {
         );
         const outputOffset = isolationFixture.run.visibleOutput().length;
         await isolationFixture.run.write(`/session ${targetSessionKey}\r`, { delay: false });
+        await isolationFixture.waitForLogEntry(
+          (entry) =>
+            entry.method === "loadHistory" &&
+            objectFieldEquals(entry, "sessionKey", targetSessionKey),
+        );
         await waitForSynchronizedFrameRows(
           isolationFixture.run,
           (rows) => rows.some((row) => row.trim() === `session ${targetSessionKey}`),
@@ -972,6 +993,10 @@ describe("TUI PTY harness", { concurrent: false }, () => {
     "keeps case-distinct $provider conversations out of the visible terminal",
     async ({ sessionKey, message }) => {
       await fixture.run.write(`/session ${sessionKey}\r`, { delay: false });
+      await fixture.waitForLogEntry(
+        (entry) =>
+          entry.method === "loadHistory" && objectFieldEquals(entry, "sessionKey", sessionKey),
+      );
       await waitForSynchronizedFrameRows(
         fixture.run,
         (rows) => rows.some((row) => row.trim() === `session ${sessionKey}`),
@@ -1003,6 +1028,10 @@ describe("TUI PTY harness", { concurrent: false }, () => {
     "preserves provider-owned identity when selecting $sessionKey in the terminal",
     async ({ sessionKey, message }) => {
       await fixture.run.write(`/session ${sessionKey}\r`, { delay: false });
+      await fixture.waitForLogEntry(
+        (entry) =>
+          entry.method === "loadHistory" && objectFieldEquals(entry, "sessionKey", sessionKey),
+      );
       await waitForSynchronizedFrameRows(
         fixture.run,
         (rows) => rows.some((row) => row.trim() === `session ${sessionKey}`),
