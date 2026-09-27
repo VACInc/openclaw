@@ -143,15 +143,13 @@ describe("TUI PTY harness", { concurrent: false }, () => {
           STARTUP_TIMEOUT_MS,
         );
 
-        const targetOutputOffset = modeFixture.run.visibleOutput().length;
         await modeFixture.run.write("/session agent:main:mode-target\r", { delay: false });
-        await modeFixture.waitForLogEntry(
-          (entry) =>
-            entry.method === "loadHistory" &&
-            objectFieldEquals(entry, "sessionKey", "agent:main:mode-target"),
+        const targetRows = await waitForSynchronizedFrameRows(
+          modeFixture.run,
+          (rows) => rows.some((row) => row.trim() === "session agent:main:mode-target"),
+          STARTUP_TIMEOUT_MS,
         );
-        await modeFixture.run.waitForOutput("session mode-target", STARTUP_TIMEOUT_MS);
-        const targetOutput = modeFixture.run.visibleOutput().slice(targetOutputOffset);
+        const targetOutput = targetRows.join("\n");
         expect(targetOutput).toContain("deliver:on");
         expect(targetOutput).not.toContain("fast:auto");
         expect(targetOutput).not.toContain("verbose full");
@@ -576,10 +574,10 @@ describe("TUI PTY harness", { concurrent: false }, () => {
         );
         await compactPickerFixture.run.write("\u001b[B", { delay: false });
         await compactPickerFixture.run.write("\r", { delay: false });
-        await compactPickerFixture.waitForLogEntry(
-          (entry) =>
-            entry.method === "loadHistory" &&
-            objectFieldEquals(entry, "sessionKey", "agent:main:picker-target"),
+        await waitForSynchronizedFrameRows(
+          compactPickerFixture.run,
+          (rows) => rows.join("").replaceAll(" ", "").includes("sessionagent:main:picker-target"),
+          2_000,
         );
 
         await compactPickerFixture.run.write("picker target proof\r", { delay: false });
@@ -841,10 +839,10 @@ describe("TUI PTY harness", { concurrent: false }, () => {
       try {
         await isolationFixture.run.waitForOutput("local ready", STARTUP_TIMEOUT_MS);
         await isolationFixture.run.write(`/session ${sourceSessionKey}\r`, { delay: false });
-        await isolationFixture.waitForLogEntry(
-          (entry) =>
-            entry.method === "loadHistory" &&
-            objectFieldEquals(entry, "sessionKey", sourceSessionKey),
+        await waitForSynchronizedFrameRows(
+          isolationFixture.run,
+          (rows) => rows.some((row) => row.trim() === `session ${sourceSessionKey}`),
+          2_000,
         );
         await isolationFixture.run.write("cross-session abort source proof\r", { delay: false });
         await isolationFixture.waitForLogEntry(
@@ -861,10 +859,10 @@ describe("TUI PTY harness", { concurrent: false }, () => {
         );
         const outputOffset = isolationFixture.run.visibleOutput().length;
         await isolationFixture.run.write(`/session ${targetSessionKey}\r`, { delay: false });
-        await isolationFixture.waitForLogEntry(
-          (entry) =>
-            entry.method === "loadHistory" &&
-            objectFieldEquals(entry, "sessionKey", targetSessionKey),
+        await waitForSynchronizedFrameRows(
+          isolationFixture.run,
+          (rows) => rows.some((row) => row.trim() === `session ${targetSessionKey}`),
+          2_000,
         );
         await isolationFixture.waitForLogEntry(
           (entry) =>
