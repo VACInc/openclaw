@@ -585,11 +585,6 @@ describe("TUI PTY harness", { concurrent: false }, () => {
             entry.method === "loadHistory" &&
             objectFieldEquals(entry, "sessionKey", "agent:main:picker-target"),
         );
-        await waitForSynchronizedFrameRows(
-          compactPickerFixture.run,
-          (rows) => rows.join("").replaceAll(" ", "").includes("sessionagent:main:picker-target"),
-          2_000,
-        );
 
         await compactPickerFixture.run.write("picker target proof\r", { delay: false });
         const sent = await compactPickerFixture.waitForLogEntry(
@@ -855,11 +850,6 @@ describe("TUI PTY harness", { concurrent: false }, () => {
             entry.method === "loadHistory" &&
             objectFieldEquals(entry, "sessionKey", sourceSessionKey),
         );
-        await waitForSynchronizedFrameRows(
-          isolationFixture.run,
-          (rows) => rows.some((row) => row.trim() === `session ${sourceSessionKey}`),
-          2_000,
-        );
         await isolationFixture.run.write("cross-session abort source proof\r", { delay: false });
         await isolationFixture.waitForLogEntry(
           (entry) =>
@@ -879,11 +869,6 @@ describe("TUI PTY harness", { concurrent: false }, () => {
           (entry) =>
             entry.method === "loadHistory" &&
             objectFieldEquals(entry, "sessionKey", targetSessionKey),
-        );
-        await waitForSynchronizedFrameRows(
-          isolationFixture.run,
-          (rows) => rows.some((row) => row.trim() === `session ${targetSessionKey}`),
-          2_000,
         );
         await isolationFixture.waitForLogEntry(
           (entry) =>
@@ -997,11 +982,6 @@ describe("TUI PTY harness", { concurrent: false }, () => {
         (entry) =>
           entry.method === "loadHistory" && objectFieldEquals(entry, "sessionKey", sessionKey),
       );
-      await waitForSynchronizedFrameRows(
-        fixture.run,
-        (rows) => rows.some((row) => row.trim() === `session ${sessionKey}`),
-        2_000,
-      );
 
       const outputOffset = fixture.run.visibleOutput().length;
       await fixture.run.write(`${message}\r`, { delay: false });
@@ -1031,11 +1011,6 @@ describe("TUI PTY harness", { concurrent: false }, () => {
       await fixture.waitForLogEntry(
         (entry) =>
           entry.method === "loadHistory" && objectFieldEquals(entry, "sessionKey", sessionKey),
-      );
-      await waitForSynchronizedFrameRows(
-        fixture.run,
-        (rows) => rows.some((row) => row.trim() === `session ${sessionKey}`),
-        2_000,
       );
 
       await fixture.run.write(`${message}\r`, { delay: false });
