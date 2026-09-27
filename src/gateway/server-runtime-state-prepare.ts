@@ -37,7 +37,9 @@ import type { prepareGatewayServerBootstrap } from "./server-startup-bootstrap.j
 import { createGatewayTransportBridge } from "./server-transport-bridge.js";
 import { createWizardSessionTracker } from "./server-wizard-sessions.js";
 import { createGatewayEventLoopHealthMonitor } from "./server/event-loop-health.js";
+import { getHealthVersion, incrementPresenceVersion } from "./server/health-state.js";
 import { resolveHookClientIpConfig } from "./server/hook-client-ip-config.js";
+import { createPresencePublisher } from "./server/presence-events.js";
 import { createReadinessChecker, createStartupChecker } from "./server/readiness.js";
 import { resolveSharedGatewaySessionGeneration } from "./server/ws-shared-generation.js";
 
@@ -132,6 +134,7 @@ export async function prepareGatewayKernelState(params: {
     ? await startupTrace.measure("worker-environments.runtime-imports", async () => {
         const workerModule = await loadWorkerEnvironmentStartupModule();
         return await workerModule.createGatewayWorkerEnvironmentRuntime({
+          scheduler,
           getPluginRegistry: () => pluginRuntime.registry,
           getPortalRuntime: () => pluginGatewayContext.current,
           resolveGatewayContext: resolvePluginGatewayContext,
@@ -188,6 +191,7 @@ export async function prepareGatewayKernelState(params: {
     workerPlacementModule
       ? await startupTrace.measure("worker-environments.placement-runtime", async () =>
           workerPlacementModule.createGatewayWorkerPlacementRuntime({
+            scheduler,
             placements: workerEnvironmentStartup.placementStore,
             getCommittedRuntimeConfig,
             environments: workerEnvironmentService,
@@ -354,13 +358,19 @@ export async function prepareGatewayKernelState(params: {
   const initialHookClientIpConfig = resolveHookClientIpConfig(cfgAtStart);
 
   const rateLimitConfig = cfgAtStart.gateway?.auth?.rateLimit;
-  const authRateLimiter = createGatewayAuthRateLimiter(rateLimitConfig);
-  // Browser-origin attempts are throttled even when local CLI clients are exempt.
-  const browserAuthRateLimiter = createGatewayAuthRateLimiter({
-    ...rateLimitConfig,
-    exemptLoopback: false,
+  const authRateLimiter = createGatewayAuthRateLimiter(rateLimitConfig, {
+    scheduler,
+    id: "auth/main",
   });
-  const nodeReapprovalCoordinator = createNodeReapprovalCoordinator(rateLimitConfig);
+  // Browser-origin attempts are throttled even when local CLI clients are exempt.
+  const browserAuthRateLimiter = createGatewayAuthRateLimiter(
+    {
+      ...rateLimitConfig,
+      exemptLoopback: false,
+    },
+    { scheduler, id: "auth/browser" },
+  );
+  const nodeReapprovalCoordinator = createNodeReapprovalCoordinator(rateLimitConfig, { scheduler });
 
   const controlUiRootLifecycle = await startupTrace.measure("control-ui.root", () =>
     createGatewayControlUiRootLifecycle({
@@ -392,7 +402,7 @@ export async function prepareGatewayKernelState(params: {
     loadGatewayTlsServerRuntime(cfgAtStart.gateway?.tls, log.child("tls")),
   );
   const serverStartedAt = Date.now();
-  const readinessEventLoopHealth = createGatewayEventLoopHealthMonitor();
+  const readinessEventLoopHealth = createGatewayEventLoopHealthMonitor({ scheduler });
   const startupState = {
     sidecarsReady: minimalTestGateway,
     pendingReason: "startup-sidecars",
@@ -463,13 +473,24 @@ export async function prepareGatewayKernelState(params: {
   log.info("starting HTTP server...");
   const connectionState = await startupTrace.measure("runtime.state", () =>
     createGatewayConnectionState({
+      scheduler,
       bootId,
       cfg: cfgAtStart,
       getRuntimeConfig,
     }),
   );
   const transportBridge = createGatewayTransportBridge();
+  const presencePublisher = createPresencePublisher({
+    broadcast: connectionState.broadcast,
+    incrementPresenceVersion,
+    getHealthVersion,
+    prepare: () => {
+      const projection = connectionState.getSessionRowProjection();
+      return projection?.needsMembershipPreparation() ? projection.prepareMembership() : undefined;
+    },
+  });
   const createHttpTransportOptions = () => ({
+    scheduler: params.scheduler,
     cfg: cfgAtStart,
     getRuntimeConfig,
     bindHost,
@@ -511,26 +532,6 @@ export async function prepareGatewayKernelState(params: {
     clients: connectionState.clients,
     tailscaleMode,
   });
-  const {
-    clients,
-    mentionInbox,
-    broadcast,
-    broadcastToConnIds,
-    broadcastPluginEvent,
-    getBufferedAmount,
-    agentRunSeq,
-    dedupe,
-    chatRunState,
-    addChatRun,
-    removeChatRun,
-    chatAbortControllers,
-    chatQueuedTurns,
-    toolEventRecipients,
-    sessionEventSubscribers,
-    sessionMessageSubscribers,
-    isConnectionActive,
-  } = connectionState;
-
   return {
     ...bootstrap,
     scheduler,
@@ -593,25 +594,8 @@ export async function prepareGatewayKernelState(params: {
     watchNodeRequestHandler,
     createHttpTransportOptions,
     transportBridge,
-    connectionWork: connectionState.connectionWork,
-    getSessionRowProjection: connectionState.getSessionRowProjection,
-    attachSessionRowProjection: connectionState.attachSessionRowProjection,
-    clients,
-    mentionInbox,
-    broadcast,
-    broadcastToConnIds,
-    broadcastPluginEvent,
-    getBufferedAmount,
-    agentRunSeq,
-    dedupe,
-    chatRunState,
-    addChatRun,
-    removeChatRun,
-    chatAbortControllers,
-    chatQueuedTurns,
-    toolEventRecipients,
-    sessionEventSubscribers,
-    sessionMessageSubscribers,
-    isConnectionActive,
+    ...connectionState,
+    publishPresence: presencePublisher.publish,
+    stopPresencePublications: presencePublisher.stop,
   };
 }

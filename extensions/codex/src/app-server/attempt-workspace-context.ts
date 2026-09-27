@@ -1,4 +1,3 @@
-/** Workspace snapshots, per-turn workspace context, and memory-tool routing for Codex. */
 import path from "node:path";
 import {
   buildAgentWorkspaceInstructionSnapshot,
@@ -66,7 +65,6 @@ export async function prepareCodexWorkspaceDeveloperInstructions(params: {
   return buildAgentWorkspaceInstructionSnapshot(contextFiles, params.workspaceDir).instructions;
 }
 
-/** Loads and partitions workspace snapshots, turn instructions, and memory references. */
 export async function buildCodexWorkspaceBootstrapContext(params: {
   params: EmbeddedRunAttemptParams;
   agentWorkspaceDeveloperInstructions?: string;
@@ -75,10 +73,18 @@ export async function buildCodexWorkspaceBootstrapContext(params: {
   effectiveWorkspace: string;
   sessionKey: string;
   sessionAgentId: string;
-  memoryToolNames: readonly string[];
+  tools: readonly CodexDynamicToolSpec[];
   ringZeroActive: boolean;
   sandboxed?: boolean;
 }): Promise<CodexWorkspaceBootstrapContext> {
+  const availableToolNames = new Set(
+    flattenCodexDynamicToolFunctions(params.tools).map((tool) =>
+      normalizeCodexDynamicToolName(tool.name),
+    ),
+  );
+  const memoryToolNames = Array.from(CODEX_MEMORY_TOOL_NAMES).filter((name) =>
+    availableToolNames.has(name),
+  );
   const executionWorkspace = params.executionWorkspace ?? params.resolvedWorkspace;
   const inheritsAgentWorkspace = executionWorkspace !== params.resolvedWorkspace;
   const injectOpenClawContext = shouldInjectCodexOpenClawPromptContext(params.params);
@@ -96,7 +102,7 @@ export async function buildCodexWorkspaceBootstrapContext(params: {
       ? params.resolvedWorkspace
       : params.effectiveWorkspace;
     const memoryToolsAvailable =
-      params.memoryToolNames.length > 0 &&
+      memoryToolNames.length > 0 &&
       canRouteCodexWorkspaceMemoryThroughTools({
         config: params.params.config,
         agentId: params.params.agentId ?? params.sessionAgentId,
@@ -119,7 +125,7 @@ export async function buildCodexWorkspaceBootstrapContext(params: {
         embeddedAgentLog.warn("failed to prepare codex memory recall instructions", { error }),
       memoryTools: injectOpenClawContext
         ? {
-            toolNames: params.memoryToolNames,
+            toolNames: [...availableToolNames],
             citationsMode: params.params.config?.memory?.citations,
             sandboxed: params.sandboxed,
           }
@@ -154,7 +160,7 @@ export async function buildCodexWorkspaceBootstrapContext(params: {
       turnScopedDeveloperInstructionFiles,
       memoryReferenceFiles,
       memoryToolRoutedBootstrapFiles,
-      memoryToolNames: [...params.memoryToolNames],
+      memoryToolNames,
       memoryToolRouted: memoryToolsAvailable,
       promptContext: renderCodexWorkspaceBootstrapPromptContext(promptContextFiles),
       // Empty is a captured snapshot too; a missing value still permits first capture.
@@ -167,7 +173,7 @@ export async function buildCodexWorkspaceBootstrapContext(params: {
       memoryCollaborationInstructions: injectOpenClawContext
         ? renderCodexWorkspaceMemoryCollaborationInstructions({
             files: memoryReferenceFiles,
-            toolNames: params.memoryToolNames,
+            toolNames: memoryToolNames,
             memoryRecallInstructions: prepared.memoryRecallInstructions,
           })
         : undefined,
@@ -196,8 +202,7 @@ export function shouldInjectCodexOpenClawPromptContext(params: EmbeddedRunAttemp
 function renderCodexWorkspaceBootstrapPromptContext(
   contextFiles: EmbeddedContextFile[],
 ): string | undefined {
-  const files = contextFiles;
-  if (files.length === 0) {
+  if (contextFiles.length === 0) {
     return undefined;
   }
   const lines = [
@@ -206,18 +211,14 @@ function renderCodexWorkspaceBootstrapPromptContext(
     "# Project Context",
     "",
     "The following project context files have been loaded:",
+    "",
   ];
-  lines.push("");
-  for (const file of files) {
+  for (const file of contextFiles) {
     lines.push(`## ${file.path}`, "", file.content, "");
   }
   return lines.join("\n").trim();
 }
 
-/**
- * Renders a memory-file reference that points Codex at memory tools instead of
- * embedding MEMORY.md contents.
- */
 function renderCodexWorkspaceMemoryReference(params: {
   files: EmbeddedContextFile[];
   toolNames?: readonly string[];
@@ -265,14 +266,6 @@ function renderCodexMemoryToolSearchBridge(toolNames: readonly string[]): string
     return undefined;
   }
   return `Codex may expose ${memoryToolNames.join(" and ")} as deferred tools. When the memory guidance above calls for memory recall, use an already-loaded memory tool directly. If the needed memory tool is deferred and not currently callable, use \`tool_search\` to load it, then call that memory tool.`;
-}
-
-/** Lists available memory tool names understood by Codex workspace memory routing. */
-export function getCodexWorkspaceMemoryToolNames(tools: readonly CodexDynamicToolSpec[]): string[] {
-  const availableToolNames = new Set(
-    flattenCodexDynamicToolFunctions(tools).map((tool) => normalizeCodexDynamicToolName(tool.name)),
-  );
-  return Array.from(CODEX_MEMORY_TOOL_NAMES).filter((name) => availableToolNames.has(name));
 }
 
 function canRouteCodexWorkspaceMemoryThroughTools(params: {

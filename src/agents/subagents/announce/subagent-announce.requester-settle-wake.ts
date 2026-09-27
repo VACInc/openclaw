@@ -9,10 +9,6 @@ import { isSystemEventStoreCurrent } from "../../../infra/system-event-ownership
 import { logWarn } from "../../../logger.js";
 import { getSharedGatewayContextResolver } from "../../../plugins/runtime/gateway-request-scope.js";
 import { isCronSessionKey } from "../../../sessions/session-key-utils.js";
-import {
-  getFollowupForCohort,
-  withFollowupSuccessor,
-} from "../../../tasks/task-followup-completion.js";
 import { withTaskProgressRequesterContinuation } from "../../../tasks/task-progress-requester.js";
 import {
   type DeliveryContext,
@@ -23,6 +19,10 @@ import {
   normalizeMessageChannel,
 } from "../../../utils/message-channel.js";
 import { resolveSubagentRequesterAgentId } from "../../subagent-requester-owner.js";
+import {
+  getFollowupForCohort,
+  withFollowupSuccessor,
+} from "../completion/session-followup-completion.js";
 import { subagentRuns } from "../registry/subagent-registry-memory.js";
 import { selectConnectedSettledSubagentWave } from "../registry/subagent-registry-queries.js";
 import {
@@ -81,6 +81,14 @@ const REQUESTER_SETTLE_WAKE_MAX_DEFERRALS = 10;
 const REQUESTER_SETTLE_WAKE_RETRY_DELAYS_MS = [30_000, 120_000] as const;
 const activeRequesterSettleWakeBatches = new Map<string, () => boolean>();
 
+function retainedYieldIdentity(state: RequesterSettleWakeBatchState) {
+  return {
+    ...(state.requesterYieldBatch === true ? { requesterYieldBatch: true as const } : {}),
+    ...(state.afterRequesterYield === true ? { afterRequesterYield: true as const } : {}),
+    ...(state.rearmGeneration !== undefined ? { rearmGeneration: state.rearmGeneration } : {}),
+  };
+}
+
 function readSharedBatchState(batch: readonly SubagentRunRecord[]): RequesterSettleWakeBatchState {
   const states = batch
     .map((entry) => entry.requesterSettleWake)
@@ -106,8 +114,8 @@ function readSharedBatchState(batch: readonly SubagentRunRecord[]): RequesterSet
 }
 
 /**
- * Wakes a top-level or explicitly yielded nested requester once its last child
- * reaches terminal settle. Durable state transitions happen synchronously
+ * Wakes a top-level or explicitly yielded nested requester once its batch's last
+ * child and descendants settle. Durable state transitions happen synchronously
  * through lifecycle-owned callbacks before and after every async delivery.
  */
 export async function maybeWakeRequesterAfterAllChildrenSettled(
@@ -181,11 +189,10 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
     return false;
   }
 
-  const listedRuns = listSubagentRunsForRequester(requesterSessionKey, {
+  const requesterRuns = listSubagentRunsForRequester(requesterSessionKey, {
     requesterAgentId,
     requesterStorePath,
   });
-  const requesterRuns = Array.isArray(listedRuns) ? listedRuns : [];
   const currentSettledEntry = requesterRuns.find(
     (entry) => entry.runId === params.settledEntry.runId,
   );
@@ -238,7 +245,12 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
     return false;
   }
 
+  // Scheduling is per child, but every replay of this frozen wave is one input.
+  // Retain all possible shipped sources only for exact accepted-input matching.
+  const batchSessionKeys = [...new Set(settledBatch.map((run) => run.childSessionKey))].toSorted();
   const batchCreatedAt = Math.min(...settledBatch.map((entry) => entry.createdAt));
+  // Keep the batch members themselves in the settle check, including paused work.
+  const rootRunIds = frozenBatchRunIds?.length ? new Set(frozenBatchRunIds) : undefined;
   const requesterHasUnsettledDescendants = () =>
     hasDescendantRunAwaitingSettle(
       requesterSessionKey,
@@ -246,6 +258,7 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
       requesterAgentId,
       requesterStorePath,
       batchCreatedAt,
+      rootRunIds,
     );
   const hasUnsettledDescendants = requesterHasUnsettledDescendants();
   if ((!frozenBatchRunIds || frozenBatchRunIds.length === 0) && hasUnsettledDescendants) {
@@ -259,11 +272,6 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
     return false;
   }
   const batchRunIds = settledBatch.map((entry) => entry.runId).toSorted();
-  // Scheduling is per child, but every replay of this frozen wave is one input.
-  // Retain all possible shipped sources only for exact accepted-input matching.
-  const settleWakeSourceSessionKeys = [
-    ...new Set(settledBatch.map((entry) => entry.childSessionKey)),
-  ].toSorted();
   const selectedState = readSharedBatchState(settledBatch);
   const isStoreCurrent = () =>
     settledBatch.every((entry) =>
@@ -321,6 +329,7 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
       requesterSessionKey,
       requesterAgentId,
       requesterStorePath,
+      rootRunIds,
     ) === 0,
   ): void {
     const now = Date.now();
@@ -348,9 +357,7 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
         now + REQUESTER_SETTLE_WAKE_RETRY_DELAYS_MS[0],
       ),
       batchRunIds: [...batchRunIds],
-      ...(state.requesterYieldBatch === true ? { requesterYieldBatch: true } : {}),
-      ...(state.afterRequesterYield === true ? { afterRequesterYield: true } : {}),
-      ...(state.rearmGeneration !== undefined ? { rearmGeneration: state.rearmGeneration } : {}),
+      ...retainedYieldIdentity(state),
       ...(state.lastError !== undefined ? { lastError: state.lastError } : {}),
       deferralCount,
     });
@@ -471,8 +478,7 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
       // Returning here keeps restart/suspend drains free during backoff.
       return false;
     }
-    // A requester may spawn more work while this durable batch is waiting
-    // or replaying. Keep the frozen batch pending until the new work drains.
+    // Recheck owned descendants after loading findings and before dispatch.
     if (requesterHasUnsettledDescendants()) {
       deferBatch(state);
       return false;
@@ -497,9 +503,7 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
         status: "dispatching",
         attemptCount: state.attemptCount + 1,
         batchRunIds,
-        ...(state.requesterYieldBatch === true ? { requesterYieldBatch: true } : {}),
-        ...(state.afterRequesterYield === true ? { afterRequesterYield: true } : {}),
-        ...(state.rearmGeneration !== undefined ? { rearmGeneration: state.rearmGeneration } : {}),
+        ...retainedYieldIdentity(state),
       };
       params.transitionBatch(settledBatch, state);
     }
@@ -623,8 +627,8 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
                     steerMessage: wakeMessage,
                     requesterSessionOrigin,
                     directOrigin,
-                    sourceSessionKey: settleWakeSourceSessionKeys[0],
-                    settleWakeSourceSessionKeys,
+                    sourceSessionKey: batchSessionKeys[0],
+                    settleWakeSourceSessionKeys: batchSessionKeys,
                     sourceTool: "subagent_settle",
                     targetRequesterSessionKey: requesterSessionKey,
                     requesterIsSubagent: requesterDepth >= 1,
@@ -692,9 +696,7 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
         replayCount,
         nextAttemptAt: Date.now() + retryDelayMs,
         batchRunIds,
-        ...(state.requesterYieldBatch === true ? { requesterYieldBatch: true } : {}),
-        ...(state.afterRequesterYield === true ? { afterRequesterYield: true } : {}),
-        ...(state.rearmGeneration !== undefined ? { rearmGeneration: state.rearmGeneration } : {}),
+        ...retainedYieldIdentity(state),
         lastError,
       };
       params.transitionBatch(settledBatch, state);
@@ -743,9 +745,7 @@ export async function maybeWakeRequesterAfterAllChildrenSettled(
       attemptCount,
       nextAttemptAt: Date.now() + retryDelayMs,
       batchRunIds,
-      ...(state.requesterYieldBatch === true ? { requesterYieldBatch: true } : {}),
-      ...(state.afterRequesterYield === true ? { afterRequesterYield: true } : {}),
-      ...(state.rearmGeneration !== undefined ? { rearmGeneration: state.rearmGeneration } : {}),
+      ...retainedYieldIdentity(state),
       lastError,
     });
     logWarn(

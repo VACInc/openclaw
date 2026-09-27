@@ -53,6 +53,7 @@ import {
   recordTaskRegistryProjectionWrite,
   selectLiveTaskFlowForSync,
   clearTaskProgressBatches,
+  clearTaskActivityOverlays,
 } from "./task-registry.process-state.js";
 import {
   deliverTaskRegistryObserverEvent,
@@ -115,16 +116,18 @@ export function emitTaskRegistryObserverEvent(createEvent: () => TaskRegistryObs
   deliverTaskRegistryObserverEvent(createEvent, recordTaskRegistryPublication);
 }
 
+export function clearTaskActivity(taskId: string): void {
+  const activity = taskActivityByTaskId.get(taskId);
+  clearTimeout(activity?.flushTimer);
+  activity?.preparedItems.clear();
+  taskActivityByTaskId.delete(taskId);
+}
+
 function clearTaskRegistryEphemeralState(): void {
   // Committed restore obligations outlive replacement of their in-memory projection.
   clearTaskFlowSyncRetries("live");
   clearTaskProgressBatches();
-  for (const activity of taskActivityByTaskId.values()) {
-    if (activity.flushTimer) {
-      clearTimeout(activity.flushTimer);
-    }
-  }
-  taskActivityByTaskId.clear();
+  clearTaskActivityOverlays();
   tasksWithPendingDelivery.clear();
 }
 
@@ -263,7 +266,7 @@ function restoreTaskRegistryOnce() {
   let installing = false;
   let restoreResult: ReturnType<typeof restoreTaskExecutionSnapshot> | undefined;
   try {
-    restoreResult = restoreTaskExecutionSnapshot(store, reader.loadSnapshot);
+    restoreResult = restoreTaskExecutionSnapshot(store, reader.loadSnapshot, reader.assertCurrent);
     reader.assertCurrent();
     const { snapshot: restored, settledTasks } = restoreResult;
     installing = true;
@@ -504,6 +507,7 @@ function installSnapshot(
         recordTaskRegistryProjectionWrite(recordWrites, taskId, true);
       }
       removeTaskIndexes(current);
+      clearTaskActivity(taskId);
       changed = tasks.delete(taskId) || changed;
       taskDeliveryStates.delete(taskId);
     }
@@ -617,7 +621,7 @@ function refreshUnderCustody(): void {
   }
 }
 
-/** Keep canonical peer selection and all synchronous writes in one coordinator admission. */
+/** Keep canonical peer selection and synchronous writes in the store's mutation transaction. */
 export function withTaskRegistryMutation<T>(
   operation: () => T,
   onAdmissionFailure?: (error: unknown) => T,
@@ -699,7 +703,11 @@ export async function runTaskRegistryWorkerMutation<T>(
     dirtyScopes.add(scope);
     bumpTaskRegistryRevision(true, pending.readIdentity !== "preserved");
     try {
-      claimTaskRegistryPublication(pending, context.publicationRecords());
+      claimTaskRegistryPublication(
+        pending,
+        context.publicationRecords(),
+        context.publicationDeletions?.(),
+      );
       const { conflicted } = await reconcileTaskRegistryWorkerSnapshot({
         pending,
         assertCurrent: assertOwner,
