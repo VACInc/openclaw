@@ -1,4 +1,4 @@
-// Real plugin invocation, durable outbox, and registered Gateway admission owners.
+// Public session creation/read, real plugin invocation, durable outbox, and Gateway admission.
 import { describe, expect, it, vi } from "vitest";
 import * as sessionAccessor from "../config/sessions/session-accessor.js";
 import {
@@ -10,9 +10,9 @@ describe("durable plugin callback Gateway admission", () => {
   const fixture = installAgentAuthorityProofFixture();
 
   it.for(["current", "replaced"] as const)(
-    "durable plugin callback reaches real final Gateway admission: %s child",
+    "checks callback admission for a publicly created non-main session: %s child",
     async (mode, { signal }) => {
-      const f = await fixture();
+      const f = await fixture({ publicSession: true });
       const { registerSubagentRun } =
         await import("../agents/subagents/registry/subagent-registry.js");
       const { subagentRuns } =
