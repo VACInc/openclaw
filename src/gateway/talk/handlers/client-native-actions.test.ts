@@ -53,6 +53,7 @@ import {
   SESSION_KEY,
   connectNativeSession,
   installNativePluginTestHooks,
+  nativeCallSession,
   nativeDelegation,
   requireString,
   talkEventTypes,
@@ -61,7 +62,6 @@ import {
   withNativePlugin,
   withRegisteredNativeEmbeddedRun,
 } from "./client-native-control.test-support.js";
-import { nativeCallSession } from "./client-native-session-payload.test-support.js";
 
 // Observe the real admission function before the consult loader captures it for later tests.
 vi.mock("../../../agents/admitted-run-context.js", async (importOriginal) => {
