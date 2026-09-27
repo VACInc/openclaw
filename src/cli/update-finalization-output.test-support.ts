@@ -144,6 +144,16 @@ export const readConfigFileSnapshot = async () => ({ valid: true, config, source
 export const assertConfigWriteAllowedInCurrentMode = () => {};
 `;
 const stubs = new Map<string, string>([
+  // Synthetic services must not borrow the operator's shared lifecycle lock directory.
+  [
+    sourceUrl("../infra/tmp-openclaw-dir.ts"),
+    `export * from ${JSON.stringify(`${sourceUrl("../infra/tmp-openclaw-dir.ts")}?fixture-original`)};
+import { resolvePreferredOpenClawTmpDir as resolveOriginal } from ${JSON.stringify(`${sourceUrl("../infra/tmp-openclaw-dir.ts")}?fixture-original`)};
+export const resolvePreferredOpenClawTmpDir = (options = {}) => resolveOriginal({
+  ...options, preferredDir: ${JSON.stringify(path.join(root, "runtime"))},
+  tmpdir: () => ${JSON.stringify(root)},
+});`,
+  ],
   // Forward prepared locations, not currentModuleUrl as an import: builds may
   // place that URL in a shared chunk. Workers still execute their real compiled code.
   [
