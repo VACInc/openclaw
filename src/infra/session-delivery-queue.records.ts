@@ -50,6 +50,15 @@ export type SessionDeliveryRoute = {
 
 export type SessionDeliverySettledOutcome = "recovered" | "moved-to-failed";
 
+/** Original requester facts; admission still validates the current owning session. */
+export type SessionDeliveryRequesterBinding = Readonly<{
+  agentId: string;
+  sessionKey: string;
+  storePath: string;
+  sessionId: string;
+  lifecycleRevision: string | null;
+}>;
+
 /** Payload variants that can be replayed by session delivery recovery. */
 export type QueuedSessionDeliveryPayload =
   | ({
@@ -67,6 +76,7 @@ export type QueuedSessionDeliveryPayload =
       message: string;
       messageId: string;
       expectedSessionId?: string;
+      requesterBinding?: SessionDeliveryRequesterBinding;
       route?: SessionDeliveryRoute;
       deliveryContext?: SessionDeliveryContext;
       inputProvenance?: InputProvenance;
