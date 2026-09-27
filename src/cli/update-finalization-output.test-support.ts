@@ -255,6 +255,32 @@ export async function runInteractiveUpdateFailureAction({ runtime }) {
 }`,
   );
 }
+if (scenario === "doctor-error") {
+  // The timeout-report case owns an uninspectable service, not the host's manager.
+  // Admit that fixture identity while leaving recovery inspection, HTTP probes,
+  // polling, and failure recording real; no service mutation is permitted.
+  const pathsUrl = sourceUrl("../config/paths.ts");
+  stubs.set(
+    pathsUrl,
+    `export * from ${JSON.stringify(`${pathsUrl}?fixture-original`)};
+export const isDefaultInstallIdentity = () => true;`,
+  );
+  const serviceUrl = sourceUrl("../daemon/service.ts");
+  stubs.set(
+    serviceUrl,
+    `export * from ${JSON.stringify(`${serviceUrl}?fixture-original`)};
+const refuseMutation = async () => { throw new Error('Output fixture cannot mutate a Gateway service'); };
+const service = {
+  label: 'Fixture service', loadedText: 'loaded', notLoadedText: 'not loaded',
+  isLoaded: async () => { throw new Error('Fixture service status unavailable'); },
+  readCommand: async () => null,
+  readRuntime: async () => ({ status: 'unknown' }),
+  stage: refuseMutation, install: refuseMutation, uninstall: refuseMutation,
+  start: refuseMutation, stop: refuseMutation, restart: refuseMutation,
+};
+export const resolveGatewayService = () => service;`,
+  );
+}
 if (repairDeadline) {
   const { prepareRepairDeadlineFixture } =
     await import("./update-finalization-repair.test-support.js");

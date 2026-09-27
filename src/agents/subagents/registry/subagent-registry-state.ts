@@ -4,6 +4,10 @@ import {
 } from "../../../sessions/session-lifecycle-events.js";
 import { isStateDatabaseReadAdmissionInvalidatedError } from "../../../state/openclaw-state-db-async-lifecycle.js";
 import { getActiveOpenClawStateDatabaseReadSnapshot } from "../../../state/openclaw-state-db-readonly.js";
+import {
+  captureOpenClawStateSchemaReadAdmission,
+  getExistingOpenClawStateSchemaPath,
+} from "../../../state/openclaw-state-db-schema-policy.js";
 import { resolveOpenClawStateSqlitePath } from "../../../state/openclaw-state-db.paths.js";
 import {
   captureOpenClawStateWorkerContext,
@@ -223,6 +227,8 @@ export function getSubagentSessionListReadSnapshotIdentity(): object | undefined
   if (!shouldReadPersistedSubagentRuns()) {
     return subagentRuns;
   }
+  // Expired caller authority is not a recoverable resident-cache miss.
+  getExistingOpenClawStateSchemaPath();
   try {
     return getPersistedSubagentRunsSnapshot(persistedSubagentSessionListRunsReadCache) ?? undefined;
   } catch (error) {
@@ -245,6 +251,7 @@ export function createSubagentSessionListReadView(options: {
   path?: string;
 }): SubagentSessionListReadView {
   const path = options.path ?? resolveOpenClawStateSqlitePath(options.env);
+  const schemaAdmission = captureOpenClawStateSchemaReadAdmission(path);
   const source = prepareOpenClawStateReadSource({ path, env: options.env });
   const cache = persistedSubagentSessionListRunsReadCache;
   const readPersisted = shouldReadPersistedSubagentRuns();
@@ -256,6 +263,8 @@ export function createSubagentSessionListReadView(options: {
       if (!readPersisted) {
         return subagentRuns;
       }
+      // Preserve the creating caller's scope even when source retirement is tolerated.
+      schemaAdmission?.assertCurrent();
       try {
         return getPersistedSubagentRunsSnapshot(cache, source.current()) ?? undefined;
       } catch (error) {
