@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import {
@@ -164,6 +165,10 @@ function preparePlacementProjection(
 
 beforeEach(() => {
   vi.useFakeTimers();
+  // The publication budget must share the mocked debounce clock; host CPU time
+  // must not defer a drain onto an immediate that this fixture has not advanced.
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => Date.now());
+  onTestFinished(() => clock.mockRestore());
   mocks.invalidate();
   mocks.invalidate.mockClear();
   mocks.loadRow.mockReset().mockImplementation((key: string) => ({
