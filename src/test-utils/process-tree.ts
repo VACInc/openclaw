@@ -6,11 +6,13 @@ export async function writeForkingNoOutputScript(dir: string): Promise<string> {
   const scriptPath = path.join(dir, "fork-no-output.sh");
   // The descendant publishes its PID after installing its keepalive, so callers
   // can trigger the idle deadline only after a live process tree is ready.
+  // PID publication is the readiness signal: later output could refresh the idle
+  // deadline before its deferred expiration decision runs.
   await fs.writeFile(
     scriptPath,
     [
       "#!/bin/sh",
-      '"$NODE_BINARY" -e \'setInterval(() => {}, 1000); require("node:fs").writeFileSync(process.env.PID_FILE, String(process.pid)); process.stderr.write("ready\\n");\' &',
+      '"$NODE_BINARY" -e \'setInterval(() => {}, 1000); require("node:fs").writeFileSync(process.env.PID_FILE, String(process.pid));\' &',
       "wait",
     ].join("\n"),
     "utf8",
