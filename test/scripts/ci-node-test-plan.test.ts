@@ -3813,6 +3813,17 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       expect(startupHealthJob.planConcurrency).toBe(1);
       expect(startupHealthJob.env?.OPENCLAW_VITEST_MAX_WORKERS).toBeUndefined();
       for (const sibling of measuredSiblings) {
+        if (
+          sibling.configs.length === 1 &&
+          sibling.configs[0] === "test/vitest/vitest.commands.config.ts"
+        ) {
+          // Storage work floors can pin a split command sibling to two workers.
+          // Unsplit measured commands retain their allocation-derived worker budget.
+          expect([undefined, "2"], sibling.shard_name).toContain(
+            sibling.env?.OPENCLAW_VITEST_MAX_WORKERS,
+          );
+          continue;
+        }
         const isolated = /^agentic-gateway-server-isolated(?:-hosted-\d+)?$/u.test(
           sibling.shard_name,
         );
