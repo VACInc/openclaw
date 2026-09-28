@@ -44,7 +44,11 @@ type CodeModeWorkerThreadResult = SharedWorkerThreadResult<Snapshot>;
 class CodeModeWorkerFailure extends Error {
   readonly code: Extract<CodeModeWorkerResult, { status: "failed" }>["code"];
 
-  constructor(code: Extract<CodeModeWorkerResult, { status: "failed" }>["code"], message: string) {
+  constructor(
+    code: Extract<CodeModeWorkerResult, { status: "failed" }>["code"],
+    message: string,
+    readonly failurePhase?: "bridge",
+  ) {
     super(message);
     this.name = "CodeModeWorkerFailure";
     this.code = code;
@@ -320,12 +324,13 @@ function failedWorkerResult(
   code: Extract<CodeModeWorkerResult, { status: "failed" }>["code"],
   error: string,
   output: unknown[] = [],
+  failurePhase?: "bridge",
 ): Extract<CodeModeWorkerResult, { status: "failed" }> {
   return {
     status: "failed",
     code,
     error,
-    failurePhase: code === "invalid_input" ? "input" : "guest",
+    failurePhase: failurePhase ?? (code === "invalid_input" ? "input" : "guest"),
     bridgeDispatchStarted: false,
     output,
   };
@@ -343,7 +348,12 @@ function workerFailureResult(params: {
     return failedWorkerResult("timeout", "code mode timeout exceeded", output);
   }
   if (params.error instanceof CodeModeWorkerFailure) {
-    return failedWorkerResult(params.error.code, params.error.message, output);
+    return failedWorkerResult(
+      params.error.code,
+      params.error.message,
+      output,
+      params.error.failurePhase,
+    );
   }
   // Return while the VM still owns the source coordinates and provenance, even
   // when the guest throws before emitting output.
@@ -376,7 +386,12 @@ async function readCompletedResult(vm: QuickJS, resultHandle: JSValueHandle): Pr
         dumped instanceof Error
           ? formatQuickJsError(dumped.name, dumped.message, dumped.stack, readSourceLocation(vm))
           : errorMessage(dumped);
-      throw new Error(text);
+      const bridgeError = vm.global
+        .getProp("__openclawIsBridgeError")
+        .consume((check) =>
+          vm.callFunction(check, vm.undefined, error).consume((value) => vm.dump(value) === true),
+        );
+      throw new CodeModeWorkerFailure("internal_error", text, bridgeError ? "bridge" : undefined);
     });
   }
   return settled.value.consume((value) => JSON.parse(value.toString()));

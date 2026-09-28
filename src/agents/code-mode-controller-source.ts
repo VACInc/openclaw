@@ -34,6 +34,7 @@ export const CODE_MODE_CONTROLLER_SOURCE = String.raw`
   // Keep rejection ownership in the snapshot so a handler attached after wait
   // can clear it; an unawaited failure must not become a successful cell.
   const unhandledRejections = new Set();
+  const bridgeErrors = new WeakSet();
   let nextTimerId = 0;
   const GuestPromise = Promise;
   const GuestError = Error;
@@ -213,6 +214,7 @@ export const CODE_MODE_CONTROLLER_SOURCE = String.raw`
         error.code = parsed.code;
         error.effectStatus = "unknown";
       }
+      bridgeErrors.add(error);
       entry.reject(error);
     }
     return true;
@@ -479,6 +481,7 @@ export const CODE_MODE_CONTROLLER_SOURCE = String.raw`
     json: { value: (value) => emitOutput({ type: "json", value: safe(value, true) }), enumerable: true },
     yield_control: { value: (reason) => request("yield", [reason]), enumerable: true },
     __openclawSettleBridge: { value: settle },
+    __openclawIsBridgeError: { value: (error) => bridgeErrors.has(error) },
     __openclawDrainQueuedRequests: { value: drainQueuedRequests },
     __openclawAdmissionError: { value: () => admissionError },
     // Final getters must run before the worker drains output and settles host work.
