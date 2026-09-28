@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { advanceTimersAndSettle } from "../../../../test/helpers/advance-timers-and-settle.js";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import { getRuntimeConfig } from "../../../config/config.js";
 import { replaceSessionEntry } from "../../../config/sessions/session-accessor.js";
@@ -947,10 +948,9 @@ describe("requester settle wake product flow", () => {
             } else {
               expect(registry.getSubagentRunByRunId(beta.runId)).toBeUndefined();
             }
-            // Cross both native retry deadlines; a transferred obligation must not
-            // start an extra parent turn, while an empty failed handoff must recover.
+            // Cross both retry deadlines without replaying a transferred obligation.
             await flushOwnedWork();
-            await vi.advanceTimersByTimeAsync(151_000);
+            await advanceTimersAndSettle(151_000, flushOwnedWork);
             await registry.testing.sweepOnceForTests();
             await vi.advanceTimersByTimeAsync(0);
             await flushOwnedWork();
