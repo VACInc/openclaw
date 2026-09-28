@@ -47,6 +47,7 @@ import {
   resolvePluginInstallRoots,
   withPluginInstallRoots,
 } from "../plugins/install-root-context.js";
+import { createPluginCache, retirePluginCache, withPluginCache } from "../plugins/plugin-cache.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { closeOpenClawStateDatabaseByPathAsync } from "../state/openclaw-state-db-cache.js";
 import {
@@ -565,6 +566,7 @@ async function withReadOnlyPluginStateSnapshot<T>(
     OPENCLAW_STATE_DIR: privateStateDir,
   };
   return await withDoctorLintStateEnv(privateEnv, async () => {
+    const pluginCache = createPluginCache();
     let outcome: { ok: true; value: T } | { ok: false; error: unknown };
     let runStarted = false;
     try {
@@ -582,20 +584,29 @@ async function withReadOnlyPluginStateSnapshot<T>(
       // Runtime schema checks defer OAuth probes: external rotation cannot be snapshotted.
       outcome = {
         ok: true,
-        value: await withDisposableOpenClawStateReads(privateDatabasePath, () =>
-          withPluginInstallRoots({ ...installRoots, stateDir: privateStateDir }, async () => {
-            runStarted = true;
-            return await run(privateEnv);
-          }),
+        value: await withPluginCache(pluginCache, () =>
+          withDisposableOpenClawStateReads(privateDatabasePath, () =>
+            withPluginInstallRoots({ ...installRoots, stateDir: privateStateDir }, async () => {
+              runStarted = true;
+              return await run(privateEnv);
+            }),
+          ),
         ),
       };
     } catch (error) {
       outcome = { ok: false, error };
     }
     try {
-      // Independent owners must both retire, even if one close fails. Retain
+      // Independent owners must all retire, even if one close fails. Retain
       // the snapshot on any failure, without losing an earlier detector error.
       const retirementErrors: unknown[] = [];
+      try {
+        // Native admissions retain captured paths; they cannot escape this private state view.
+        const retired = await retirePluginCache(pluginCache);
+        retirementErrors.push(...retired.failures.map((failure) => failure.error));
+      } catch (error) {
+        retirementErrors.push(error);
+      }
       try {
         closeAuthProfileReadPool({ kind: "root", rootPath: privateStateDir });
       } catch (error) {
