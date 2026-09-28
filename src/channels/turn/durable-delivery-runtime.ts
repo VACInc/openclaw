@@ -29,8 +29,13 @@ export function withDurableDeliveryRuntime<T>(
   if (!current) {
     return reject("The Gateway that admitted this reply is closing.");
   }
+  const assertCurrent = () => {
+    if (owner.current() !== current) {
+      reject("The reply delivery runtime changed before sending.");
+    }
+  };
   if (current === registry) {
-    return deliver(input.cfg);
+    return deliver(input.cfg, assertCurrent);
   }
   const cfg = getPluginRuntimeLoadContext(current)?.rawConfig;
   const channel = current.channels.find((entry) => entry.plugin.id === input.channel);
@@ -48,11 +53,6 @@ export function withDurableDeliveryRuntime<T>(
   ) {
     return reject("The reply channel changed during this turn; delivery was not started.");
   }
-  const assertCurrent = () => {
-    if (owner.current() !== current) {
-      reject("The reply delivery runtime changed before sending.");
-    }
-  };
   // Drop both inherited generation selectors, but retain the exact authenticated caller.
   return runOutsidePluginRuntimeGenerationScope(() =>
     withPluginRuntimeRegistryScope(current, () => deliver(cfg, assertCurrent)),

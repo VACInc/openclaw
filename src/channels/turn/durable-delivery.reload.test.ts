@@ -64,7 +64,9 @@ async function replacementFixture() {
     });
   setConfig(cfg);
   const publication: { current: typeof current | undefined } = { current };
-  bindPluginRegistryGatewayOwner(old, { current: () => publication.current });
+  const owner = { current: () => publication.current };
+  bindPluginRegistryGatewayOwner(old, owner);
+  bindPluginRegistryGatewayOwner(current, owner);
   // A different process-root Gateway must never become the delivery owner.
   setActivePluginRegistry(createTestRegistry([]));
   await retired.dispose();
@@ -81,12 +83,15 @@ async function replacementFixture() {
       OriginatingTo: "12345",
     },
   };
-  const deliver = (structured = false) =>
-    withPluginRuntimeRegistryScope(old, () => {
+  const deliver = (structured = false, scope = old) =>
+    withPluginRuntimeRegistryScope(scope, () => {
       if (!structured) {
         return deliverInboundReplyWithMessageSendContextCore(request);
       }
       const [plan] = createStructuredOutboundPayloadPlan([request.payload]);
+      if (!plan) {
+        throw new Error("Expected a sendable final reply");
+      }
       return deliverStructuredInboundReplyWithMessageSendContextCore({ ...request, plan });
     });
   return { old, current, publication, setConfig, sendText, beforeSendAttempt, deliver };
@@ -124,6 +129,7 @@ describe("final delivery after plugin replacement", () => {
     "account-changed",
     "plugin-changed",
     "superseded-before-send",
+    "superseded-live-send",
   ] as const)("does not send or borrow the process root when %s", async (stateChange) => {
     vi.stubEnv("OPENCLAW_STATE_DIR", state.tmpDir());
     const fixture = await replacementFixture();
@@ -140,19 +146,22 @@ describe("final delivery after plugin replacement", () => {
     if (stateChange === "plugin-changed") {
       fixture.setConfig({ ...cfg, plugins: { entries: { telegram: { enabled: false } } } });
     }
-    if (stateChange === "superseded-before-send") {
+    if (stateChange.startsWith("superseded")) {
       fixture.beforeSendAttempt.mockImplementation(async () => {
         fixture.publication.current = undefined;
       });
     }
-    const result = await fixture.deliver();
+    const result = await fixture.deliver(
+      false,
+      stateChange === "superseded-live-send" ? fixture.current : fixture.old,
+    );
     expect(result).toMatchObject({
       status: "failed",
       error: {
         message: expect.stringContaining(
           stateChange === "closed"
             ? "closing"
-            : stateChange === "superseded-before-send"
+            : stateChange.startsWith("superseded")
               ? "runtime changed"
               : "channel changed",
         ),
