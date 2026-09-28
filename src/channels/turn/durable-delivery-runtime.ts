@@ -1,7 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { PlatformMessageNotDispatchedError } from "../../infra/outbound/deliver-types.js";
-import { getPluginRegistryGatewayOwner } from "../../plugins/registry-lifecycle.js";
+import {
+  getPluginRegistryGatewayChannelRegistration,
+  getPluginRegistryGatewayOwner,
+} from "../../plugins/registry-lifecycle.js";
 import {
   getPluginRuntimeGatewayRequestScope,
   withPluginRuntimeRegistryScope,
@@ -44,12 +47,11 @@ export function withDurableDeliveryRuntime<T>(
   const cfg = getPluginRuntimeLoadContext(current)?.rawConfig;
   const channel = current.channels.find((entry) => entry.plugin.id === input.channel);
   const prepareRuntimeHandoff = input.prepareRuntimeHandoff;
-  // Compare registration identity without touching retired plugins' guarded getters.
+  const admittedChannel = getPluginRegistryGatewayChannelRegistration(registry, input.channel);
   const retainedChannel =
     channel &&
-    registry.channels.some(
-      (entry) => entry.pluginId === channel.pluginId && entry.plugin === channel.plugin,
-    );
+    admittedChannel?.pluginId === channel.pluginId &&
+    admittedChannel.plugin === channel.plugin;
   if (
     !cfg ||
     !isDeepStrictEqual(cfg.channels?.[input.channel], input.cfg.channels?.[input.channel]) ||

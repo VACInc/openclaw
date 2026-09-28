@@ -20,7 +20,7 @@ import {
 
 const cfg: OpenClawConfig = { channels: { telegram: { enabled: true } } };
 
-async function replacementFixture() {
+async function replacementFixture(options?: { newChannel?: boolean }) {
   const retired = new PluginInstance("discord");
   const old = createTestRegistry([
     {
@@ -52,7 +52,9 @@ async function replacementFixture() {
       },
     },
   ]);
-  old.channels.push(...current.channels);
+  if (!options?.newChannel) {
+    old.channels.push(...current.channels);
+  }
   const setConfig = (config: OpenClawConfig) =>
     setPluginRuntimeLoadContext(current, {
       rawConfig: config,
@@ -68,6 +70,9 @@ async function replacementFixture() {
   const owner = { current: () => publication.current };
   bindPluginRegistryGatewayOwner(old, owner);
   bindPluginRegistryGatewayOwner(current, owner);
+  // Agent-only registries inherit ingress identity even when they expose no channels.
+  const turn = createTestRegistry([]);
+  bindPluginRegistryGatewayOwner(turn, owner, old);
   // A different process-root Gateway must never become the delivery owner.
   setActivePluginRegistry(createTestRegistry([]));
   await retired.dispose();
@@ -85,7 +90,7 @@ async function replacementFixture() {
       OriginatingTo: "12345",
     },
   };
-  const deliver = (structured = false, scope = old) =>
+  const deliver = (structured = false, scope = turn) =>
     withPluginRuntimeRegistryScope(scope, () => {
       if (!structured) {
         return deliverInboundReplyWithMessageSendContextCore(request);
@@ -96,7 +101,17 @@ async function replacementFixture() {
       }
       return deliverStructuredInboundReplyWithMessageSendContextCore({ ...request, plan });
     });
-  return { old, current, publication, setConfig, sendText, beforeSendAttempt, deliver, request };
+  return {
+    old,
+    turn,
+    current,
+    publication,
+    setConfig,
+    sendText,
+    beforeSendAttempt,
+    deliver,
+    request,
+  };
 }
 
 describe("final delivery after plugin replacement", () => {
@@ -137,11 +152,8 @@ describe("final delivery after plugin replacement", () => {
     "superseded-live-send",
   ] as const)("does not send or borrow the process root when %s", async (stateChange) => {
     vi.stubEnv("OPENCLAW_STATE_DIR", state.tmpDir());
-    const fixture = await replacementFixture();
+    const fixture = await replacementFixture({ newChannel: stateChange === "new-channel" });
     setActivePluginRegistry(createTestRegistry([...fixture.current.channels]));
-    if (stateChange === "new-channel") {
-      fixture.old.channels = fixture.old.channels.slice(0, 1);
-    }
     if (stateChange === "replaced-channel") {
       fixture.current.channels = fixture.current.channels.map((entry) => ({
         ...entry,
@@ -170,7 +182,7 @@ describe("final delivery after plugin replacement", () => {
     }
     const result = await fixture.deliver(
       false,
-      stateChange === "superseded-live-send" ? fixture.current : fixture.old,
+      stateChange === "superseded-live-send" ? fixture.current : fixture.turn,
     );
     expect(result).toMatchObject({
       status: "failed",

@@ -95,13 +95,15 @@ describe("Telegram final sender after registry replacement", () => {
         );
         if (source === "unchanged") {
           expect(finals).toHaveLength(1);
-          expect(finals[0]?.endpoint).toBe("/bot" + http.token + "/sendMessage");
+          expect(http.endpoints[http.calls.findIndex((call) => call === finals[0])]).toBe(
+            "/bot" + http.token + "/sendMessage",
+          );
           expect([...http.visibleMessages.values()]).toContain(finalText);
         } else {
           expect(finals).toEqual([]);
           expect([...http.visibleMessages.values()]).not.toContain(finalText);
         }
-        expect(http.calls.some((call) => call.endpoint.includes(replacementToken))).toBe(false);
+        expect(http.endpoints.some((endpoint) => endpoint.includes(replacementToken))).toBe(false);
       } finally {
         await owner.close();
       }

@@ -31,7 +31,7 @@ import {
   resetTelegramReplyFenceForTest,
 } from "./runtime.test-support.js";
 
-type RecordedBotApiCall = { method: string; fields: Record<string, unknown>; endpoint: string };
+type RecordedBotApiCall = { method: string; fields: Record<string, unknown> };
 type ReplyResolver = NonNullable<Parameters<typeof dispatchInboundMessage>[0]["replyResolver"]>;
 export type ReplyResolverOptions = Parameters<ReplyResolver>[1];
 
@@ -47,6 +47,7 @@ export function createTelegramDispatchHttpFixture() {
   let inboundSequence = 0;
   const sockets = new Set<Socket>();
   const calls: RecordedBotApiCall[] = [];
+  const endpoints: string[] = [];
   const visibleMessages = new Map<number, string>();
   const visibleMarkup = new Map<number, unknown>();
   const acceptedCalls: RecordedBotApiCall[] = [];
@@ -95,7 +96,8 @@ export function createTelegramDispatchHttpFixture() {
           }
         }
         const method = request.url?.split("/").at(-1) ?? "";
-        const call = { method, fields, endpoint: request.url ?? "" };
+        const call = { method, fields };
+        endpoints.push(request.url ?? "");
         calls.push(call);
         response.once("finish", () => {
           for (const waiter of botApiCallWaiters) {
@@ -261,6 +263,7 @@ export function createTelegramDispatchHttpFixture() {
       toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
     });
     calls.length = 0;
+    endpoints.length = 0;
     visibleMessages.clear();
     visibleMarkup.clear();
     acceptedCalls.length = 0;
@@ -580,6 +583,7 @@ export function createTelegramDispatchHttpFixture() {
       holdNextCall = value;
     },
     calls,
+    endpoints,
     visibleMessages,
     visibleMarkup,
     acceptedCalls,
