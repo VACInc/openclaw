@@ -38,6 +38,8 @@ export type DurableInboundReplyDeliveryOptions = Pick<
   to?: string | null;
   replyToId?: string | null;
   requiredCapabilities?: DurableFinalDeliveryRequirements;
+  /** Validate the admitted sender and pin its resolved credential before a registry handoff. */
+  prepareRuntimeHandoff?: (cfg: OpenClawConfig) => OpenClawConfig;
 };
 
 /** Full context required to deliver one inbound final reply through durable message sending. */

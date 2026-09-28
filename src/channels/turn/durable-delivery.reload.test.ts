@@ -52,6 +52,7 @@ async function replacementFixture() {
       },
     },
   ]);
+  old.channels.push(...current.channels);
   const setConfig = (config: OpenClawConfig) =>
     setPluginRuntimeLoadContext(current, {
       rawConfig: config,
@@ -72,6 +73,7 @@ async function replacementFixture() {
   await retired.dispose();
   const request: DurableInboundReplyDeliveryParams = {
     cfg,
+    prepareRuntimeHandoff: (cfg) => cfg,
     channel: "telegram",
     accountId: "default",
     agentId: "main",
@@ -94,7 +96,7 @@ async function replacementFixture() {
       }
       return deliverStructuredInboundReplyWithMessageSendContextCore({ ...request, plan });
     });
-  return { old, current, publication, setConfig, sendText, beforeSendAttempt, deliver };
+  return { old, current, publication, setConfig, sendText, beforeSendAttempt, deliver, request };
 }
 
 describe("final delivery after plugin replacement", () => {
@@ -128,12 +130,27 @@ describe("final delivery after plugin replacement", () => {
     "removed",
     "account-changed",
     "plugin-changed",
+    "new-channel",
+    "replaced-channel",
+    "no-sender-preparation",
     "superseded-before-send",
     "superseded-live-send",
   ] as const)("does not send or borrow the process root when %s", async (stateChange) => {
     vi.stubEnv("OPENCLAW_STATE_DIR", state.tmpDir());
     const fixture = await replacementFixture();
     setActivePluginRegistry(createTestRegistry([...fixture.current.channels]));
+    if (stateChange === "new-channel") {
+      fixture.old.channels = fixture.old.channels.slice(0, 1);
+    }
+    if (stateChange === "replaced-channel") {
+      fixture.current.channels = fixture.current.channels.map((entry) => ({
+        ...entry,
+        plugin: { ...entry.plugin },
+      }));
+    }
+    if (stateChange === "no-sender-preparation") {
+      delete fixture.request.prepareRuntimeHandoff;
+    }
     if (stateChange === "closed") {
       fixture.publication.current = undefined;
     }

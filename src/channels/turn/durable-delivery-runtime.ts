@@ -11,12 +11,16 @@ import { getPluginRuntimeLoadContext } from "../../plugins/runtime/load-context.
 
 /** Final delivery is a new operation of the admitting Gateway, not of the completed model turn. */
 export function withDurableDeliveryRuntime<T>(
-  input: { cfg: OpenClawConfig; channel: string },
+  input: {
+    cfg: OpenClawConfig;
+    channel: string;
+    prepareRuntimeHandoff?: (cfg: OpenClawConfig) => OpenClawConfig;
+  },
   deliver: (cfg: OpenClawConfig, assertCurrent?: () => void) => T,
 ): T {
   const registry = getPluginRuntimeGatewayRequestScope()?.pluginRegistry;
   const owner = registry && getPluginRegistryGatewayOwner(registry);
-  if (!owner) {
+  if (!registry || !owner) {
     return deliver(input.cfg);
   }
   const current = owner.current();
@@ -39,22 +43,35 @@ export function withDurableDeliveryRuntime<T>(
   }
   const cfg = getPluginRuntimeLoadContext(current)?.rawConfig;
   const channel = current.channels.find((entry) => entry.plugin.id === input.channel);
-  // An unrelated reload may replace every registration. Account/credential changes
-  // require a fresh turn, rather than transferring an old reply to a new identity.
+  const prepareRuntimeHandoff = input.prepareRuntimeHandoff;
+  // Compare registration identity without touching retired plugins' guarded getters.
+  const retainedChannel =
+    channel &&
+    registry.channels.some(
+      (entry) => entry.pluginId === channel.pluginId && entry.plugin === channel.plugin,
+    );
   if (
     !cfg ||
     !isDeepStrictEqual(cfg.channels?.[input.channel], input.cfg.channels?.[input.channel]) ||
     !isDeepStrictEqual(cfg.channels?.defaults, input.cfg.channels?.defaults) ||
     !channel ||
+    !retainedChannel ||
+    !prepareRuntimeHandoff ||
     !isDeepStrictEqual(
       cfg.plugins?.entries?.[channel.pluginId],
       input.cfg.plugins?.entries?.[channel.pluginId],
     )
   ) {
-    return reject("The reply channel changed during this turn; delivery was not started.");
+    return reject(
+      "The reply channel changed or cannot preserve its sender; delivery was not started.",
+    );
   }
   // Drop both inherited generation selectors, but retain the exact authenticated caller.
   return runOutsidePluginRuntimeGenerationScope(() =>
-    withPluginRuntimeRegistryScope(current, () => deliver(cfg, assertCurrent)),
+    withPluginRuntimeRegistryScope(current, () => {
+      const preparedCfg = prepareRuntimeHandoff(cfg);
+      assertCurrent();
+      return deliver(preparedCfg, assertCurrent);
+    }),
   );
 }

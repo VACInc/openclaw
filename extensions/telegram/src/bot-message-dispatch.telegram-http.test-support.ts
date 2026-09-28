@@ -31,7 +31,7 @@ import {
   resetTelegramReplyFenceForTest,
 } from "./runtime.test-support.js";
 
-type RecordedBotApiCall = { method: string; fields: Record<string, unknown> };
+type RecordedBotApiCall = { method: string; fields: Record<string, unknown>; endpoint: string };
 type ReplyResolver = NonNullable<Parameters<typeof dispatchInboundMessage>[0]["replyResolver"]>;
 export type ReplyResolverOptions = Parameters<ReplyResolver>[1];
 
@@ -95,7 +95,7 @@ export function createTelegramDispatchHttpFixture() {
           }
         }
         const method = request.url?.split("/").at(-1) ?? "";
-        const call = { method, fields };
+        const call = { method, fields, endpoint: request.url ?? "" };
         calls.push(call);
         response.once("finish", () => {
           for (const waiter of botApiCallWaiters) {
@@ -111,10 +111,7 @@ export function createTelegramDispatchHttpFixture() {
         response.setHeader("content-type", "application/json");
         // Idle keep-alive expiry must not race later fixture requests under load.
         response.setHeader("connection", "close");
-        const rejection = await Promise.race([
-          Promise.resolve(respondToCall?.({ method, fields })),
-          stopped,
-        ]);
+        const rejection = await Promise.race([Promise.resolve(respondToCall?.(call)), stopped]);
         if (rejection) {
           if (rejection === "no-message-id") {
             response.end(JSON.stringify({ ok: true, result: true }));
@@ -142,7 +139,7 @@ export function createTelegramDispatchHttpFixture() {
           );
           return;
         }
-        acceptedCalls.push({ method, fields });
+        acceptedCalls.push(call);
         const chatId = Number(fields.chat_id ?? CHAT_ID);
         const chat =
           chatId < 0
@@ -419,6 +416,7 @@ export function createTelegramDispatchHttpFixture() {
       telegramDeps?: TelegramBotDeps;
       telegramCfg?: Parameters<typeof dispatchTelegramMessage>[0]["telegramCfg"];
       cfg?: OpenClawConfig;
+      onDispatch?: (cfg: OpenClawConfig) => void;
       context?: TelegramMessageContext;
       textLimit?: number;
       allowErrors?: boolean;
@@ -480,6 +478,7 @@ export function createTelegramDispatchHttpFixture() {
             : telegramCfg,
         },
       };
+      scenario?.onDispatch?.(cfg);
       const errors: string[] = [];
       const context = scenario?.context ?? createContext();
       context.sendTyping = () => {
