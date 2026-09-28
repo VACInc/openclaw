@@ -22,6 +22,7 @@ import {
   hasCompleteStartupCorpusCoverage,
   isExclusiveCompactShardName,
   packNodeTestGroups,
+  resolveCanonicalNodeTestConfig,
   resolveStartupCorpusTestFiles,
 } from "../../scripts/lib/ci-node-test-plan.mts";
 import {
@@ -5037,6 +5038,7 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
 
   it("keeps precise tooling selection through hosted overflow refusal", () => {
     const tooling = defaultShards.filter((shard) => /^core-tooling-\d+$/u.test(shard.shardName));
+    // Full-suite rows include release proofs; precise PR plans always exclude them.
     const selected = tooling
       .flatMap((shard) => shard.includePatterns ?? [])
       .filter((file) => !isCiProofTestFile(file))
@@ -7224,6 +7226,29 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       defaultShards,
     );
   });
+
+  it.each(["blacksmith", "github", "hybrid"])(
+    "retains the exact selected plugin owner without the full %s plugin sweep",
+    (runnerBackend) => {
+      const target = "src/plugins/tools.optional.test.ts";
+      const config = "test/vitest/vitest.plugins.config.ts";
+      expect(resolveCanonicalNodeTestConfig(target, config)).toBe(config);
+      const onFallback = vi.fn();
+      const plan = createSelectedNodeTestShardBundles([target], { runnerBackend, onFallback });
+      expect(onFallback).not.toHaveBeenCalled();
+      expect(plan).not.toBeNull();
+      const groups = plan!.flatMap((job) => job.groups);
+      expect(groups).toHaveLength(1);
+      expect(groups[0]!.configs).toEqual([config]);
+      expect(groups[0]!.includePatterns).toEqual([target]);
+      expect(groups[0]!.requiresDist).toBe(false);
+      expect(
+        createNodeTestShards({ includeReleaseOnlyPluginShards: false }).some((shard) =>
+          shard.configs.includes(config),
+        ),
+      ).toBe(false);
+    },
+  );
 
   it("does not widen plugin coverage for deleted tests, sources, docs, or directories", () => {
     const deletedTest = "src/plugins/deleted-ci-routing.test.ts";
