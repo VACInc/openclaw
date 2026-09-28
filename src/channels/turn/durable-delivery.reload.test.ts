@@ -78,7 +78,7 @@ async function replacementFixture(options?: { newChannel?: boolean }) {
   await retired.dispose();
   const request: DurableInboundReplyDeliveryParams = {
     cfg,
-    prepareRuntimeHandoff: (cfg) => cfg,
+    prepareRuntimeHandoff: (currentConfig) => currentConfig,
     channel: "telegram",
     accountId: "default",
     agentId: "main",
