@@ -27,6 +27,7 @@ import {
   createChannelDeliveryResultFromReceipt,
   createChannelPartialDeliveryError,
 } from "./delivery-result.js";
+import { withDurableDeliveryRuntime } from "./durable-delivery-runtime.js";
 import type { ChannelDeliveryInfo, ChannelDeliveryResult } from "./types.js";
 
 /** Options controlling durable final delivery for inbound channel replies. */
@@ -189,6 +190,20 @@ async function deliverInboundReplyWithMessageSendContext(
     return { status: "not_applicable", reason: "non_final" };
   }
 
+  try {
+    return await withDurableDeliveryRuntime(input, (cfg, assertCurrent) =>
+      deliverAdmittedInboundReply({ ...input, cfg }, sendBatch, assertCurrent),
+    );
+  } catch (error) {
+    return { status: "failed", error };
+  }
+}
+
+async function deliverAdmittedInboundReply(
+  input: DurableInboundReplyDeliveryParams,
+  sendBatch: typeof sendDurableMessageBatchCore,
+  assertCurrent?: () => void,
+): Promise<DurableInboundReplyDeliveryResult> {
   const group = getGroupThreadDispatchContext();
   const params = group
     ? {
@@ -252,7 +267,9 @@ async function deliverInboundReplyWithMessageSendContext(
     requesterSenderUsername: params.ctxPayload.SenderUsername,
     requesterSenderE164: params.ctxPayload.SenderE164,
   });
+  assertCurrent?.();
   const send = await sendBatch({
+    assertDirectAdapterHandoff: assertCurrent,
     cfg: params.cfg,
     channel,
     to,
