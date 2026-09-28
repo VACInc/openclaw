@@ -119,14 +119,24 @@ const initializeScript = new Script(
       const finish = globalThis.__openclawNodeFinish;
       delete globalThis.__openclawNodeFinish;
       const stringify = JSON.stringify;
-      Object.defineProperty(globalThis, "__openclawNodeObserveResult", { value: (result) => {
-        result.then(value => finish(true, value), error => finish(false, stringify({
+      const string = String;
+      const encodeError = (error) => {
+        const stack = error?.stack;
+        // Provenance records contain primitives and never inherit guest toJSON hooks.
+        return stringify({
+          __proto__: null,
           bridgeError: __openclawIsBridgeError(error),
-          name: String(error?.name ?? "Error"),
-          message: String(error?.message ?? error),
-          stack: typeof error?.stack === "string" ? error.stack : "",
-        })));
-      }});
+          name: string(error?.name ?? "Error"),
+          message: string(error?.message ?? error),
+          stack: typeof stack === "string" ? stack : "",
+        });
+      };
+      Object.defineProperties(globalThis, {
+        __openclawNodeEncodeError: { value: encodeError },
+        __openclawNodeObserveResult: { value: (result) => {
+          result.then(value => finish(true, value), error => finish(false, encodeError(error)));
+        }},
+      });
     })();
   `,
   { filename: "openclaw-code-mode:controller.js" },
@@ -153,7 +163,7 @@ const rejectionScript = new Script(
   `(() => {
     const error = __openclawNodeRejection;
     delete globalThis.__openclawNodeRejection;
-    return JSON.stringify({bridgeError: __openclawIsBridgeError(error), name: String(error?.name ?? "Error"), message: String(error?.message ?? error), stack: typeof error?.stack === "string" ? error.stack : ""});
+    return __openclawNodeEncodeError(error);
   })()`,
   { filename: "openclaw-code-mode:controller.js" },
 );
