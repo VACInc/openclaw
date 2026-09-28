@@ -57,6 +57,13 @@ describe.each(["node", "quickjs"] as const)("Code Mode %s failure origin", (exec
       parked: false,
     },
     {
+      name: "original tool rejection with a throwing stack getter",
+      code: 'try { await phase_fixture({}); } catch (error) { Object.defineProperty(error, "stack", { get() { throw new Error("stack unavailable"); } }); throw error; }',
+      reject: true,
+      phase: "bridge",
+      parked: false,
+    },
+    {
       name: "unawaited tool rejection",
       code: "void phase_fixture({}); return true;",
       reject: true,
@@ -101,6 +108,13 @@ describe.each(["node", "quickjs"] as const)("Code Mode %s failure origin", (exec
     {
       name: "original tool rejection retained across wait",
       code: "let saved; try { await phase_fixture({}); } catch (error) { saved = error; } await yield_control(); throw saved;",
+      reject: true,
+      phase: "bridge",
+      parked: true,
+    },
+    {
+      name: "original tool rejection with a throwing stack getter after wait",
+      code: 'let saved; try { await phase_fixture({}); } catch (error) { Object.defineProperty(error, "stack", { get() { throw new Error("stack unavailable"); } }); saved = error; } await yield_control(); throw saved;',
       reject: true,
       phase: "bridge",
       parked: true,

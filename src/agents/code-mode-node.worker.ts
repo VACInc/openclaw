@@ -121,13 +121,18 @@ const initializeScript = new Script(
       const stringify = JSON.stringify;
       const string = String;
       const encodeError = (error) => {
-        const stack = error?.stack;
+        const bridgeError = __openclawIsBridgeError(error);
+        const diagnostic = (read, fallback) => {
+          try { return read(); } catch { return fallback; }
+        };
+        // Guest error properties may throw; recorded bridge identity must still reach finish.
+        const stack = diagnostic(() => error?.stack, "");
         // Provenance records contain primitives and never inherit guest toJSON hooks.
         return stringify({
           __proto__: null,
-          bridgeError: __openclawIsBridgeError(error),
-          name: string(error?.name ?? "Error"),
-          message: string(error?.message ?? error),
+          bridgeError,
+          name: diagnostic(() => string(error?.name ?? "Error"), "Error"),
+          message: diagnostic(() => string(error?.message ?? error), "Error"),
           stack: typeof stack === "string" ? stack : "",
         });
       };
