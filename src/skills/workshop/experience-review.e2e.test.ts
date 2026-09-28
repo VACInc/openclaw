@@ -71,6 +71,7 @@ type Scenario = "proposed" | "nothing" | "interrupted" | "rejected" | "failed";
 beforeEach(async () => {
   await bindSessionMcpRuntimeTestScheduler();
   state = await createOpenClawTestState({ layout: "home", prefix: "workshop-owner-contract-" });
+  await bindSessionMcpRuntimeTestScheduler();
 });
 afterEach(async () => {
   await state.cleanup();
