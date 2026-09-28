@@ -1,5 +1,8 @@
 // Gateway-scoped tool resolution for HTTP and loopback tool surfaces.
-import type { AdmittedRunOperatorAuthority } from "../agents/admitted-run-context.js";
+import type {
+  AdmittedRunOperatorAuthority,
+  OperationalRunInstanceRef,
+} from "../agents/admitted-run-context.js";
 import { resolveAgentWorkspaceDir, resolveSessionAgentIds } from "../agents/agent-scope.js";
 import { applyToolAvailabilityDescriptions } from "../agents/agent-tools.deferred-followup.js";
 import { createOpenClawCodingTools } from "../agents/agent-tools.js";
@@ -90,6 +93,8 @@ export function resolveGatewayScopedTools(
     senderIsOwner?: boolean;
     /** Host-issued source for limited session controls; execution rechecks its own caller. */
     sessionControlAuthority?: AdmittedRunOperatorAuthority;
+    /** Admitted run behind a loopback grant; mediated exec needs it for secret egress grants. */
+    operationalRunInstance?: OperationalRunInstanceRef;
     conversationReadOrigin?: ConversationReadInvocationOrigin;
     allowGatewaySubagentBinding?: boolean;
     allowMediaInvokeCommands?: boolean;
@@ -472,6 +477,7 @@ export function resolveGatewayScopedTools(
           runSessionKey: params.sessionKey,
           sessionId: params.sessionId,
           runId: params.runId,
+          operationalRunInstance: params.operationalRunInstance,
           workspaceDir,
           cwd: params.cwd?.trim() || workspaceDir,
           ...params.rootedExecution,

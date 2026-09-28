@@ -1,7 +1,10 @@
 // MCP loopback runtime scope cache.
 // Resolves Gateway-visible tools for MCP clients with short-lived schema caching.
 import { stableStringify } from "@openclaw/normalization-core/stable-stringify";
-import type { AdmittedRunOperatorAuthority } from "../agents/admitted-run-context.js";
+import type {
+  AdmittedRunOperatorAuthority,
+  OperationalRunInstanceRef,
+} from "../agents/admitted-run-context.js";
 import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import {
   loadPairedComputerUseAvailabilityForSurface,
@@ -54,6 +57,7 @@ type McpLoopbackScopeParams = {
   context: Omit<McpLoopbackRequestContext, "senderIsOwner"> & { senderIsOwner?: boolean };
   cfg: OpenClawConfig;
   sessionControlAuthority?: AdmittedRunOperatorAuthority;
+  operationalRunInstance?: OperationalRunInstanceRef;
   authProfileStore?: AuthProfileStore;
   authProfileStoreAgentDir?: string;
   skillLibraryAuthoring?: SkillLibraryAuthoringCapability;
@@ -219,6 +223,7 @@ function resolveMcpLoopbackTools(
     conversationReadOrigin: "delegated",
     surface: "loopback",
     sessionControlAuthority: params.sessionControlAuthority,
+    operationalRunInstance: params.operationalRunInstance,
     isGrantCurrent: params.isGrantCurrent,
     excludeToolNames,
     mediatedToolNames: mediatedNativeTools,
@@ -317,6 +322,7 @@ function buildMcpLoopbackToolCacheKey(params: McpLoopbackScopeParams): string {
         context.delegationCapability === "report_only" ? "report_only" : undefined,
     },
     sessionControlsAllowed: hasSessionControlAuthority(params.sessionControlAuthority),
+    operationalRunInstanceId: params.operationalRunInstance?.instanceId,
     authProfileStoreAgentDir: params.authProfileStoreAgentDir,
     yieldContextCacheKey: params.yieldContextCacheKey,
     nodeExecAvailability: params.nodeExecAvailability?.cacheKey,

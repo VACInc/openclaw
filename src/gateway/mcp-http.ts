@@ -276,6 +276,7 @@ async function startMcpLoopbackServer(
               sessionControlAuthority: readAdmittedRunOperatorAuthority(
                 boundClientGrant?.admittedRunContext,
               ),
+              operationalRunInstance: boundClientGrant?.admittedRunContext?.operationalRunInstance,
               rootedExecution: boundClientGrant?.rootedExecution,
               messageActionTurnCapability: boundClientGrant?.messageActionTurnCapability,
               cfg,
