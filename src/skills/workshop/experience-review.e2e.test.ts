@@ -9,6 +9,7 @@ import {
   writeOpenAiResponsesText,
 } from "../../../test/helpers/openai-responses-sse.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { bindSessionMcpRuntimeTestScheduler } from "../../agents/agent-bundle-mcp-manager.test-support.js";
 import { resolveAgentRunSessionTarget } from "../../agents/run-session-target.js";
 import { loadAgentRuntimePluginRegistryHandle } from "../../agents/runtime-plugins.js";
 import { sanitizeToolUseResultPairingForModel } from "../../agents/session-transcript-repair.js";
@@ -68,6 +69,7 @@ type Request = {
 type Scenario = "proposed" | "nothing" | "interrupted" | "rejected" | "failed";
 
 beforeEach(async () => {
+  await bindSessionMcpRuntimeTestScheduler();
   state = await createOpenClawTestState({ layout: "home", prefix: "workshop-owner-contract-" });
 });
 afterEach(async () => {
