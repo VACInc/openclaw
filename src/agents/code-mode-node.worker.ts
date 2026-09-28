@@ -316,6 +316,7 @@ function formatGuestFailure(
     bridgeError: boolean;
   };
   if (
+    !value.bridgeError &&
     value.name === "ReferenceError" &&
     /^(?:require|module|process) is not defined$/u.test(value.message)
   ) {
