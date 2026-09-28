@@ -47,7 +47,7 @@ afterEach(resetGatewayState);
 
 describe("Gateway agent skill refresh", () => {
   it(
-    "refreshes managed-worktree skills once per edit and closes watchers with the Gateway",
+    "refreshes canonical skills for managed-worktree sessions and closes watchers with the Gateway",
     { timeout: 90_000 },
     async () => {
       const env = captureEnv([...ENV_KEYS]);
@@ -188,20 +188,23 @@ describe("Gateway agent skill refresh", () => {
         });
         const firstLifecycleCount = lifecycleEvents.length;
         const firstEventCount = countSkillsChanged(gatewayEvents);
-        await writeSkill(worktreeSeedSkillFile, "seed-proof", "worktree-root-description");
+        await writeSkill(seedSkillFile, "seed-proof", "canonical-seed-description");
         await waitForLifecycleChange(lifecycleEvents, firstLifecycleCount + 1);
         await runAgentTurn(gateway.client, sessionKey, "second");
         const second = loadSessionEntry({ agentId: "main", sessionKey, storePath });
         expect(second?.skillsSnapshot?.version).toBeGreaterThan(
           first?.skillsSnapshot?.version ?? 0,
         );
-        expect(second?.skillsSnapshot?.prompt).toContain("worktree-root-description");
-        expect(requests.at(-1)).toContain("worktree-root-description");
+        expect(second?.skillsSnapshot?.prompt).toContain("canonical-seed-description");
+        expect(requests.at(-1)).toContain("canonical-seed-description");
+        expect(await fs.readFile(worktreeSeedSkillFile, "utf8")).toContain(
+          "seed-skill-description",
+        );
         await waitForSkillsChanged(gatewayEvents, firstEventCount + 1);
 
         await runAgentTurn(gateway.client, sessionKey, "third without edit");
         const repeatedTurnEventCount = lifecycleEvents.length;
-        await writeSkill(worktreeSeedSkillFile, "seed-proof", "worktree-root-description-v2");
+        await writeSkill(seedSkillFile, "seed-proof", "canonical-seed-description-v2");
         await waitForLifecycleChange(lifecycleEvents, repeatedTurnEventCount + 1);
         await expectNoAdditionalLifecycleChanges(lifecycleEvents, repeatedTurnEventCount + 1);
         await runAgentTurn(gateway.client, sessionKey, "fourth");
@@ -209,7 +212,7 @@ describe("Gateway agent skill refresh", () => {
         expect(fourth?.skillsSnapshot?.version).toBeGreaterThan(
           second?.skillsSnapshot?.version ?? 0,
         );
-        expect(fourth?.skillsSnapshot?.prompt).toContain("worktree-root-description-v2");
+        expect(fourth?.skillsSnapshot?.prompt).toContain("canonical-seed-description-v2");
 
         await fs.mkdir(path.dirname(canonicalSkillFile), { recursive: true });
         const canonicalEventCount = lifecycleEvents.length;
