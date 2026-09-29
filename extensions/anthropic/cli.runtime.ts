@@ -72,6 +72,7 @@ type ClaudeCliTurn = {
   sawTerminalResult: boolean;
   foregroundTaskIds: Set<string>;
   pendingBackgroundTaskIds: Set<string>;
+  notifiedBackgroundTaskIds: Set<string>;
   error?: Error;
 };
 type ClaudeCliSession = {
@@ -293,6 +294,28 @@ async function acceptMessage(session: ClaudeCliSession, message: Record<string, 
       turn.foregroundTaskIds.delete(taskId);
     }
   }
+  if (
+    message.type === "system" &&
+    message.subtype === "task_notification" &&
+    typeof message.task_id === "string" &&
+    turn.pendingBackgroundTaskIds.has(message.task_id)
+  ) {
+    turn.notifiedBackgroundTaskIds.add(message.task_id);
+  }
+  // Claude Code 2.1.281+ runs a later notification query without a replay
+  // receipt; its task-notification result consumes the notified tasks.
+  if (
+    message.type === "result" &&
+    isRecord(message.origin) &&
+    message.origin.kind === "task-notification" &&
+    message.origin.subkind === undefined
+  ) {
+    for (const taskId of turn.notifiedBackgroundTaskIds) {
+      turn.pendingBackgroundTaskIds.delete(taskId);
+      turn.foregroundTaskIds.delete(taskId);
+    }
+    turn.notifiedBackgroundTaskIds.clear();
+  }
   let completesTurn = false;
   if (message.type === "result") {
     // A batched notification can acknowledge input without running the model.
@@ -378,6 +401,7 @@ export async function* executeClaudeCli(
     sawTerminalResult: false,
     foregroundTaskIds: new Set(),
     pendingBackgroundTaskIds: new Set(),
+    notifiedBackgroundTaskIds: new Set(),
   };
   session.currentTurn = turn;
   const abort = () => session.handle.close("abort", context.abortSignal?.reason);
