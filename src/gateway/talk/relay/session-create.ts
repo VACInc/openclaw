@@ -462,10 +462,8 @@ export function createTalkRealtimeRelaySession(
       emit(transcriptEvent, { type: eventType, turnId, payload, final });
       if (params.controlSource === "transcript" && role === "user" && final && text.trim()) {
         const question = text.trim();
-        if (relay.harness.isLikelyAssistantEchoTranscript(question)) {
-          return;
-        }
-        if (runControl.handleSpoken(question)) {
+        const isEcho = relay.harness.isLikelyAssistantEchoTranscript(question);
+        if (isEcho || runControl.handleSpoken(question)) {
           return;
         }
         if (params.forceAgentConsultOnFinalTranscript === true) {
