@@ -117,7 +117,9 @@ function enqueueRestartSentinelWake(
           ...(entry.route.accountId ? { accountId: entry.route.accountId } : {}),
           ...(entry.route.threadId ? { threadId: entry.route.threadId } : {}),
         }
-      : entry.kind === "nativeChildFollowup" ? undefined : entry.deliveryContext;
+      : entry.kind === "nativeChildFollowup"
+        ? undefined
+        : entry.deliveryContext;
   const eventOptions = {
     sessionKey,
     // Recovered work keeps its ordinary turn budget when delivered by heartbeat.
