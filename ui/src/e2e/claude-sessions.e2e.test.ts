@@ -7,6 +7,7 @@ import { takeControlUiViewportScreenshot } from "../test-helpers/control-ui-e2e-
 import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import { expectHistoryBoundaryState } from "./chat-history-boundary.test-support.ts";
 import {
+  expectTranscriptLayoutCommitted,
   hostGroupedNativeCatalogs,
   resumableClaudeCatalog,
 } from "./claude-sessions.test-support.ts";
@@ -632,19 +633,7 @@ suite.define(() => {
       .poll(() => page.getByText("This session is on a paired device and is view-only.").count())
       .toBe(1);
     const expectCenteredLayout = async (screenshotName: string) => {
-      // The layout owner publishes the transcript width from ResizeObserver,
-      // after setViewportSize can resolve. Wait for that commit, not centering.
-      await expect
-        .poll(() =>
-          thread.evaluate((element) => {
-            const slot = element.parentElement;
-            return (
-              slot !== null &&
-              element.getBoundingClientRect().width === slot.getBoundingClientRect().width
-            );
-          }),
-        )
-        .toBe(true);
+      await expectTranscriptLayoutCommitted(thread);
       // Sample all centers in one browser turn so they describe the same layout.
       const [workbenchBox, threadBox, composerBox] = await catalogPane.evaluate((element) =>
         [".chat-workbench", ".chat-thread-inner", ".agent-chat__composer-shell"].map((selector) => {
