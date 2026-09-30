@@ -64,7 +64,7 @@ export async function prepareSqliteReadOnlyLocation(
 }
 
 export function startSqliteReadOnlyLocationAsync(
-  pathname: string,
+  inputPathname: string,
   options: {
     preserveSourceArtifacts?: boolean;
     signal?: AbortSignal;
@@ -73,6 +73,7 @@ export function startSqliteReadOnlyLocationAsync(
 ): RetainedSqliteSnapshotPreparation {
   const signal = resolveSqliteInspectionSignal(options.signal);
   signal?.throwIfAborted();
+  const pathname = path.resolve(inputPathname);
   const preserveSourceArtifacts = options.preserveSourceArtifacts === true;
   const expectedSourceIdentity =
     options.expectedSourceIdentity === undefined
@@ -82,18 +83,13 @@ export function startSqliteReadOnlyLocationAsync(
     throw new Error("SQLite source identity requires artifact-preserving preparation");
   }
   const requireCleanup = options.signal !== undefined;
-  const selectedRoot = resolvePrivateSqliteSnapshotStagingRoot();
-  const { env, cwd } = captureSqliteReadOnlyWorkerLaunch(undefined, undefined, {
-    pathname,
-    stagingRoot: selectedRoot,
-  });
-  const root = path.resolve(cwd, selectedRoot);
-  const sourcePath = path.resolve(cwd, pathname);
+  const { env, cwd } = captureSqliteReadOnlyWorkerLaunch();
+  const root = resolvePrivateSqliteSnapshotStagingRoot();
   const deadlineOwnedByCaller = isSqliteInspectionDeadlineOwnedByCaller();
   const staging = captureSqliteSnapshotStagingOwner();
   const runInContext = AsyncLocalStorage.snapshot();
   return startSingleFlightSqliteSnapshot(
-    sourcePath,
+    pathname,
     `${preserveSourceArtifacts ? "worker-sync" : "worker-async"}:${requireCleanup ? "strict" : "best-effort"}:async-token${expectedSourceIdentity ? `:${JSON.stringify(expectedSourceIdentity)}` : ""}`,
     (flightSignal, recordCleanupFailure) =>
       runInContext(() => {
@@ -175,7 +171,7 @@ export function startSqliteReadOnlyLocationAsync(
             {
               type: "prepare",
               root,
-              pathname: sourcePath,
+              pathname,
               allowLegacyWorker: false,
               preserveSourceArtifacts,
               expectedSourceIdentity,

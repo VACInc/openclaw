@@ -1,20 +1,19 @@
 import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import path from "node:path";
+import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
 import { formatByteSize } from "@openclaw/normalization-core";
 import { resolveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getSpawnBroker } from "../process/spawn-broker/context.js";
 import { hasErrnoCode } from "./errno.js";
-import { expandHomePrefix } from "./home-dir.js";
 import { resolveNodeCompileCacheEnv } from "./node-compile-cache-env.js";
-import { parseNodeOptionsEnvVar } from "./node-options.js";
 import {
   runtimeProcessEntrypoints,
   SQLITE_READONLY_CHILD_ARG,
 } from "./runtime-process-entrypoints.js";
 import { resolveRuntimeWorkerArgv, resolveRuntimeWorkerUrl } from "./runtime-worker-url.js";
+import { tryProcessCwd } from "./safe-cwd.js";
 import { retainSnapshotWork } from "./sqlite-readonly-location-cleanup.js";
 import {
   readOnlyWorkerScope,
@@ -35,7 +34,6 @@ import {
   isSameSqliteReadOnlyWorkerLaunch,
   type SqliteReadOnlyWorkerLaunch,
 } from "./sqlite-readonly-worker-session.js";
-import { NODE_OPTIONS_WITH_FILE_VALUE } from "./system-run-mutable-file-options.js";
 
 const SLOW_HARDWARE_HEADROOM = 10;
 const SQLITE_INSPECTION_TIMEOUT_MS = 30_000 * SLOW_HARDWARE_HEADROOM;
@@ -200,11 +198,7 @@ export function resolveSqliteInspectionSignal(signal?: AbortSignal): AbortSignal
     : signal;
 }
 
-function sqliteReadOnlyWorkerArgv(
-  pathname: string,
-  options: SqliteReadOnlyWorkerOptions,
-  cwd: string,
-) {
+function sqliteReadOnlyWorkerArgv(pathname: string, options: SqliteReadOnlyWorkerOptions) {
   const workerUrl = resolveRuntimeWorkerUrl(
     options.mode === "content-version"
       ? runtimeProcessEntrypoints.sqliteSourceRevision
@@ -213,111 +207,21 @@ function sqliteReadOnlyWorkerArgv(
   return [
     ...resolveRuntimeWorkerArgv(workerUrl),
     SQLITE_READONLY_CHILD_ARG,
-    ...sqliteReadOnlyWorkerRequestArgs(pathname, options, cwd),
+    ...sqliteReadOnlyWorkerRequestArgs(pathname, options),
   ];
-}
-
-function assertSqliteLaunchEnvironmentIndependentOfCwd(env: NodeJS.ProcessEnv, cause: unknown) {
-  const refuse = (name: string): never => {
-    throw new Error(
-      "SQLite inspection cannot resolve " +
-        name +
-        " while the current working directory is unavailable",
-      { cause },
-    );
-  };
-  // These selectors and Node's cache/preloads are interpreted by child startup.
-  // Do not silently select a different profile or resolve a preload at the anchor.
-  for (const name of [
-    "OPENCLAW_STATE_DIR",
-    "OPENCLAW_CONFIG_PATH",
-    "OPENCLAW_WORKSPACE_DIR",
-    "OPENCLAW_HOME",
-    "HOME",
-    "USERPROFILE",
-  ]) {
-    const value = env[name]?.trim();
-    if (value) {
-      try {
-        if (
-          !path.isAbsolute(name.startsWith("OPENCLAW_") ? expandHomePrefix(value, { env }) : value)
-        ) {
-          refuse(name);
-        }
-      } catch {
-        refuse(name);
-      }
-    }
-  }
-  if (env.NODE_COMPILE_CACHE && !path.isAbsolute(env.NODE_COMPILE_CACHE)) {
-    refuse("NODE_COMPILE_CACHE");
-  }
-  if (env.NODE_PATH?.split(path.delimiter).some((value) => value && !path.isAbsolute(value))) {
-    refuse("NODE_PATH");
-  }
-  const tokens = (parseNodeOptionsEnvVar(env.NODE_OPTIONS) ?? refuse("NODE_OPTIONS")).values();
-  for (const token of tokens) {
-    const equals = token.indexOf("=");
-    const name = equals < 0 ? token : token.slice(0, equals);
-    const value = NODE_OPTIONS_WITH_FILE_VALUE.has(name)
-      ? equals < 0
-        ? tokens.next().value
-        : token.slice(equals + 1)
-      : token.startsWith("-r") && !token.startsWith("--")
-        ? token.slice(2)
-        : undefined;
-    if (
-      value !== undefined &&
-      !path.isAbsolute(value) &&
-      !/^(?:file:\/|(?:node|data):)/.test(value)
-    ) {
-      refuse("NODE_OPTIONS " + name);
-    }
-  }
-}
-
-function resolveSqliteReadOnlyWorkerTransport(
-  source?: SqliteAuthProfileReadOptions["source"],
-): SqliteReadOnlyWorkerLaunch["transport"] {
-  // Snapshots require native process close before byte cleanup; only canonical Auth uses a broker.
-  const broker = source === "canonical" ? getSpawnBroker() : undefined;
-  return broker ? { kind: "broker", owner: broker } : { kind: "native" };
 }
 
 /** Capture launch facts before awaiting another session's retirement. */
 export function captureSqliteReadOnlyWorkerLaunch(
   env?: NodeJS.ProcessEnv,
   source?: SqliteAuthProfileReadOptions["source"],
-  operation?: { pathname?: string; stagingRoot?: string },
 ): SqliteReadOnlyWorkerLaunch {
-  const transport = resolveSqliteReadOnlyWorkerTransport(source);
-  const capturedEnv = { ...resolveNodeCompileCacheEnv(env) };
-  let cwd: string;
-  try {
-    cwd = process.cwd();
-  } catch (cause) {
-    // A removed installation directory must not strand inspections of already
-    // selected absolute paths, or reinterpret unresolved inputs under a new cwd.
-    const anchor =
-      operation?.stagingRoot ??
-      (operation?.pathname ? path.dirname(operation.pathname) : undefined);
-    if (
-      !anchor ||
-      !path.isAbsolute(anchor) ||
-      (operation?.pathname !== undefined && !path.isAbsolute(operation.pathname))
-    ) {
-      throw new Error(
-        "SQLite inspection requires absolute paths when the current working directory is unavailable",
-        { cause },
-      );
-    }
-    assertSqliteLaunchEnvironmentIndependentOfCwd(capturedEnv, cause);
-    cwd = anchor;
-  }
+  // Snapshots require native process close before byte cleanup; only canonical Auth uses a broker.
+  const broker = source === "canonical" ? getSpawnBroker() : undefined;
   return {
-    env: capturedEnv,
-    cwd,
-    transport,
+    env: { ...resolveNodeCompileCacheEnv(env) },
+    cwd: tryProcessCwd() ?? tmpdir(),
+    transport: broker ? { kind: "broker", owner: broker } : { kind: "native" },
   };
 }
 
@@ -328,13 +232,11 @@ export function createScopedSqliteReadOnlyWorker(
   },
 ): ReturnType<typeof createSqliteReadOnlyWorkerSession> {
   const workerUrl = resolveRuntimeWorkerUrl(runtimeProcessEntrypoints.sqliteReadOnly);
-  const cwd = launch.cwd;
   return createSqliteReadOnlyWorkerSession({
     ...launch,
     argv: [...resolveRuntimeWorkerArgv(workerUrl), SQLITE_READONLY_CHILD_ARG, "session"],
-    requestArgs: (pathname, options) => sqliteReadOnlyWorkerRequestArgs(pathname, options, cwd),
-    readBudget: (pathname) =>
-      readSqliteInspectionBudget("read-only snapshot", path.resolve(cwd, pathname)),
+    requestArgs: sqliteReadOnlyWorkerRequestArgs,
+    readBudget: (pathname) => readSqliteInspectionBudget("read-only snapshot", pathname),
     // Detached staging ownership retains its own budget inside caller-owned inspection scopes.
     deadlineOwnedByCaller:
       launch.retainLifetime === false ? () => false : isSqliteInspectionDeadlineOwnedByCaller,
@@ -392,9 +294,7 @@ export function runSqliteReadOnlyWorker(
     scopedOptions.mode === "auth-profile-rows"
       ? {
           options: scopedOptions,
-          launch: captureSqliteReadOnlyWorkerLaunch(scopedOptions.env, scopedOptions.source, {
-            pathname,
-          }),
+          launch: captureSqliteReadOnlyWorkerLaunch(scopedOptions.env, scopedOptions.source),
         }
       : undefined;
   const operation = authRequest
@@ -406,17 +306,13 @@ export function runSqliteReadOnlyWorker(
           return runSqliteReadOnlyWorkerOnce(pathname, scopedOptions);
         }
         try {
-          const launch = captureSqliteReadOnlyWorkerLaunch(undefined, undefined, {
-            pathname,
-            stagingRoot: scopedOptions.stagingRoot,
-          });
-          const sourcePath = path.resolve(launch.cwd, pathname);
+          const launch = captureSqliteReadOnlyWorkerLaunch();
           if (!scope.worker?.compatible(launch)) {
             await scope.worker?.close();
             scopedOptions.signal.throwIfAborted();
             scope.worker = createScopedSqliteReadOnlyWorker(launch);
           }
-          return await scope.worker.run(sourcePath, scopedOptions);
+          return await scope.worker.run(pathname, scopedOptions);
         } finally {
           scope.busy = false;
         }
@@ -437,12 +333,11 @@ export function runSqliteReadOnlyWorker(
 }
 
 async function runSqliteAuthProfileWorker(
-  requestedPath: string,
+  pathname: string,
   options: SqliteAuthProfileReadOptions,
   launch: SqliteReadOnlyWorkerLaunch,
   scope?: SqliteReadOnlyWorkerScope,
 ): Promise<SqliteReadOnlyWorkerValue> {
-  const pathname = path.resolve(launch.cwd, requestedPath);
   options.signal?.throwIfAborted();
   if (
     scope?.authWorker &&
@@ -504,27 +399,19 @@ async function runSqliteAuthProfileWorker(
 }
 
 export function runSqliteReadOnlyWorkerOnce(
-  requestedPath: string,
+  pathname: string,
   options: SqliteReadOnlyWorkerOptions,
   launch?: Pick<SqliteReadOnlyWorkerLaunch, "env" | "cwd"> & {
     deadlineOwnedByCaller?: boolean;
-    transport?: SqliteReadOnlyWorkerLaunch["transport"];
   },
 ): Promise<SqliteReadOnlyWorkerValue> {
-  const captured =
-    launch ??
-    captureSqliteReadOnlyWorkerLaunch(
-      options.mode === "auth-profile-rows" ? options.env : undefined,
-      options.mode === "auth-profile-rows" ? options.source : undefined,
-      { pathname: requestedPath, stagingRoot: options.stagingRoot },
-    );
-  const pathname = path.resolve(captured.cwd, requestedPath);
   if (options.mode === "auth-profile-rows") {
     // CLI and bounded readers without a lifecycle owner must join their child before returning.
-    return runSqliteAuthProfileWorker(pathname, options, {
-      ...captured,
-      transport: captured.transport ?? resolveSqliteReadOnlyWorkerTransport(options.source),
-    });
+    return runSqliteAuthProfileWorker(
+      pathname,
+      options,
+      captureSqliteReadOnlyWorkerLaunch(options.env, options.source),
+    );
   }
   return new Promise<SqliteReadOnlyWorkerValue>((resolve, reject) => {
     const { timeoutMs, size } = readSqliteInspectionBudget("read-only snapshot", pathname);
@@ -534,11 +421,11 @@ export function runSqliteReadOnlyWorkerOnce(
     const reclaim = options.mode === "reclaim";
     const child = execFile(
       process.execPath,
-      sqliteReadOnlyWorkerArgv(pathname, options, captured.cwd),
+      sqliteReadOnlyWorkerArgv(pathname, options),
       {
         encoding: "utf8",
-        env: captured.env,
-        cwd: captured.cwd,
+        env: launch?.env ?? resolveNodeCompileCacheEnv(),
+        cwd: launch?.cwd,
         maxBuffer: SQLITE_READONLY_WORKER_MAX_BUFFER,
         timeout:
           reclaim || (launch?.deadlineOwnedByCaller ?? isSqliteInspectionDeadlineOwnedByCaller())
@@ -616,24 +503,18 @@ export function runSqliteReadOnlyWorkerOnce(
 }
 
 export function runSqliteReadOnlyWorkerSync(
-  requestedPath: string,
+  pathname: string,
   stagingRoot: string | undefined,
   mode: "sync" | "content-version" = "sync",
 ): string {
-  const launch = captureSqliteReadOnlyWorkerLaunch(undefined, undefined, {
-    pathname: requestedPath,
-    stagingRoot,
-  });
-  const pathname = path.resolve(launch.cwd, requestedPath);
   const { timeoutMs, size } = readSqliteInspectionBudget("read-only snapshot", pathname);
   const started = log.isEnabled("trace") ? performance.now() : undefined;
   const result = spawnSync(
     process.execPath,
-    sqliteReadOnlyWorkerArgv(pathname, { mode, stagingRoot }, launch.cwd),
+    sqliteReadOnlyWorkerArgv(pathname, { mode, stagingRoot }),
     {
       encoding: "utf8",
-      env: launch.env,
-      cwd: launch.cwd,
+      env: resolveNodeCompileCacheEnv(),
       maxBuffer: SQLITE_READONLY_WORKER_MAX_BUFFER,
       timeout: timeoutMs,
       killSignal: "SIGKILL",

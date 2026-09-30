@@ -62,12 +62,9 @@ export type SqliteReadOnlyWorkerOptions =
 export function sqliteReadOnlyWorkerRequestArgs(
   pathname: string,
   options: SqliteReadOnlyWorkerOptions,
-  cwd?: string,
 ): string[] {
-  const resolvePath = (value: string) =>
-    cwd === undefined ? path.resolve(value) : path.resolve(cwd, value);
-  const stagingRoot = options.stagingRoot ? resolvePath(options.stagingRoot) : undefined;
-  const args = [options.mode, resolvePath(pathname)];
+  const args = [options.mode, path.resolve(pathname)];
+  const stagingRoot = options.stagingRoot && path.resolve(options.stagingRoot);
   const expected =
     options.mode === "auth-profile-rows" ? undefined : options.expectedSourceIdentity;
   if (expected !== undefined) {
