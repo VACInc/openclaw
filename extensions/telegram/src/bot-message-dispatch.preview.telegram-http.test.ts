@@ -88,6 +88,23 @@ describe("Telegram preview and presentation delivery through HTTP", () => {
         "Finished filtered.",
         "Opted-out final filtered.",
       ]);
+      await dispatchProgressTurn(
+        async (_options, channelOptions) => {
+          expect(channelOptions?.disableBlockStreaming).toBe(true);
+        },
+        {
+          mode,
+          toolProgress: false,
+          cfg: { agents: { defaults: { blockStreamingDefault: "off" } } },
+          finalReply: { text: "Global-off final fixture-secret." },
+        },
+      );
+      expect([...visibleMessages.values()]).toEqual([
+        "Checking filtered while work continues.",
+        "Finished filtered.",
+        "Opted-out final filtered.",
+        "Global-off final filtered.",
+      ]);
     },
   );
 

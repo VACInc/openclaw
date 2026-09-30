@@ -175,8 +175,10 @@ channel or account sets `*.streaming.block.enabled` explicitly. QQ Bot has no
 For Discord and Telegram, an explicitly configured non-`off` preview mode
 takes precedence over inherited `agents.defaults.blockStreamingDefault: "on"`.
 Set that channel's `streaming.block.enabled: true` when block replies should
-override its preview. If the preview is unavailable for a turn, inherited block
-delivery still applies.
+override its preview. If a reply-modifying hook prevents Telegram previews,
+completed blocks use normal hooked delivery unless block streaming is explicitly
+disabled globally or for Telegram. Other turns without a preview still inherit
+the block delivery default.
 
 ## Preview streaming modes
 

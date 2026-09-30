@@ -193,8 +193,8 @@ export function createDraftState(params: TurnConfig): TelegramDraftStateSlice {
       : typeof resolvedBlockStreamingEnabled === "boolean"
         ? !resolvedBlockStreamingEnabled
         : !params.allowProviderPreview && !params.context.ctxPayload.GroupThread
-          ? // Reply modifiers gate drafts; completed blocks still pass through them.
-            false
+          ? // Hooked blocks replace gated drafts, but preserve an explicit global opt-out.
+            params.cfg.agents?.defaults?.blockStreamingDefault === "off"
           : canStreamAnswerDraft
             ? true
             : undefined;
