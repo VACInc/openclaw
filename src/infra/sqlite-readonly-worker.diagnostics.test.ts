@@ -7,6 +7,7 @@ import { requireNodeSqlite } from "./node-sqlite.js";
 import { runtimeProcessEntrypoints } from "./runtime-process-entrypoints.js";
 import { resolveRuntimeWorkerArgv, resolveRuntimeWorkerUrl } from "./runtime-worker-url.js";
 import { createScopedSqliteReadOnlyWorker } from "./sqlite-readonly-worker.js";
+import { sqliteSnapshotStagingEntrypoints } from "./sqlite-snapshot-staging-runtime.test-support.js";
 import { createSqliteSnapshotStagingDirectory } from "./sqlite-snapshot-staging.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -96,3 +97,70 @@ it("distinguishes actual worker startup from serialized directory creation failu
     await worker.close();
   }
 });
+
+it.runIf(process.platform !== "win32")(
+  "runs both native SQLite transports after the actual cwd is removed",
+  () => {
+    const root = tempDirs.make("openclaw-sqlite-removed-cwd-");
+    const removedCwd = path.join(root, "removed");
+    const cache = path.join(root, "cache");
+    fs.mkdirSync(removedCwd);
+    fs.mkdirSync(cache);
+    const sources = ["first", "second"].map((value) => {
+      const directory = path.join(root, value);
+      fs.mkdirSync(directory);
+      const source = path.join(directory, "state.sqlite");
+      const database = new (requireNodeSqlite().DatabaseSync)(source);
+      try {
+        database.exec("CREATE TABLE probe(value TEXT)");
+        database.prepare("INSERT INTO probe VALUES (?)").run(value);
+      } finally {
+        database.close();
+      }
+      return source;
+    });
+    const workerUrl = resolveRuntimeWorkerUrl(sqliteSnapshotStagingEntrypoints.nativeReader);
+    const moduleUrl = workerUrl.href;
+    const script = `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs';
+      import path from 'node:path';
+      import { DatabaseSync } from 'node:sqlite';
+      const { runSqliteReadOnlyWorkerOnce, runSqliteReadOnlyWorkerSync } = await import(${JSON.stringify(moduleUrl)});
+      process.chdir(${JSON.stringify(removedCwd)});
+      fs.rmdirSync(${JSON.stringify(removedCwd)});
+      assert.throws(() => process.cwd(), { code: 'ENOENT' });
+      const prepared = [];
+      try {
+        assert.throws(() => runSqliteReadOnlyWorkerOnce('relative.sqlite', { mode: 'sync' }), /requires absolute paths/);
+        assert.throws(() => runSqliteReadOnlyWorkerSync('relative.sqlite'), /requires absolute paths/);
+        const sources = ${JSON.stringify(sources)};
+        prepared.push(await runSqliteReadOnlyWorkerOnce(sources[0], { mode: 'sync', stagingRoot: ${JSON.stringify(cache)} }));
+        prepared.push(runSqliteReadOnlyWorkerSync(sources[1], ${JSON.stringify(cache)}));
+        const rows = prepared.map(location => {
+          const database = new DatabaseSync(location, { readOnly: true });
+          try { return database.prepare('SELECT value FROM probe').get().value; }
+          finally { database.close(); }
+        });
+        assert.deepEqual(rows, ['first', 'second']);
+        assert.match(runSqliteReadOnlyWorkerSync(sources[0], undefined, 'content-version'), /^[a-f0-9]{64}$/);
+      } finally {
+        for (const location of prepared) {
+          const directory = path.dirname(location);
+          assert.equal(path.dirname(directory), ${JSON.stringify(cache)});
+          fs.rmSync(directory, { recursive: true });
+          assert.equal(fs.existsSync(directory), false);
+        }
+      }
+      console.log('removed-cwd snapshots read and cleaned');
+    `;
+    const child = spawnSync(
+      process.execPath,
+      [...resolveRuntimeWorkerArgv(workerUrl).slice(0, -1), "--input-type=module", "-e", script],
+      { encoding: "utf8", timeout: 30_000, env: { ...process.env, XDG_CACHE_HOME: cache } },
+    );
+    expect(child.error, child.stderr).toBeUndefined();
+    expect(child.status, child.stderr).toBe(0);
+    expect(child.stdout).toContain("removed-cwd snapshots read and cleaned");
+  },
+);

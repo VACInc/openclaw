@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 // Select an owned snapshot or native reader while retaining snapshot cleanup.
 import fs, { type BigIntStats } from "node:fs";
+import path from "node:path";
 import { coerceErrorMessage } from "@openclaw/normalization-core/error-coercion";
 import { createRetainedOperation, type RetainedOperation } from "./retained-operation.js";
 import { prepareSqliteSnapshotFromLiveOwner } from "./sqlite-live-snapshot.js";
@@ -81,13 +82,18 @@ export function startSqliteReadOnlyLocationAsync(
     throw new Error("SQLite source identity requires artifact-preserving preparation");
   }
   const requireCleanup = options.signal !== undefined;
-  const { env, cwd } = captureSqliteReadOnlyWorkerLaunch();
-  const root = resolvePrivateSqliteSnapshotStagingRoot();
+  const selectedRoot = resolvePrivateSqliteSnapshotStagingRoot();
+  const { env, cwd } = captureSqliteReadOnlyWorkerLaunch(undefined, undefined, {
+    pathname,
+    stagingRoot: selectedRoot,
+  });
+  const root = path.resolve(cwd, selectedRoot);
+  const sourcePath = path.resolve(cwd, pathname);
   const deadlineOwnedByCaller = isSqliteInspectionDeadlineOwnedByCaller();
   const staging = captureSqliteSnapshotStagingOwner();
   const runInContext = AsyncLocalStorage.snapshot();
   return startSingleFlightSqliteSnapshot(
-    pathname,
+    sourcePath,
     `${preserveSourceArtifacts ? "worker-sync" : "worker-async"}:${requireCleanup ? "strict" : "best-effort"}:async-token${expectedSourceIdentity ? `:${JSON.stringify(expectedSourceIdentity)}` : ""}`,
     (flightSignal, recordCleanupFailure) =>
       runInContext(() => {
@@ -169,7 +175,7 @@ export function startSqliteReadOnlyLocationAsync(
             {
               type: "prepare",
               root,
-              pathname,
+              pathname: sourcePath,
               allowLegacyWorker: false,
               preserveSourceArtifacts,
               expectedSourceIdentity,

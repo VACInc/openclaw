@@ -19,6 +19,7 @@ import { SQLITE_READONLY_CHILD_ARG } from "./runtime-process-entrypoints.js";
 import {
   createSqliteReadOnlyWorkerScope,
   runSqliteReadOnlyWorker,
+  runSqliteReadOnlyWorkerOnce,
   withSqliteReadOnlyWorkerScope,
 } from "./sqlite-readonly-worker.js";
 import { readDatabasePathIdentitySync } from "./sqlite-worker-identity.js";
@@ -629,3 +630,52 @@ describe.skipIf(skipBroker)("auth SQLite broker lifecycle", () => {
     },
   );
 });
+
+it.skipIf(skipBroker)(
+  "keeps auth transport selection when only the database can anchor cwd",
+  async () => {
+    const { source, store, state } = createAuthDatabase();
+    const broker = createSpawnBrokerHost();
+    await broker.ready();
+    const brokerSpawn = vi.spyOn(broker, "spawn");
+    vi.mocked(spawn).mockClear();
+    const cwdSpy = vi.spyOn(process, "cwd").mockImplementation(() => {
+      throw new Error("cwd removed");
+    });
+    try {
+      await runWithSpawnBroker(broker, async () => {
+        for (const scoped of [false, true]) {
+          const operation = () => read(source, "canonical");
+          const rows = await (scoped ? withSqliteReadOnlyWorkerScope(operation) : operation());
+          expect(rows).toEqual({
+            store: { status: "readable", raw: store },
+            state: { status: "readable", raw: state },
+            cacheable: true,
+          });
+        }
+        cwdSpy.mockClear();
+        await runSqliteReadOnlyWorkerOnce(
+          path.basename(source),
+          {
+            mode: "auth-profile-rows",
+            source: "canonical",
+            env: {},
+            expectedIdentity: readDatabasePathIdentitySync(source).key,
+          },
+          { cwd: path.dirname(source), env: { ...process.env } },
+        );
+        expect(cwdSpy).not.toHaveBeenCalled();
+        await withSqliteReadOnlyWorkerScope(() => read(source, "snapshot"));
+      });
+      expect(brokerSpawn).toHaveBeenCalledTimes(3);
+      for (const call of brokerSpawn.mock.calls) {
+        expect(call[2]?.cwd).toBe(path.dirname(source));
+      }
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(spawn).mock.calls[0]?.[2]?.cwd).toBe(path.dirname(source));
+    } finally {
+      cwdSpy.mockRestore();
+      await broker.close();
+    }
+  },
+);

@@ -7,6 +7,7 @@ import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { requireNodeSqlite } from "./node-sqlite.js";
 import { SQLITE_READONLY_CHILD_ARG } from "./runtime-process-entrypoints.js";
+import { removeTempDirectoryAsync } from "./sqlite-readonly-location-cleanup.js";
 import {
   captureSqliteReadOnlyWorkerLaunch,
   createScopedSqliteReadOnlyWorker,
@@ -14,9 +15,11 @@ import {
   resolveSqliteInspectionBudget,
   runSqliteReadOnlyWorker,
   runSqliteReadOnlyWorkerSync,
+  runSqliteReadOnlyWorkerOnce,
   withSqliteReadOnlyWorkerScope,
 } from "./sqlite-readonly-worker.js";
 import { prepareSqliteReadOnlyLocation } from "./sqlite-snapshot-source.js";
+import { createSqliteSnapshotStagingDirectory } from "./sqlite-snapshot-staging.js";
 
 const logs = vi.hoisted(() => ({ debug: vi.fn() }));
 vi.mock("../logging/subsystem.js", async (importOriginal) => {
@@ -436,4 +439,134 @@ describe.each(["async", "sync"] as const)("SQLite read-only snapshot worker (%s)
     expectBudget(300_000);
     expect(logs.debug).not.toHaveBeenCalled();
   });
+});
+
+describe("SQLite launch paths", () => {
+  it("preserves a healthy cwd and copied environment instead of selecting the operation anchor", () => {
+    const cwd = process.cwd();
+    const env = { HOME: "relative-home", OPENCLAW_STATE_DIR: "relative-state" };
+    const captured = captureSqliteReadOnlyWorkerLaunch(env, undefined, {
+      pathname: path.join(cwd, "other", "state.sqlite"),
+    });
+    env.OPENCLAW_STATE_DIR = "changed";
+    expect(captured.cwd).toBe(cwd);
+    expect(captured.env.OPENCLAW_STATE_DIR).toBe("relative-state");
+    expect(captured.transport).toEqual({ kind: "native" });
+  });
+
+  it.each([
+    { pathname: "state.sqlite" },
+    { stagingRoot: "staging" },
+    { pathname: "state.sqlite", stagingRoot: path.resolve("staging") },
+    { pathname: path.resolve("state.sqlite"), stagingRoot: "staging" },
+  ])("refuses unresolved operation paths without cwd: %j", (operation) => {
+    const spy = vi.spyOn(process, "cwd").mockImplementation(() => {
+      throw new Error("cwd removed");
+    });
+    try {
+      expect(() => captureSqliteReadOnlyWorkerLaunch({}, undefined, operation)).toThrow(
+        "requires absolute paths",
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each([
+    ["OPENCLAW_STATE_DIR", "state"],
+    ["OPENCLAW_CONFIG_PATH", "config.json"],
+    ["OPENCLAW_WORKSPACE_DIR", "workspace"],
+    ["OPENCLAW_HOME", "home"],
+    ["HOME", "home"],
+    ["NODE_COMPILE_CACHE", "cache"],
+    ["NODE_COMPILE_CACHE", " /cache"],
+    ["NODE_PATH", "modules"],
+    ["NODE_OPTIONS", '--import "./preload with space.mjs"'],
+    ["NODE_OPTIONS", "--require=./preload.cjs"],
+    ["NODE_OPTIONS", "-r./preload.cjs"],
+    ["NODE_OPTIONS", "--import=file:preload.mjs"],
+    ["NODE_OPTIONS", '--import="unterminated'],
+  ])("refuses unresolved %s without cwd", (name, value) => {
+    const pathname = path.resolve("state.sqlite");
+    const spy = vi.spyOn(process, "cwd").mockImplementation(() => {
+      throw new Error("cwd removed");
+    });
+    try {
+      expect(() =>
+        captureSqliteReadOnlyWorkerLaunch({ [name]: value }, undefined, { pathname }),
+      ).toThrow(name);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("uses supplied launch facts for relative one-shot arguments without recapturing cwd", async () => {
+    const source = createDatabase(32);
+    const cwd = path.dirname(source);
+    fs.mkdirSync(path.join(cwd, "staging"));
+    const env = { ...process.env, OPENCLAW_FIXTURE: "captured" };
+    const spy = vi.spyOn(process, "cwd").mockImplementation(() => {
+      throw new Error("cwd removed");
+    });
+    try {
+      const result = await runSqliteReadOnlyWorkerOnce(
+        "source.sqlite",
+        { mode: "sync", stagingRoot: "staging" },
+        { env, cwd },
+      );
+      expect(typeof result).toBe("string");
+      expect(execFile).toHaveBeenCalledWith(
+        process.execPath,
+        expect.arrayContaining([source, path.join(cwd, "staging")]),
+        expect.objectContaining({ cwd, env }),
+        expect.any(Function),
+      );
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+it("launches scoped and unscoped raw readers and allocation from absolute paths without cwd", async () => {
+  const source = createDatabase(32);
+  const root = tempDirs.make("openclaw-absolute-sqlite-launch-");
+  const spy = vi.spyOn(process, "cwd").mockImplementation(() => {
+    throw new Error("cwd removed");
+  });
+  try {
+    for (const scoped of [false, true]) {
+      const operation = () => runSqliteReadOnlyWorker(source, { mode: "sync", stagingRoot: root });
+      const location = await (scoped ? withSqliteReadOnlyWorkerScope(operation) : operation());
+      expect(fs.existsSync(location)).toBe(true);
+    }
+    const directory = await createSqliteSnapshotStagingDirectory(root, false, undefined, true);
+    expect(path.dirname(directory)).toBe(root);
+    expect(await removeTempDirectoryAsync(directory)).toBe(true);
+    await expect(
+      createSqliteSnapshotStagingDirectory("relative-root", false, undefined, true),
+    ).rejects.toThrow("requires absolute paths");
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+it("preserves cwd-independent home selectors and Node options while anchoring a launch", () => {
+  const home = tempDirs.make("openclaw-absolute-launch-home-");
+  const env = {
+    HOME: home,
+    OPENCLAW_HOME: "~/openclaw",
+    OPENCLAW_STATE_DIR: "~/state",
+    NODE_OPTIONS: "--max-old-space-size=256 --import=node:fs",
+  };
+  const spy = vi.spyOn(process, "cwd").mockImplementation(() => {
+    throw new Error("cwd removed");
+  });
+  try {
+    const captured = captureSqliteReadOnlyWorkerLaunch(env, undefined, { stagingRoot: home });
+    expect(captured.cwd).toBe(home);
+    expect(captured.env).toMatchObject(env);
+  } finally {
+    spy.mockRestore();
+  }
 });

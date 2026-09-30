@@ -1,6 +1,11 @@
 const currentModuleUrl = import.meta.url;
 
 export const sqliteSnapshotStagingEntrypoints = {
+  nativeReader: {
+    currentModuleUrl,
+    sourceWorkerName: "sqlite-readonly-worker",
+    distWorkerPath: "infra/sqlite-readonly-worker.js",
+  },
   source: {
     currentModuleUrl,
     sourceWorkerName: "sqlite-snapshot-source",

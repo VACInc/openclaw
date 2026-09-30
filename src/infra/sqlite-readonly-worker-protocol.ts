@@ -62,8 +62,12 @@ export type SqliteReadOnlyWorkerOptions =
 export function sqliteReadOnlyWorkerRequestArgs(
   pathname: string,
   options: SqliteReadOnlyWorkerOptions,
+  cwd?: string,
 ): string[] {
-  const args = [options.mode, path.resolve(pathname)];
+  const resolvePath = (value: string) =>
+    cwd === undefined ? path.resolve(value) : path.resolve(cwd, value);
+  const stagingRoot = options.stagingRoot ? resolvePath(options.stagingRoot) : undefined;
+  const args = [options.mode, resolvePath(pathname)];
   const expected =
     options.mode === "auth-profile-rows" ? undefined : options.expectedSourceIdentity;
   if (expected !== undefined) {
@@ -72,9 +76,9 @@ export function sqliteReadOnlyWorkerRequestArgs(
         "SQLite source identity is supported only for artifact-preserving sync copies",
       );
     }
-    args.push(options.stagingRoot ?? "", JSON.stringify(readDatabaseFileIdentity(expected)));
-  } else if (options.stagingRoot) {
-    args.push(options.stagingRoot);
+    args.push(stagingRoot ?? "", JSON.stringify(readDatabaseFileIdentity(expected)));
+  } else if (stagingRoot) {
+    args.push(stagingRoot);
   }
   return args;
 }

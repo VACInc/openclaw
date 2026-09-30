@@ -709,7 +709,9 @@ export async function allocateWorkerOwnedSqliteSnapshotDirectory(
   allowLegacyWorker: boolean,
   signal?: AbortSignal,
 ): Promise<SqliteSnapshotStagingDirectory> {
-  const { env, cwd } = captureSqliteReadOnlyWorkerLaunch();
+  const { env, cwd } = captureSqliteReadOnlyWorkerLaunch(undefined, undefined, {
+    stagingRoot: root,
+  });
   const owner = captureSqliteSnapshotStagingOwner();
   const request = owner.start(
     {
