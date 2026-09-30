@@ -192,9 +192,12 @@ export function createDraftState(params: TurnConfig): TelegramDraftStateSlice {
       ? false
       : typeof resolvedBlockStreamingEnabled === "boolean"
         ? !resolvedBlockStreamingEnabled
-        : canStreamAnswerDraft
-          ? true
-          : undefined;
+        : !params.allowProviderPreview && !params.context.ctxPayload.GroupThread
+          ? // Reply modifiers gate drafts; completed blocks still pass through them.
+            false
+          : canStreamAnswerDraft
+            ? true
+            : undefined;
 
   return {
     answerLane: lanes.answer,
