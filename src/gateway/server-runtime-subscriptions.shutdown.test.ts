@@ -5,6 +5,7 @@ import {
   persistSessionTranscriptTurn,
   upsertSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
+import { racePromiseWithAbortSignal } from "../infra/abort-signal.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { trackAsyncWork } from "../shared/async-work-scope.js";
 import { createTestGatewayScheduler } from "../test-utils/gateway-scheduler-clock.js";
@@ -52,9 +53,9 @@ function createParams(signal: AbortSignal): Parameters<typeof startGatewayEventS
   };
 }
 
-it.each(["before startup", "before inherited connection drain"] as const)(
+it.for(["before startup", "before inherited connection drain"] as const)(
   "cancels auxiliary model work %s",
-  async (phase) => {
+  async (phase, { signal }) => {
     let unsubs: ReturnType<typeof startGatewayEventSubscriptions> | undefined;
     const testState = await createOpenClawTestState({ scenario: "minimal" });
     const connectionWork = new GatewayConnectionWork();
@@ -64,6 +65,7 @@ it.each(["before startup", "before inherited connection drain"] as const)(
       agentId: target.agentId,
       sessionId: "shutdown-recap",
     };
+    const started = createDeferred();
     const finish = createDeferred();
     const prepared = vi.spyOn(sessionObserverModel, "defaultPrepareModel").mockResolvedValue({
       config: {},
@@ -76,6 +78,7 @@ it.each(["before startup", "before inherited connection drain"] as const)(
     });
     const complete = vi.spyOn(sessionObserverModel, "defaultCompleteModel").mockImplementation(() =>
       trackAsyncWork(async () => {
+        started.resolve();
         await finish.promise;
         return {
           text: "Finished.",
@@ -107,7 +110,8 @@ it.each(["before startup", "before inherited connection drain"] as const)(
         return;
       }
       await connectionWork.track(() => unsubs!.sessionActivitySummaries.ensure(target));
-      await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+      await racePromiseWithAbortSignal(started.promise, signal);
+      expect(complete).toHaveBeenCalledOnce();
       const modelSignal = complete.mock.calls[0]![0].abortSignal!;
       let drained = false;
       draining = connectionWork.drain().then(() => {

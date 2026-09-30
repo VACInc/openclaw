@@ -24,6 +24,7 @@ import {
 } from "../config/sessions/session-cold-storage.js";
 import { normalizePersistedSessionEntryShape } from "../config/sessions/store-entry-shape.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { racePromiseWithAbortSignal } from "../infra/abort-signal.js";
 import { registerAgentRunContext, clearAgentRunContext } from "../infra/agent-run-registry.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
@@ -129,7 +130,7 @@ describe("Activity recap lifecycle with the canonical session store", () => {
     result("Completed the requested work."),
   );
   const prepare = vi.fn(async () => prepared);
-  const changed = vi.fn();
+  const changed = vi.fn<Parameters<typeof createSessionActivitySummaries>[0]["onChanged"]>();
   const read = () => loadSessionEntryReadOnly(scope);
   const view = () => projectSessionActivitySummary({ ...target, cfg, entry: read() });
   const createService = (prepareModel: typeof defaultPrepareModel = prepare) =>
@@ -942,7 +943,9 @@ describe("Activity recap lifecycle with the canonical session store", () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
-  it("readmits a relocated store and fences a delayed result from its previous owner", async () => {
+  it("readmits a relocated store and fences a delayed result from its previous owner", async ({
+    signal,
+  }) => {
     await messages(2);
     service.ensure(target);
     await vi.waitFor(() => expect(view()?.state).toBe("current"));
@@ -954,7 +957,11 @@ describe("Activity recap lifecycle with the canonical session store", () => {
           finishOld = resolve;
         }),
     );
-    complete.mockImplementationOnce(async () => result("Recap from the relocated store."));
+    const published = createDeferred<Parameters<typeof changed>[0]>();
+    complete.mockImplementationOnce(async () => {
+      changed.mockImplementationOnce((publication) => published.resolve({ ...publication }));
+      return result("Recap from the relocated store.");
+    });
     service.ensure(target);
     await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(2));
     const relocatedDirectory = testState.path("relocated");
@@ -974,9 +981,11 @@ describe("Activity recap lifecycle with the canonical session store", () => {
       const projected = projectSessionActivitySummary({ ...target, cfg, entry: relocatedEntry });
       expect.soft(projected?.state).toBe("stale");
       service.ensure(target);
-      await vi.waitFor(() =>
-        expect(loadSessionEntryReadOnly(relocatedScope)?.activitySummary?.coveredMessages).toBe(3),
-      );
+      expect(await racePromiseWithAbortSignal(published.promise, signal)).toMatchObject({
+        ...target,
+        storePath: relocatedPath,
+      });
+      expect(loadSessionEntryReadOnly(relocatedScope)?.activitySummary?.coveredMessages).toBe(3);
       expect(loadSessionEntryReadOnly(relocatedScope)?.activitySummary?.text).toBe(
         "Recap from the relocated store.",
       );
