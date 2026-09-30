@@ -32,6 +32,7 @@ import {
 import {
   assertSubagentRegistryWriteSourceCurrent,
   captureSubagentRunMutationSnapshot,
+  captureSubagentRunPostimagePublication,
   publishSubagentRunPostimages,
 } from "./subagent-registry-persistence.js";
 import { completeTerminalEffects } from "./subagent-registry-terminal-effects.js";
@@ -167,25 +168,50 @@ export async function completeSubagentRunAttempt(
     context.bindTerminalSessionEffects(entry, completeParams.sessionEffects);
     params.clearPendingLifecycleError(completeParams.runId);
     entrySnapshot = captureSubagentRunMutationSnapshot(entry);
-    const commit = async (previous: SubagentRunRecord, onPublished?: () => void) => {
-      const result = await publishSubagentRunPostimages({
-        runs: params.runs,
-        previous: new Map([[currentEntry, previous]]),
-        context: stateContext,
-        persist: params.persistAsyncOrThrow,
-        assertCurrent: () => {
-          assertCurrent();
-          collectorSession?.assertCurrent();
-        },
-        onPublished,
-      });
-      return result.publication === "published";
-    };
     const restoreEntrySnapshot = (snapshot: SubagentRunRecord) => {
       for (const key of Object.keys(currentEntry)) {
         Reflect.deleteProperty(currentEntry, key);
       }
       Object.assign(currentEntry, snapshot);
+    };
+    const commit = async (previous: SubagentRunRecord, onPublished?: () => void) => {
+      const publish = () =>
+        publishSubagentRunPostimages({
+          runs: params.runs,
+          previous: new Map([[currentEntry, previous]]),
+          context: stateContext,
+          persist: params.persistAsyncOrThrow,
+          assertCurrent: () => {
+            assertCurrent();
+            collectorSession?.assertCurrent();
+          },
+          onPublished,
+        });
+      if (!collectorSession) {
+        return (await publish()).publication === "published";
+      }
+      // Hide the staged terminal row before joining the session writer FIFO.
+      // A pending metadata receipt must settle before generation facts can be
+      // checked, without exposing uncommitted collector state while we wait.
+      const staged = { ...currentEntry };
+      restoreEntrySnapshot(
+        previous.delivery && isDeepStrictEqual(previous.delivery, staged.delivery)
+          ? { ...previous, delivery: staged.delivery }
+          : previous,
+      );
+      const original = captureSubagentRunPostimagePublication({
+        runs: params.runs,
+        previous: new Map([[currentEntry, previous]]),
+        context: stateContext,
+        assertCurrent,
+        requireMutationOwnerIdentity: true,
+      });
+      const result = await collectorSession.withPublication(() => {
+        original.assertCurrent();
+        restoreEntrySnapshot(staged);
+        return publish();
+      });
+      return result.publication === "published";
     };
     const recoveryRequested = completeParams.recoverInterrupted === true;
     if (
@@ -655,7 +681,7 @@ export async function completeSubagentRunAttempt(
     // Only the canonical state/capture transition is serialized. Cleanup
     // remains re-entrant so a stalled browser close cannot strand a duplicate callback.
     releaseCompletionLock();
-    collectorSession?.release();
+    await collectorSession?.release();
   }
 
   if (!entry) {

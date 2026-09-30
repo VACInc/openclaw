@@ -1,11 +1,10 @@
 import { expect, it, vi } from "vitest";
-import { createDeferred } from "../../test/helpers/promise.js";
+import { createDeferred, withinTest } from "../../test/helpers/promise.js";
 import {
   loadSessionEntryReadOnly,
   persistSessionTranscriptTurn,
   upsertSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
-import { racePromiseWithAbortSignal } from "../infra/abort-signal.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { trackAsyncWork } from "../shared/async-work-scope.js";
 import { createTestGatewayScheduler } from "../test-utils/gateway-scheduler-clock.js";
@@ -110,7 +109,8 @@ it.for(["before startup", "before inherited connection drain"] as const)(
         return;
       }
       await connectionWork.track(() => unsubs!.sessionActivitySummaries.ensure(target));
-      await racePromiseWithAbortSignal(started.promise, signal);
+      // ensure returns a projection before the real transcript worker reaches the model.
+      await withinTest(started.promise, signal);
       expect(complete).toHaveBeenCalledOnce();
       const modelSignal = complete.mock.calls[0]![0].abortSignal!;
       let drained = false;
