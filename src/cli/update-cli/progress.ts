@@ -102,9 +102,14 @@ export function createUpdateProgress(
     clearTimer();
     pendingRead?.abort();
   };
-  const renderRecord = (record: UpdateRunRecord | undefined) => {
+  const renderRecord = (record: UpdateRunRecord | undefined, terminalReceipt = false) => {
     // Doctor's unbound spinner does not observe ledger phases, even after a write.
-    if (observation !== "active" || !run || !record) {
+    if (
+      observation === "disposed" ||
+      (observation === "suspended" && !terminalReceipt) ||
+      !run ||
+      !record
+    ) {
       return;
     }
     currentRecord = record;
@@ -130,7 +135,9 @@ export function createUpdateProgress(
     terminal = record?.status !== "running",
   ) => {
     try {
-      renderRecord(record);
+      // A committed terminal report can flush its timeline while activation
+      // polling stays closed. It does not reopen history or revive disposal.
+      renderRecord(record, terminal);
     } finally {
       if (terminal) {
         observation = "disposed";
