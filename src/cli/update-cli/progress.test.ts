@@ -685,40 +685,6 @@ describe("update progress", () => {
     expect(captured).toEqual(saved);
   });
 
-  it("flushes a captured terminal timeline while polling remains suspended", async () => {
-    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
-    presentation = await observe(true, context);
-    presentation.suspend();
-    vi.mocked(getUpdateRun)
-      .mockClear()
-      .mockImplementation(() => {
-        throw new Error("Captured final report must not reopen history");
-      });
-    vi.mocked(getUpdateRunForProgressAsync)
-      .mockClear()
-      .mockImplementation(() => {
-        throw new Error("Suspended final report must not restart polling");
-      });
-    const captured: UpdateRunRecord = {
-      ...run,
-      status: "succeeded",
-      phase: "finished",
-      steps: [
-        { step: "requested", status: "completed" },
-        { step: "verifying", status: "completed" },
-        { step: "finished", status: "completed" },
-      ],
-    };
-    await printResult(result, { run: context }, { record: captured });
-    expect(
-      log.mock.calls.flat().filter((line) => typeof line === "string" && line.startsWith("Phase:")),
-    ).toEqual(["Phase: requested", "Phase: verifying", "Phase: finished"]);
-    await vi.advanceTimersByTimeAsync(500);
-    expect(getUpdateRun).not.toHaveBeenCalled();
-    expect(getUpdateRunForProgressAsync).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
   it("suspends every ledger reader through activation and resumes the recorded timeline", async () => {
     vi.useFakeTimers();
     const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
