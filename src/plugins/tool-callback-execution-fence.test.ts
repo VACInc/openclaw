@@ -23,6 +23,7 @@ vi.mock("../agents/subagents/registry/subagent-registry-read.js", () => ({
     runId: "run-child",
     collect: false,
     createdAt: 1,
+    childSessionIdentity: { sessionId: "session" },
     execution: { status: "running" },
   }),
 }));
