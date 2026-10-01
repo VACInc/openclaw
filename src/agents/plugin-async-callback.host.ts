@@ -9,7 +9,7 @@ import { runPluginAsyncCallbackCommand } from "./plugin-async-callback.js";
 import type { PluginAsyncCallbackBinding } from "./plugin-async-callback.store.js";
 import { getLatestLiveSubagentRunByChildSessionKey } from "./subagents/registry/subagent-registry-read.js";
 
-function assertLiveCallbackChild(binding: Readonly<PluginAsyncCallbackBinding>): void {
+function assertLiveCallbackChild(binding: Readonly<PluginAsyncCallbackBinding>) {
   const current = getLatestLiveSubagentRunByChildSessionKey(binding.childSessionKey);
   if (
     !current ||
@@ -29,6 +29,7 @@ function assertLiveCallbackChild(binding: Readonly<PluginAsyncCallbackBinding>):
   ) {
     throw new Error("Callback native child is no longer current");
   }
+  return current;
 }
 
 /** Prepare the exact session in a reader worker; fence resets during the admitted write. */
@@ -41,6 +42,13 @@ async function withCallbackChild<T>(
   if (!agentId) {
     throw new Error("Callback requires a native child session");
   }
+  // The registered native owner already retains the original session incarnation.
+  // Do not mint a second persistent identity in the callback ledger.
+  const childIdentity = assertLiveCallbackChild(binding).childSessionIdentity;
+  if (!childIdentity || childIdentity.sessionId !== binding.childSessionId) {
+    throw new Error("Callback native child session identity is unavailable");
+  }
+  const expectedLifecycleRevision = childIdentity.lifecycleRevision ?? null;
   let replaced = false;
   const unsubscribe = onSessionIdentityMutation((mutation) => {
     if (
@@ -56,7 +64,13 @@ async function withCallbackChild<T>(
     if (replaced) {
       throw new Error("Callback native child session is no longer current");
     }
-    assertLiveCallbackChild(binding);
+    const currentIdentity = assertLiveCallbackChild(binding).childSessionIdentity;
+    if (
+      currentIdentity?.sessionId !== binding.childSessionId ||
+      (currentIdentity.lifecycleRevision ?? null) !== expectedLifecycleRevision
+    ) {
+      throw new Error("Callback native child session is no longer current");
+    }
   };
   try {
     return await withSessionEntryReadOnlyInWorker(
@@ -72,6 +86,7 @@ async function withCallbackChild<T>(
         }
         if (
           read.value?.sessionId !== binding.childSessionId ||
+          (read.value.lifecycleRevision ?? null) !== expectedLifecycleRevision ||
           read.value.archivedAt !== undefined
         ) {
           throw new Error("Callback native child session is no longer current");

@@ -14,6 +14,7 @@ import { registerSubagentRun } from "../agents/subagents/registry/subagent-regis
 import { writeSubagentSessionEntry } from "../agents/subagents/registry/subagent-registry.persistence.test-support.js";
 import { loadSubagentRegistryFromSqlite } from "../agents/subagents/registry/subagent-registry.store.sqlite.js";
 import { getRuntimeConfig } from "../config/config.js";
+import { loadSessionEntry } from "../config/sessions/session-accessor.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { publishSystemEventStoreResolver } from "../infra/system-event-ownership.js";
 import {
@@ -41,6 +42,7 @@ async function arrangePausedChild(childSessionKey = "agent:main:subagent:resume-
     agentId: "main",
     sessionKey: childSessionKey,
     defaultSessionId: sessionId,
+    lifecycleRevision: "resume-original-lifecycle",
   });
   await writeSubagentSessionEntry({
     stateDir: fixture.stateDir,
@@ -58,6 +60,7 @@ async function arrangePausedChild(childSessionKey = "agent:main:subagent:resume-
     cleanup: "keep",
     expectsCompletionMessage: true,
     queued: true,
+    sessionEntry: loadSessionEntry({ agentId: "main", sessionKey: childSessionKey }),
   });
   const entry = subagentRuns.get(previousRunId)!;
   expect(markSubagentRunPausedAfterYield({ entry })).toBe(true);
@@ -673,6 +676,7 @@ async function assertCallbackResume(childSessionKey: string) {
         throw new Error("missing trusted callback admission");
       }
       expect(resume.caller).toBeUndefined();
+      expect(request.expectedExistingSessionLifecycleRevision).toBe("resume-original-lifecycle");
       const adopt = await prepareParentSubagentResume({
         cfg: state.cfg,
         resume,
@@ -856,6 +860,7 @@ it("delivers an overdue callback timeout through the real queue instead of losin
     .spyOn(recovery, "dispatchGatewayLifecycleMethod")
     .mockImplementation(async (_method, request, options) => {
       expect(request.message).toContain("expired without a result");
+      expect(request.expectedExistingSessionLifecycleRevision).toBe("resume-original-lifecycle");
       expect(options?.subagentResume?.previousRunId).toBe(previousRunId);
       return { status: "accepted", taskRunId: previousRunId };
     });

@@ -12,6 +12,11 @@ const state = vi.hoisted(() => ({
   },
   runId: "run-original",
   sessionId: "session-original",
+  lifecycleRevision: "lifecycle-original" as string | undefined,
+  childIdentity: { sessionId: "session-original", lifecycleRevision: "lifecycle-original" } as
+    | { sessionId: string; lifecycleRevision?: string }
+    | undefined,
+  beforeCommit: undefined as (() => void) | undefined,
   status: "running",
   registered: true,
   collect: false,
@@ -27,7 +32,10 @@ vi.mock("../config/sessions/session-entry-read-runtime.js", () => ({
     consume: (r: unknown) => Promise<unknown>,
   ) => {
     check();
-    return consume({ ok: true, value: { sessionId: state.sessionId } });
+    return consume({
+      ok: true,
+      value: { sessionId: state.sessionId, lifecycleRevision: state.lifecycleRevision },
+    });
   },
 }));
 vi.mock("./subagents/registry/subagent-registry-read.js", () => ({
@@ -37,6 +45,7 @@ vi.mock("./subagents/registry/subagent-registry-read.js", () => ({
           runId: state.runId,
           collect: state.collect,
           createdAt: 1,
+          childSessionIdentity: state.childIdentity,
           execution: { status: state.status },
         }
       : null,
@@ -50,6 +59,7 @@ vi.mock("./plugin-async-callback.js", () => ({
     if (command.type === "pluginCallback.lookup") {
       return state.binding;
     }
+    state.beforeCommit?.();
     guard(command.input.binding!);
     if (command.type === "pluginCallback.issue") {
       return { token: "private-token", expiresAt: 1000, queueId: "expiry" };
@@ -73,6 +83,9 @@ beforeEach(() => {
   state.binding.pluginId = "a";
   state.runId = "run-original";
   state.sessionId = "session-original";
+  state.lifecycleRevision = "lifecycle-original";
+  state.childIdentity = { sessionId: "session-original", lifecycleRevision: "lifecycle-original" };
+  state.beforeCommit = undefined;
   state.status = "running";
   state.registered = true;
   state.collect = false;
@@ -104,6 +117,33 @@ it("accepts a new live invocation, but not another plugin or retired generation"
   ]);
   state.closed = true;
   await expect(complete("a")).rejects.toThrow("generation retired");
+});
+
+it("refuses a prior lifecycle reset that retains the native child session ID", async () => {
+  state.lifecycleRevision = "lifecycle-reset";
+  await expect(complete("a")).rejects.toThrow("no longer current");
+  expect(state.commands).toEqual(["pluginCallback.lookup"]);
+});
+
+it("fails closed when the native owner has no captured session identity", async () => {
+  state.childIdentity = undefined;
+  await expect(complete("a")).rejects.toThrow("identity is unavailable");
+  expect(state.commands).toEqual(["pluginCallback.lookup"]);
+});
+
+it("accepts a known unversioned native identity but rejects its same-ID reset", async () => {
+  state.childIdentity = { sessionId: "session-original" };
+  state.lifecycleRevision = undefined;
+  expect(await complete("a")).toBe("accepted");
+  state.lifecycleRevision = "lifecycle-reset";
+  await expect(complete("a")).rejects.toThrow("no longer current");
+});
+
+it("rechecks the captured native incarnation at the worker commit guard", async () => {
+  state.beforeCommit = () => {
+    state.childIdentity!.lifecycleRevision = "lifecycle-reset";
+  };
+  await expect(complete("a")).rejects.toThrow("no longer current");
 });
 
 it.each([

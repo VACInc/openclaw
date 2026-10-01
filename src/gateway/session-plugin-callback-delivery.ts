@@ -39,6 +39,9 @@ export async function deliverNativeChildCallback(params: {
   if (current?.runId === runId) {
     return;
   }
+  // Reuse the native launch owner's immutable identity for result and expiry
+  // delivery. A same-ID reset must not adopt this outbox into its new lifecycle.
+  const expectedLifecycleRevision = current?.childSessionIdentity?.lifecycleRevision ?? null;
   const assertCurrent = () => {
     queueContext.admission.assertCurrent();
     const child = getLatestLiveSubagentRunByChildSessionKey(entry.sessionKey);
@@ -47,6 +50,8 @@ export async function deliverNativeChildCallback(params: {
       child.runId !== entry.pausedRunId ||
       child.generation !== entry.pausedGeneration ||
       child.createdAt !== entry.pausedCreatedAt ||
+      child.childSessionIdentity?.sessionId !== entry.expectedSessionId ||
+      (child.childSessionIdentity.lifecycleRevision ?? null) !== expectedLifecycleRevision ||
       child.collect ||
       child.killIntent ||
       child.killReconciliation ||
@@ -92,6 +97,7 @@ export async function deliverNativeChildCallback(params: {
     {
       sessionKey: entry.sessionKey,
       expectedExistingSessionId: entry.expectedSessionId,
+      expectedExistingSessionLifecycleRevision: expectedLifecycleRevision,
       message: entry.message,
       idempotencyKey: runId,
       deliver: false,

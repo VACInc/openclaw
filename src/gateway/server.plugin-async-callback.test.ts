@@ -9,7 +9,7 @@ import {
 describe("durable plugin callback Gateway admission", () => {
   const fixture = installAgentAuthorityProofFixture();
 
-  it.for(["current", "replaced"] as const)(
+  it.for(["current", "replaced", "lifecycle-reset"] as const)(
     "checks callback admission for a publicly created non-main session: %s child",
     async (mode, { signal }) => {
       const f = await fixture({ publicSession: true });
@@ -48,6 +48,7 @@ describe("durable plugin callback Gateway admission", () => {
         cleanup: "keep",
         expectsCompletionMessage: true,
         queued: true,
+        sessionEntry: sessionAccessor.loadSessionEntry(f.scope),
       });
       const child = subagentRuns.get(priorRunId)!;
       child.execution.status = "running";
@@ -107,6 +108,11 @@ describe("durable plugin callback Gateway admission", () => {
           // registered agent handler performs its final revalidation and commit.
           if (mode === "replaced") {
             child.generation = (child.generation ?? 0) + 1;
+          } else if (mode === "lifecycle-reset") {
+            await sessionAccessor.replaceSessionEntry(f.scope, {
+              ...sessionAccessor.loadSessionEntry(f.scope)!,
+              lifecycleRevision: "callback-reset-lifecycle",
+            });
           }
           return prepared;
         });
@@ -139,8 +145,12 @@ describe("durable plugin callback Gateway admission", () => {
           queueContext,
           resolveGatewayContext: () => f.context,
         });
-        if (mode === "replaced") {
-          await expect(request).rejects.toThrow(/cancelled, replaced, or settled/);
+        if (mode !== "current") {
+          await expect(request).rejects.toThrow(
+            mode === "replaced"
+              ? /cancelled, replaced, or settled/
+              : /lifecycle|no longer|changed/i,
+          );
           expect(subagentRuns.has(successor)).toBe(false);
           expect(loadSubagentRegistryFromSqlite().has(successor)).toBe(false);
           expect(execution.observer).not.toHaveBeenCalled();
