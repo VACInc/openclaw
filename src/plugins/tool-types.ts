@@ -17,11 +17,22 @@ export type OpenClawPluginToolDelivery = {
   send: (params: { text?: string; mediaUrl?: string }) => Promise<void>;
 };
 
+export type OpenClawPluginAsyncToolCallbackStatus =
+  | { status: "unknown" }
+  | {
+      status: "pending" | "accepted" | "delivered" | "failed" | "expired" | "cancelled";
+      expiresAt: number;
+      storage: "persistent" | "memory";
+    };
+
 /** One-use host-bound completion handle. It does not reveal a destination. */
 export type OpenClawPluginAsyncToolCallback = {
   /** Opaque secret: persist privately in the plugin, never in tool output or model context. */
   token: string;
   expiresAt: number;
+  /** Incognito handles and their results die with the session or Gateway runtime. */
+  storage: "persistent" | "memory";
+  status: () => Promise<OpenClawPluginAsyncToolCallbackStatus>;
   complete: (
     resultText: string,
   ) => Promise<"accepted" | "duplicate" | "expired" | "cancelled" | "unknown">;

@@ -1,9 +1,16 @@
+import type { OpenClawPluginAsyncToolCallbackStatus } from "../plugins/tool-types.js";
 import type {
+  PluginAsyncCallbackSettlement,
   PluginAsyncCallbackBinding,
   PluginAsyncCallbackCompletion,
 } from "./plugin-async-callback.store.js";
 
 export type PluginAsyncCallbackWorkerOperations = {
+  "pluginCallback.status": {
+    input: { token: string; binding: PluginAsyncCallbackBinding };
+    output: OpenClawPluginAsyncToolCallbackStatus;
+  };
+  "pluginCallback.settle": { input: PluginAsyncCallbackSettlement; output: void };
   "pluginCallback.expire": { input: { key: string }; output: boolean };
   "pluginCallback.lookup": {
     input: { token: string };
@@ -32,6 +39,8 @@ export function isPluginAsyncCallbackCommand(command: { type: string }): command
   };
 }[keyof PluginAsyncCallbackWorkerOperations] {
   return (
+    command.type === "pluginCallback.status" ||
+    command.type === "pluginCallback.settle" ||
     command.type === "pluginCallback.expire" ||
     command.type === "pluginCallback.issue" ||
     command.type === "pluginCallback.lookup" ||

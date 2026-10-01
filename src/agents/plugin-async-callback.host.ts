@@ -2,12 +2,28 @@ import { getRuntimeConfig } from "../config/config.js";
 import { resolveSessionStorePathCore } from "../config/sessions.js";
 import { withSessionEntryReadOnlyInWorker } from "../config/sessions/session-entry-read-runtime.js";
 import { getAgentRunContext } from "../infra/agent-run-registry.js";
-import type { OpenClawPluginAsyncToolCallback } from "../plugins/tool-types.js";
+import { scheduleMemorySessionDelivery } from "../infra/session-delivery-queue-runtime.js";
+import type {
+  OpenClawPluginAsyncToolCallback,
+  OpenClawPluginAsyncToolCallbackStatus,
+} from "../plugins/tool-types.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import { onSessionIdentityMutation } from "../sessions/session-lifecycle-events.js";
+import { isIncognitoSessionKey } from "../shared/incognito-session-key.js";
+import { resolveIncognitoOpenClawAgentSqlitePath } from "../state/openclaw-agent-db.js";
+import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
+import { capturePluginCallbackMemoryLifetime } from "./plugin-async-callback-memory-lifetime.js";
+import {
+  getMemoryPluginCallbackAccess,
+  isMemoryPluginCallbackToken,
+  issueMemoryPluginCallback,
+  withPluginCallbackMemoryOwner,
+} from "./plugin-async-callback-memory.js";
 import { runPluginAsyncCallbackCommand } from "./plugin-async-callback.js";
 import type { PluginAsyncCallbackBinding } from "./plugin-async-callback.store.js";
 import { getLatestLiveSubagentRunByChildSessionKey } from "./subagents/registry/subagent-registry-read.js";
+
+class CallbackChildUnavailableError extends Error {}
 
 function assertLiveCallbackChild(binding: Readonly<PluginAsyncCallbackBinding>) {
   const current = getLatestLiveSubagentRunByChildSessionKey(binding.childSessionKey);
@@ -27,7 +43,7 @@ function assertLiveCallbackChild(binding: Readonly<PluginAsyncCallbackBinding>) 
     current.expectsCompletionMessage === false ||
     (current.execution.status !== "running" && current.pauseReason !== "sessions_yield")
   ) {
-    throw new Error("Callback native child is no longer current");
+    throw new CallbackChildUnavailableError("Callback native child is no longer current");
   }
   return current;
 }
@@ -46,7 +62,9 @@ async function withCallbackChild<T>(
   // Do not mint a second persistent identity in the callback ledger.
   const childIdentity = assertLiveCallbackChild(binding).childSessionIdentity;
   if (!childIdentity || childIdentity.sessionId !== binding.childSessionId) {
-    throw new Error("Callback native child session identity is unavailable");
+    throw new CallbackChildUnavailableError(
+      "Callback native child session identity is unavailable",
+    );
   }
   const expectedLifecycleRevision = childIdentity.lifecycleRevision ?? null;
   let replaced = false;
@@ -62,14 +80,14 @@ async function withCallbackChild<T>(
   const assertCurrent = () => {
     assertPluginCurrent();
     if (replaced) {
-      throw new Error("Callback native child session is no longer current");
+      throw new CallbackChildUnavailableError("Callback native child session is no longer current");
     }
     const currentIdentity = assertLiveCallbackChild(binding).childSessionIdentity;
     if (
       currentIdentity?.sessionId !== binding.childSessionId ||
       (currentIdentity.lifecycleRevision ?? null) !== expectedLifecycleRevision
     ) {
-      throw new Error("Callback native child session is no longer current");
+      throw new CallbackChildUnavailableError("Callback native child session is no longer current");
     }
   };
   try {
@@ -77,7 +95,9 @@ async function withCallbackChild<T>(
       {
         agentId,
         sessionKey: binding.childSessionKey,
-        storePath: resolveSessionStorePathCore(getRuntimeConfig().session?.store, { agentId }),
+        storePath: isIncognitoSessionKey(binding.childSessionKey)
+          ? resolveIncognitoOpenClawAgentSqlitePath({ agentId })
+          : resolveSessionStorePathCore(getRuntimeConfig().session?.store, { agentId }),
       },
       assertCurrent,
       async (read) => {
@@ -89,7 +109,9 @@ async function withCallbackChild<T>(
           (read.value.lifecycleRevision ?? null) !== expectedLifecycleRevision ||
           read.value.archivedAt !== undefined
         ) {
-          throw new Error("Callback native child session is no longer current");
+          throw new CallbackChildUnavailableError(
+            "Callback native child session is no longer current",
+          );
         }
         assertCurrent();
         return consume(assertCurrent);
@@ -108,9 +130,33 @@ export async function completeHostPluginAsyncCallback(params: {
   assertPluginCurrent: () => void;
 }): Promise<"accepted" | "duplicate" | "expired" | "cancelled" | "unknown"> {
   params.assertPluginCurrent();
+  if (isMemoryPluginCallbackToken(params.token)) {
+    const access = await getMemoryPluginCallbackAccess(params.token, params.pluginId);
+    params.assertPluginCurrent();
+    if (!access) {
+      return "unknown";
+    }
+    const status = access.status().status;
+    if (status === "unknown" || status === "expired") {
+      return status;
+    }
+    if (status !== "pending") {
+      return "duplicate";
+    }
+    return withCallbackChild(access.binding, params.assertPluginCurrent, async (assertCurrent) => {
+      assertCurrent();
+      const result = access.complete(params.resultText);
+      if (result.status === "accepted") {
+        scheduleMemorySessionDelivery(result.queueId);
+      }
+      return result.status;
+    });
+  }
+  const context = captureOpenClawStateWorkerContext();
   const binding = await runPluginAsyncCallbackCommand(
     { type: "pluginCallback.lookup", input: { token: params.token } },
     () => params.assertPluginCurrent(),
+    context,
   );
   params.assertPluginCurrent();
   if (!binding || binding.pluginId !== params.pluginId) {
@@ -129,9 +175,78 @@ export async function completeHostPluginAsyncCallback(params: {
         input: { binding, token: params.token, resultText: params.resultText },
       },
       assertCurrent,
+      context,
     );
     return result.status;
   });
+}
+
+/** A token discloses only its own receipt, never a session binding or result payload. */
+export async function getHostPluginAsyncCallbackStatus(params: {
+  pluginId: string;
+  token: string;
+  assertPluginCurrent: () => void;
+}): Promise<OpenClawPluginAsyncToolCallbackStatus> {
+  params.assertPluginCurrent();
+  if (isMemoryPluginCallbackToken(params.token)) {
+    const access = await getMemoryPluginCallbackAccess(params.token, params.pluginId);
+    params.assertPluginCurrent();
+    if (!access) {
+      return { status: "unknown" };
+    }
+    if (access.status().status === "pending") {
+      try {
+        await withCallbackChild(access.binding, params.assertPluginCurrent, async (assertCurrent) =>
+          assertCurrent(),
+        );
+      } catch (error) {
+        if (!(error instanceof CallbackChildUnavailableError)) {
+          throw error;
+        }
+        access.revoke();
+      }
+    }
+    params.assertPluginCurrent();
+    return access.status();
+  }
+  const context = captureOpenClawStateWorkerContext();
+  const binding = await runPluginAsyncCallbackCommand(
+    { type: "pluginCallback.lookup", input: { token: params.token } },
+    () => params.assertPluginCurrent(),
+    context,
+  );
+  params.assertPluginCurrent();
+  if (!binding || binding.pluginId !== params.pluginId) {
+    return { status: "unknown" };
+  }
+  const readStatus = () =>
+    runPluginAsyncCallbackCommand(
+      { type: "pluginCallback.status", input: { token: params.token, binding } },
+      () => params.assertPluginCurrent(),
+      context,
+    );
+  let receipt = await readStatus();
+  if (receipt.status === "pending") {
+    try {
+      await withCallbackChild(binding, params.assertPluginCurrent, async (assertCurrent) => {
+        assertCurrent();
+      });
+    } catch (error) {
+      if (!(error instanceof CallbackChildUnavailableError)) {
+        throw error;
+      }
+      // Revocation only: never reacquire a child or cancel an already-admitted result.
+      await runPluginAsyncCallbackCommand(
+        { type: "pluginCallback.cancel", input: { token: params.token, binding } },
+        () => params.assertPluginCurrent(),
+        context,
+      );
+      receipt = await readStatus();
+    }
+  }
+  context.admission.assertCurrent();
+  params.assertPluginCurrent();
+  return receipt;
 }
 
 /** Called only inside the registered V2 tool's admitted execute invocation. */
@@ -182,15 +297,32 @@ export async function issueHostPluginAsyncCallback(params: {
       assertIssuingRunCurrent();
       params.assertPluginCurrent();
     },
-    (assertCurrent) =>
-      runPluginAsyncCallbackCommand(
+    async (assertCurrent) => {
+      if (isIncognitoSessionKey(sessionKey)) {
+        const lifetime = await withPluginCallbackMemoryOwner(() =>
+          capturePluginCallbackMemoryLifetime(binding),
+        );
+        assertCurrent();
+        const result = issueMemoryPluginCallback(binding, params.ttlMs, lifetime);
+        scheduleMemorySessionDelivery(result.queueId);
+        return result;
+      }
+      return runPluginAsyncCallbackCommand(
         { type: "pluginCallback.issue", input: { binding, ttlMs: params.ttlMs } },
         assertCurrent,
-      ),
+      );
+    },
   );
   return {
     token: issued.token,
     expiresAt: issued.expiresAt,
+    storage: isIncognitoSessionKey(sessionKey) ? "memory" : "persistent",
+    status: () =>
+      getHostPluginAsyncCallbackStatus({
+        pluginId: params.pluginId,
+        token: issued.token,
+        assertPluginCurrent: params.assertPluginCurrent,
+      }),
     complete: (resultText) =>
       completeHostPluginAsyncCallback({
         pluginId: params.pluginId,

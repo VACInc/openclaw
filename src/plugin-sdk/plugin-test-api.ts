@@ -97,6 +97,9 @@ export function createTestPluginApi(api: TestPluginApiInput = {}): OpenClawPlugi
     on() {},
     ...flatApi,
     asyncToolCallbacks: flatApi.asyncToolCallbacks ?? {
+      status: async () => {
+        throw new Error("Async callback status unavailable in test API");
+      },
       complete: async () => {
         throw new Error("Async callback completion unavailable in test API");
       },

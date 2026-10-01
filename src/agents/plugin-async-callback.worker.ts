@@ -2,6 +2,8 @@ import { requestSqliteWorkerOperationAdmission } from "../infra/sqlite-worker-op
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db-contract.js";
 import { runOpenClawStateWriteTransaction } from "../state/openclaw-state-db.js";
 import {
+  readPluginAsyncCallbackStatusInDatabase,
+  settlePluginAsyncCallbackInDatabase,
   expirePluginAsyncCallbackInDatabase,
   issuePluginAsyncCallbackInDatabase,
   completePluginAsyncCallbackInDatabase,
@@ -45,6 +47,16 @@ export function executePluginAsyncCallbackCommand(
       requestSqliteWorkerOperationAdmission({ stage: "transaction", facts: undefined });
       let outcome;
       switch (command.type) {
+        case "pluginCallback.status":
+          outcome = readPluginAsyncCallbackStatusInDatabase(
+            database,
+            command.input.token,
+            (actual) => assertExactBinding(command.input.binding, actual),
+          );
+          break;
+        case "pluginCallback.settle":
+          outcome = settlePluginAsyncCallbackInDatabase(database, command.input);
+          break;
         case "pluginCallback.expire":
           outcome = expirePluginAsyncCallbackInDatabase(database, command.input.key);
           break;

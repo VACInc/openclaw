@@ -14,11 +14,18 @@ import {
   type OpenClawStateDatabase,
 } from "../state/openclaw-state-db.js";
 import {
+  PLUGIN_CALLBACK_MAX_PENDING,
+  PLUGIN_CALLBACK_MAX_PENDING_PER_PLUGIN,
+  pluginAsyncCallbackSlot,
+} from "./plugin-async-callback-policy.js";
+import {
   cancelPluginAsyncCallbackInDatabase,
   completePluginAsyncCallbackInDatabase,
   findPluginAsyncCallbackInDatabase,
   expirePluginAsyncCallbackInDatabase,
   issuePluginAsyncCallbackInDatabase,
+  readPluginAsyncCallbackStatusInDatabase,
+  settlePluginAsyncCallbackInDatabase,
 } from "./plugin-async-callback.store.js";
 
 const dirs = useAutoCleanupTempDirTracker(afterEach);
@@ -56,6 +63,243 @@ describe("durable plugin callback claim and outbox", () => {
       .filter((row) => !JSON.parse(String(row.entry_json)).callbackExpiryKey) as Array<{
       entry_json: string;
     }>;
+
+  it.each([false, true])(
+    "keeps an expiry outcome after receipt GC without overriding an accepted result (%s)",
+    (accepted) => {
+      const now = 10_000;
+      const issued = transact(database, () =>
+        issuePluginAsyncCallbackInDatabase(database, base, 1_000, now),
+      );
+      const key = createHash("sha256").update(issued.token).digest("hex");
+      if (accepted) {
+        transact(database, () =>
+          completePluginAsyncCallbackInDatabase({
+            database,
+            token: issued.token,
+            resultText: "retained result",
+            now: now + 1,
+            assertOwnerCurrent: () => {},
+          }),
+        );
+      }
+      // The real GC predicate is expires_at <= now; only receipt rows are eligible.
+      database.db
+        .prepare("DELETE FROM plugin_state_entries WHERE expires_at <= ?")
+        .run(issued.expiresAt + 7 * 24 * 60 * 60_000);
+      expect(findPluginAsyncCallbackInDatabase(database, issued.token)).toBeUndefined();
+      expect(
+        transact(database, () =>
+          expirePluginAsyncCallbackInDatabase(
+            database,
+            key,
+            issued.expiresAt + 8 * 24 * 60 * 60_000,
+          ),
+        ),
+      ).toBe(!accepted);
+      transact(database, () =>
+        settlePluginAsyncCallbackInDatabase(database, {
+          key,
+          slot: pluginAsyncCallbackSlot(base),
+          queueId: issued.queueId,
+          expiry: true,
+          outcome: "delivered",
+        }),
+      );
+      if (accepted) {
+        expect(() =>
+          transact(database, () => issuePluginAsyncCallbackInDatabase(database, base, 1_000)),
+        ).toThrow("outstanding callback");
+      } else {
+        expect(
+          transact(database, () => issuePluginAsyncCallbackInDatabase(database, base, 1_000)).token,
+        ).toBeTruthy();
+      }
+    },
+  );
+
+  it("rejects a callback beyond the 24-hour redemption bound before persistence", () => {
+    expect(() =>
+      transact(database, () =>
+        issuePluginAsyncCallbackInDatabase(database, base, 24 * 60 * 60_000 + 1),
+      ),
+    ).toThrow("deadline");
+    expect(
+      database.db.prepare("SELECT count(*) AS count FROM delivery_queue_entries").get(),
+    ).toMatchObject({ count: 0 });
+  });
+
+  it("keeps receipt retention separate from the 24-hour redemption bound", () => {
+    const now = 10_000;
+    const issued = transact(database, () =>
+      issuePluginAsyncCallbackInDatabase(database, base, 24 * 60 * 60_000, now),
+    );
+    expect(issued.expiresAt).toBe(now + 24 * 60 * 60_000);
+    const key = createHash("sha256").update(issued.token).digest("hex");
+    expect(
+      database.db
+        .prepare("SELECT expires_at FROM plugin_state_entries WHERE entry_key = ?")
+        .get(key),
+    ).toMatchObject({ expires_at: issued.expiresAt + 7 * 24 * 60 * 60_000 });
+  });
+
+  it("allows only one outstanding callback for a native child across plugins", () => {
+    const first = transact(database, () =>
+      issuePluginAsyncCallbackInDatabase(database, base, 60_000),
+    );
+    const second = { ...base, pluginId: "other", toolName: "verify" };
+    expect(() =>
+      transact(database, () => issuePluginAsyncCallbackInDatabase(database, second, 60_000)),
+    ).toThrow("outstanding callback");
+    expect(
+      transact(database, () =>
+        completePluginAsyncCallbackInDatabase({
+          database,
+          token: first.token,
+          resultText: "first result",
+          assertOwnerCurrent: () => {},
+        }),
+      ).status,
+    ).toBe("accepted");
+    // Queued is not delivered: keep the reservation until the delivery owner settles it.
+    expect(() =>
+      transact(database, () => issuePluginAsyncCallbackInDatabase(database, second, 60_000)),
+    ).toThrow("outstanding callback");
+    expect(queue(database)).toHaveLength(1);
+  });
+
+  it("never admits an incognito binding to durable callback storage", () => {
+    expect(() =>
+      transact(database, () =>
+        issuePluginAsyncCallbackInDatabase(
+          database,
+          { ...base, childSessionKey: "agent:main:subagent:incognito-private" },
+          60_000,
+        ),
+      ),
+    ).toThrow("memory-only owner");
+    expect(
+      database.db.prepare("SELECT count(*) AS count FROM plugin_state_entries").get(),
+    ).toMatchObject({ count: 0 });
+    expect(
+      database.db.prepare("SELECT count(*) AS count FROM delivery_queue_entries").get(),
+    ).toMatchObject({ count: 0 });
+  });
+
+  it("refuses a plugin burst without evicting admitted callbacks and frees cancelled capacity", () => {
+    const issued = transact(database, () =>
+      Array.from({ length: PLUGIN_CALLBACK_MAX_PENDING_PER_PLUGIN }, (_, index) =>
+        issuePluginAsyncCallbackInDatabase(
+          database,
+          { ...base, childRunId: "burst-" + index },
+          60_000,
+        ),
+      ),
+    );
+    const next = { ...base, childRunId: "burst-next" };
+    expect(() =>
+      transact(database, () => issuePluginAsyncCallbackInDatabase(database, next, 60_000)),
+    ).toThrow("capacity reached");
+    expect(findPluginAsyncCallbackInDatabase(database, issued[0]!.token)).toMatchObject({
+      status: "pending",
+    });
+    transact(database, () =>
+      cancelPluginAsyncCallbackInDatabase(database, issued[0]!.token, () => {}),
+    );
+    expect(
+      transact(database, () => issuePluginAsyncCallbackInDatabase(database, next, 60_000)).token,
+    ).toBeTruthy();
+  });
+
+  it("bounds total outstanding callbacks across plugin namespaces", () => {
+    transact(database, () => {
+      for (let index = 0; index < PLUGIN_CALLBACK_MAX_PENDING; index += 1) {
+        issuePluginAsyncCallbackInDatabase(
+          database,
+          {
+            ...base,
+            pluginId: "global-" + Math.floor(index / PLUGIN_CALLBACK_MAX_PENDING_PER_PLUGIN),
+            childRunId: "global-" + index,
+          },
+          60_000,
+        );
+      }
+    });
+    expect(() =>
+      transact(database, () =>
+        issuePluginAsyncCallbackInDatabase(
+          database,
+          { ...base, pluginId: "new-plugin", childRunId: "global-overflow" },
+          60_000,
+        ),
+      ),
+    ).toThrow("capacity reached");
+  });
+
+  it.each(["delivered", "failed"] as const)(
+    "records %s separately from acceptance and fences late slot cleanup",
+    (outcome) => {
+      const first = transact(database, () =>
+        issuePluginAsyncCallbackInDatabase(database, base, 60_000),
+      );
+      const status = () =>
+        transact(database, () =>
+          readPluginAsyncCallbackStatusInDatabase(database, first.token, () => {}),
+        );
+      expect(status()).toEqual({
+        status: "pending",
+        expiresAt: first.expiresAt,
+        storage: "persistent",
+      });
+      const accepted = transact(database, () =>
+        completePluginAsyncCallbackInDatabase({
+          database,
+          token: first.token,
+          resultText: "bounded result",
+          assertOwnerCurrent: () => {},
+        }),
+      );
+      expect(accepted.status).toBe("accepted");
+      if (accepted.status !== "accepted") {
+        throw new Error("missing admitted callback result");
+      }
+      expect(status().status).toBe("accepted");
+      const key = createHash("sha256").update(first.token).digest("hex");
+      const settle = () =>
+        transact(database, () =>
+          settlePluginAsyncCallbackInDatabase(database, {
+            key,
+            slot: pluginAsyncCallbackSlot(base),
+            queueId: accepted.queueId,
+            expiry: false,
+            outcome,
+          }),
+        );
+      // The obsolete expiry receipt cannot release an accepted result's reservation.
+      transact(database, () =>
+        settlePluginAsyncCallbackInDatabase(database, {
+          key,
+          slot: pluginAsyncCallbackSlot(base),
+          queueId: first.queueId,
+          expiry: true,
+          outcome: "delivered",
+        }),
+      );
+      expect(() =>
+        transact(database, () => issuePluginAsyncCallbackInDatabase(database, base, 60_000)),
+      ).toThrow("outstanding callback");
+      settle();
+      expect(status().status).toBe(outcome);
+      const next = transact(database, () =>
+        issuePluginAsyncCallbackInDatabase(database, base, 60_000),
+      );
+      settle();
+      expect(findPluginAsyncCallbackInDatabase(database, next.token)?.status).toBe("pending");
+      expect(() =>
+        transact(database, () => issuePluginAsyncCallbackInDatabase(database, base, 60_000)),
+      ).toThrow("outstanding callback");
+    },
+  );
 
   it("keeps the host callback binding outside plugin-owned state namespaces", () => {
     const issued = transact(database, () =>
@@ -261,7 +505,11 @@ describe("durable plugin callback claim and outbox", () => {
       issuePluginAsyncCallbackInDatabase(database, base, 60_000),
     );
     const second = transact(database, () =>
-      issuePluginAsyncCallbackInDatabase(database, { ...base, pluginId: "other" }, 60_000),
+      issuePluginAsyncCallbackInDatabase(
+        database,
+        { ...base, pluginId: "other", childRunId: "other-plugin-run" },
+        60_000,
+      ),
     );
     const path = database.path;
     await closeOpenClawStateDatabaseAsync();
@@ -330,7 +578,12 @@ describe("durable plugin callback claim and outbox", () => {
       ).status,
     ).toBe("expired");
     const completed = transact(database, () =>
-      issuePluginAsyncCallbackInDatabase(database, base, 1000, 20000),
+      issuePluginAsyncCallbackInDatabase(
+        database,
+        { ...base, childRunId: "completed-run" },
+        1000,
+        20000,
+      ),
     );
     const completedExpiry = JSON.parse(
       String(

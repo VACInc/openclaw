@@ -150,6 +150,9 @@ export function buildPluginApi(params: BuildPluginApiParams): OpenClawPluginApi 
     pluginConfig: params.pluginConfig,
     runtime: params.runtime,
     asyncToolCallbacks: params.asyncToolCallbacks ?? {
+      status: async () => {
+        throw new Error("Async tool callback status requires an active plugin runtime");
+      },
       complete: async () => {
         throw new Error("Async tool callback completion requires an active plugin runtime");
       },

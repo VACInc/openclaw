@@ -1,42 +1,98 @@
 ---
-summary: "Durable, child-bound callbacks for asynchronous plugin tools"
+summary: "Child-bound asynchronous plugin callbacks, with RAM-only incognito lifetime"
 title: "Async tool callbacks"
 read_when:
   - "Returning delayed plugin tool results to a waiting native child"
 ---
 
-# Durable plugin tool callbacks: contract and behavior matrix
+# Async plugin tool callbacks
 
-V2 plugin tools can issue a durable callback bound to their current native child.
-The plugin receives an opaque token, not permission to select a session. After
-an external job finishes, the same plugin can redeem the token from its active
-runtime, including after a restart. OpenClaw queues the result for the original
-child and preserves its existing task and requester completion route.
+V2 plugin tools can issue a callback bound to their current native child. The
+plugin receives an opaque bearer token, not permission to choose a session or
+recipient. Redeeming it queues untrusted result data for that same child. The
+child completes through its normal task and original-requester delivery owners.
 
-This API requires a non-collector native child. It does not automatically yield
-the agent: return a pending response instructing the child to call
+This API requires an admitted, non-collector native child. It does not
+implicitly yield: return a pending tool response instructing the child to call
 `sessions_yield({ waitFor: "message" })`. A child that finishes normally, is
-cancelled, or is replaced cannot be resumed with the old callback.
+cancelled, or is reset/replaced cannot be resumed by its old callback.
 
-Owner: the host, not the plugin. A plugin tool may return `pending` only after the host has durably bound a fresh opaque callback capability to the exact tool invocation and native child session. A callback result is data for that same child, not a request to select a new session or delivery target. The child completes through its normal completion and requester-delivery owners. The capability alone conveys no right to send to an arbitrary requester.
+## Issue, complete, and inspect
 
-| State / event                                       | Required outcome                                                                                                      |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Admitted child tool returns pending                 | Persist capability, invocation and child lifecycle identity before reporting pending; no successful final answer yet. |
-| Valid completion before deadline                    | Consume capability once; enqueue result to exact child, whose normal completion routes to the original requester.     |
-| Two concurrent children, including same plugin/tool | Distinct capabilities and exact child/turn bindings; never cross-deliver.                                             |
-| Same completion again                               | Report already consumed; never enqueue a second turn.                                                                 |
-| Unknown, forged or mismatched capability            | Reject without revealing child/requester identity or changing state.                                                  |
-| Deadline elapsed                                    | Reject completion; terminalize pending work with a visible expiry outcome.                                            |
-| Child cancelled/reset/replaced                      | Recheck authoritative child/session lifecycle before claiming; reject stale capability.                               |
-| Gateway restarts at any cut point                   | Restore pending claims and any committed completion outbox; no loss or duplicate delivery.                            |
-| Delivery transport fails after claim                | Keep a durable outbox and retry/reconcile with the original idempotency identity.                                     |
-| Non-child or unbound caller                         | Reject pending mode rather than guessing a parent or delivery target.                                                 |
+During the registered tool's `execute`, call
+`await ctx.issueAsyncCallback({ ttlMs: 60_000 })`. The returned handle exposes
+`token`, `expiresAt`, `storage`, `complete(resultText)`, and `status()`.
+Issuance must settle before reporting pending; detached work cannot issue after
+its originating invocation returns or fails.
 
-A V2 plugin can call `await ctx.issueAsyncCallback({ ttlMs: 60_000 })` during its registered tool's `execute`, persist `handle.token` in plugin-private storage, and later call `await handle.complete(text)` or, after a restart, `await api.asyncToolCallbacks.complete({ token, resultText: text })`. Never return the token in tool content, logs or model-visible output. The plugin must return a pending tool response that tells its child to call `sessions_yield({ waitFor: "message" })`; a normal final answer will settle the child before its callback. The plugin does not choose a callback destination. TTL is at most seven days; the durable receipt expires no later than seven days beyond the deadline. If the child remains running or queued rather than yielding, the queue waits at most one hour after the later of enqueue and delivery availability, then moves the result or expiry to its failed queue instead of deferring forever.
+An active instance of the same plugin can also call
+`api.asyncToolCallbacks.complete({ token, resultText })` or
+`api.asyncToolCallbacks.status({ token })`. This supports ordinary-session
+completion after a Gateway restart without keeping the original tool promise.
+Plugin retirement revokes the old instance; it does not authorize a replacement
+plugin identity to redeem another plugin's token.
 
-No plugin-supplied session key, recipient, channel, run ID, or completion token is trusted as authority. Callback admission and completion need current host authority, including plugin lifecycle revocation. The completion API must not require a model turn, an installed transport-specific integration, or a live initiating tool promise. Timeout, retention, downgrade, and disclosure policy need explicit bounds. This contract is not met by a transient in-memory Promise or by simply sending a new message to the requester.
+- **Maximum redemption lifetime: 24 hours.** Overlong or invalid TTLs are
+  rejected, not silently extended. Incognito additionally caps this at the
+  session's existing deadline.
+- **One outstanding callback per native child/run**, across plugins and tools.
+  Acceptance does not free this slot; terminal delivery settlement does.
+- **Capacity:** at most 100 outstanding callbacks per plugin and 1,000 per
+  storage owner (durable database or live RAM runtime). Overflow is rejected
+  without evicting admitted work. Result text is limited to 32,000 characters.
+- **Accepted is not delivered.** A successful redemption returns `accepted`;
+  repeating it returns `duplicate`. Inspect the receipt for `pending`,
+  `accepted`, `delivered`, `failed`, `expired`, or `cancelled`.
+  `delivered` means the native continuation was admitted, not that the child's
+  task or its final requester delivery succeeded. `unknown` covers invalid,
+  inaccessible, revoked, or forgotten receipts without revealing their route.
+- **Delivery is bounded.** The existing queue retries transient failures. A
+  child that never yields cannot retain a result forever: there is a one-hour
+  yield grace after result acceptance or the callback's expiry deadline. A
+  terminal delivery failure is inspectable as `failed`; plugins must not treat
+  `accepted` as proof of task completion.
 
-Callback issuance is limited to the same factory context and currently executing tool call. Detached work cannot issue a new capability after that call returns or fails, including when issuance is still awaiting host admission. Completion of an already issued capability remains available through the current plugin runtime. The host ledger uses a reserved core state owner that plugin state APIs cannot open.
+## Incognito is RAM-only
 
-Callback rows use a separate delivery queue namespace, handled by the same session-delivery owner. Older compatible runtimes leave these rows untouched rather than misinterpreting them as restart wakes. Queue isolation does not make incompatible database schemas readable: for example, the published 2026.9.6 runtime supports state schema 18 and must refuse a candidate database already upgraded to schema 19. Follow the [database downgrade recovery guidance](/reference/database-schemas/integrity-and-recovery#downgrade-recovery); never lower schema markers to force a rollback. Returning to a callback-capable runtime resumes pending callback recovery from the preserved database.
+For an incognito child, `storage === "memory"`. The capability ledger, queued
+payload, retries, and receipts live only in the Gateway process. Restarting or
+stopping its runtime destroys them, including accepted-but-undelivered results.
+Session deletion, reset, archive, replacement, or expiry revokes the original
+memory owner; an old token cannot attach itself to a newly created session.
+The original physical RAM database and lifecycle identity must remain current.
+No private callback falls back to the persistent queue.
+
+**Plugin authors must honor this mode too:** do not persist memory-mode tokens
+or results in plugin state, files, logs, or third-party job metadata merely to
+recover them after restart. OpenClaw cannot erase a copy a plugin or external
+service has independently retained. A lost incognito callback must be started
+again as new work, not replayed against a replacement session. Memory receipts
+are bounded and may be forgotten after settlement; none outlive the session.
+
+For `storage === "persistent"`, store tokens only in plugin-private storage if
+restart recovery is needed. Never include tokens in model-visible tool output,
+transcripts, shared logs, or public URLs. Possessing a token does not replace
+current plugin and exact native-child authority checks.
+
+## Recovery and rollback
+
+Ordinary callbacks use one host-owned capability ledger and atomic result
+outbox. Completion and expiry serialize; duplicate redemption cannot enqueue
+another result. Pending work survives restart, while reset/cancellation checks
+remain mandatory at delivery. Receipt retention is separate from redemption:
+ordinary receipts expire seven days after the callback deadline. Retention is
+not permission to redeem after 24 hours.
+
+Callback deliveries use a separate queue namespace under the existing
+session-delivery owner. Compatible older runtimes leave these rows untouched
+rather than misinterpreting them as restart wakes. Namespace isolation does not
+make incompatible database schemas readable: for example, published 2026.9.6
+supports state schema 18 and cannot open a candidate already at schema 19.
+Follow the [database downgrade recovery guidance](/reference/database-schemas/integrity-and-recovery#downgrade-recovery);
+never lower schema markers to force a rollback.
+
+A manual restore of historical state is a rewind, not a global exactly-once
+boundary for external side effects. Plugins whose jobs modify external systems
+must use their own stable job/idempotency identity and reconcile the external
+result before repeating those effects. Automatic updater rollback retains its
+existing refusal to discard newer committed database writes.

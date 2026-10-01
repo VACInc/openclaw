@@ -93,6 +93,18 @@ export function createPluginApiFactory(
           ),
         );
       };
+    const assertPluginCurrent = () => {
+      if (registrationMode !== "full") {
+        throw new Error("Async callbacks require an active plugin runtime");
+      }
+      if (
+        !capturePluginLifecycleAuthority(getPluginRecordRegistry(registry, record), record, {
+          scopedRuntime: true,
+        })?.()
+      ) {
+        throw new Error(`Plugin "${record.id}" runtime is no longer active.`);
+      }
+    };
     return buildPluginApi({
       id: record.id,
       name: record.name,
@@ -109,19 +121,17 @@ export function createPluginApiFactory(
           ? createUnavailableRuntime(registrationMode, record.id)
           : resolvePluginRuntime(record),
       asyncToolCallbacks: {
+        status: async ({ token }) => {
+          assertPluginCurrent();
+          const { getHostPluginAsyncCallbackStatus } =
+            await import("../agents/plugin-async-callback.host.js");
+          return getHostPluginAsyncCallbackStatus({
+            pluginId: record.id,
+            token,
+            assertPluginCurrent,
+          });
+        },
         complete: async ({ token, resultText }) => {
-          if (registrationMode !== "full") {
-            throw new Error("Async callback completion requires an active plugin runtime");
-          }
-          const assertPluginCurrent = () => {
-            if (
-              !capturePluginLifecycleAuthority(getPluginRecordRegistry(registry, record), record, {
-                scopedRuntime: true,
-              })?.()
-            ) {
-              throw new Error(`Plugin "${record.id}" runtime is no longer active.`);
-            }
-          };
           assertPluginCurrent();
           const { completeHostPluginAsyncCallback } =
             await import("../agents/plugin-async-callback.host.js");

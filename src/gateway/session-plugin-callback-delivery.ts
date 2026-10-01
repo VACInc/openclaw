@@ -1,3 +1,9 @@
+import {
+  isMemorySessionDelivery,
+  verifyMemoryCallbackDelivery,
+  assertMemoryCallbackDeliveryCurrent,
+  expireMemoryPluginCallback,
+} from "../agents/plugin-async-callback-memory.js";
 import { getLatestLiveSubagentRunByChildSessionKey } from "../agents/subagents/registry/subagent-registry-read.js";
 import {
   SessionDeliveryDeadLetteredError,
@@ -22,7 +28,14 @@ export async function deliverNativeChildCallback(params: {
   const { entry, queueContext } = params;
   const runId = `plugin-callback:${entry.id}`;
   queueContext.admission.assertCurrent();
-  if (entry.callbackExpiryKey) {
+  const memory = isMemorySessionDelivery(entry.id);
+  if (memory && !(await verifyMemoryCallbackDelivery(entry))) {
+    return;
+  }
+  if (memory && entry.callbackExpiryKey && !expireMemoryPluginCallback(entry)) {
+    return;
+  }
+  if (!memory && entry.callbackExpiryKey) {
     const { runPluginAsyncCallbackCommand } = await import("../agents/plugin-async-callback.js");
     const expired = await runPluginAsyncCallbackCommand(
       { type: "pluginCallback.expire", input: { key: entry.callbackExpiryKey } },
@@ -44,6 +57,9 @@ export async function deliverNativeChildCallback(params: {
   const expectedLifecycleRevision = current?.childSessionIdentity?.lifecycleRevision ?? null;
   const assertCurrent = () => {
     queueContext.admission.assertCurrent();
+    if (memory) {
+      assertMemoryCallbackDeliveryCurrent(entry);
+    }
     const child = getLatestLiveSubagentRunByChildSessionKey(entry.sessionKey);
     if (
       !child ||

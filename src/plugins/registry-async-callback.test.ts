@@ -10,7 +10,22 @@ const complete = vi.hoisted(() =>
     return "accepted" as const;
   }),
 );
+const status = vi.hoisted(() =>
+  vi.fn(
+    async ({
+      assertPluginCurrent,
+    }: {
+      pluginId: string;
+      token: string;
+      assertPluginCurrent: () => void;
+    }) => {
+      assertPluginCurrent();
+      return { status: "pending" as const, expiresAt: 1000, storage: "persistent" as const };
+    },
+  ),
+);
 vi.mock("../agents/plugin-async-callback.host.js", () => ({
+  getHostPluginAsyncCallbackStatus: status,
   completeHostPluginAsyncCallback: complete,
 }));
 
@@ -41,4 +56,23 @@ it("binds restart-completion to the current plugin instance and revokes old gene
   const rebound = plugin("a");
   await rebound.api.asyncToolCallbacks.complete({ token: "opaque", resultText: "done" });
   expect(complete.mock.calls.at(-1)?.[0].pluginId).toBe("a");
+});
+
+it("binds receipt reads to the live plugin through asynchronous preparation", async () => {
+  status.mockClear();
+  const a = plugin("receipt-a");
+  const b = plugin("receipt-b");
+  expect(await a.api.asyncToolCallbacks.status({ token: "opaque" })).toEqual({
+    status: "pending",
+    expiresAt: 1000,
+    storage: "persistent",
+  });
+  await b.api.asyncToolCallbacks.status({ token: "opaque" });
+  expect(status.mock.calls.map(([call]) => call.pluginId)).toEqual(["receipt-a", "receipt-b"]);
+  const pending = a.api.asyncToolCallbacks.status({ token: "opaque" });
+  markPluginRegistryRetired(a.registry);
+  await expect(pending).rejects.toThrow("no longer active");
+  await expect(a.api.asyncToolCallbacks.status({ token: "opaque" })).rejects.toThrow(
+    "no longer active",
+  );
 });

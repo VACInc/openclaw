@@ -99,6 +99,14 @@ export const settleQueuedSessionDelivery: SettleSessionDeliveryFn = async (
   outcome,
   queueContext,
 ) => {
+  if (entry.kind === "nativeChildFollowup") {
+    const { settlePluginAsyncCallbackDelivery } =
+      await import("../agents/plugin-async-callback.js");
+    await settlePluginAsyncCallbackDelivery(entry, outcome, queueContext);
+  }
+  if (entry.id.startsWith("memory:")) {
+    return;
+  }
   await settleCorrelatedSubagentDelivery(entry, outcome, queueContext);
   await removeCronRunContinuationSessionIfIdle(entry.sessionKey, entry.id, queueContext);
 };

@@ -13,6 +13,9 @@ export const SESSION_DELIVERY_QUEUE_NAME = "session";
 export const NATIVE_CHILD_DELIVERY_QUEUE_NAME = "session-native-child";
 const NATIVE_CHILD_DELIVERY_ID_PREFIX = "native-child:";
 export function resolveSessionDeliveryQueueName(id: string): string {
+  if (id.startsWith("memory:")) {
+    throw new Error("RAM delivery cannot enter a persistent queue");
+  }
   return id.startsWith(NATIVE_CHILD_DELIVERY_ID_PREFIX)
     ? NATIVE_CHILD_DELIVERY_QUEUE_NAME
     : SESSION_DELIVERY_QUEUE_NAME;
@@ -101,6 +104,9 @@ export type QueuedSessionDeliveryPayload =
       idempotencyKey: string;
       /** Host-only digest of the pending claim to terminalize at its deadline. */
       callbackExpiryKey?: string;
+      /** Host-only receipt ownership; never a bearer secret or plugin-selected route. */
+      callbackKey?: string;
+      callbackSlot?: string;
     } & SessionDeliveryRetryPolicy);
 
 export type QueuedSessionDelivery = QueuedSessionDeliveryPayload & {
