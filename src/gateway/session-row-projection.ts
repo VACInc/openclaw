@@ -1,6 +1,10 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { listAgentIds, withAgentRosterFactsBatch } from "../agents/agent-scope-config.js";
+import { createSubagentSessionListReadView } from "../agents/subagents/registry/subagent-registry-state.js";
+import { cloneEnvWithPlatformSemantics } from "../config/config-env-vars.js";
 import { isInternalSessionEffectsKey } from "../config/sessions/internal-session-key.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions/types.js";
+import { resolveStateDir } from "../config/state-dir.js";
 import { isIncognitoSessionKey, parseAgentSessionKey } from "../routing/session-key.js";
 import {
   onSessionIdentityMutation,
@@ -11,6 +15,7 @@ import {
   isSessionStoreTopologyChange,
   type SessionRowChange,
 } from "../sessions/session-row-changes.js";
+import { prepareAgentDatabaseDeletionSnapshotRead } from "../state/agent-deletion-journal.read.js";
 import { retainUserProfileCatalog } from "../state/user-profile-list.js";
 import { ensureSessionGroupCatalog } from "./session-group-catalog.js";
 import { createSessionMembershipProjection } from "./session-membership-projection.js";
@@ -41,7 +46,6 @@ import {
   findSessionRowById,
   readResidentSessionRow,
 } from "./session-row-projection-materialize.js";
-import { createSessionRowProjectionOwner } from "./session-row-projection-owner.js";
 import * as records from "./session-row-projection-record.js";
 import { createSessionRowRefresh } from "./session-row-projection-refresh.js";
 import { createSessionRowProjectionTranscriptUpdates } from "./session-row-projection-transcript.js";
@@ -54,7 +58,12 @@ import {
 
 /** Committed publications own invalidation; each admitted physical store is hydrated once. */
 export async function createSessionRowProjection(params: records.ProjectionOptions) {
-  const { inOwnerContext, env, discoveryRead, subagents } = createSessionRowProjectionOwner();
+  // Publications may borrow startup admission; projection work retains its own authority.
+  const inOwnerContext = AsyncLocalStorage.snapshot();
+  const env = cloneEnvWithPlatformSemantics(process.env);
+  env.OPENCLAW_STATE_DIR = resolveStateDir(env);
+  const discoveryRead = prepareAgentDatabaseDeletionSnapshotRead({ env }, "runtime");
+  const subagents = createSubagentSessionListReadView({ env });
   while (!subagents.snapshotIdentity()) {
     await subagents.prepare();
   }
