@@ -136,6 +136,7 @@ const workerModules = new Set([
   "packages/memory-host-sdk/src/memory-entry-origins.ts", // Private memory SDK origin queries serve search and origin workers only.
 
   "src/agents/mcp-oauth-store.kernel.ts", // MCP OAuth write dispatcher and shared-state read worker only.
+  "src/agents/plugin-async-callback.store.ts", // SQL kernels: only plugin-async-callback.worker.ts calls them at runtime; host seams import types.
 
   "src/agents/subagents/completion/subagent-completion-queue-receipt.ts", // Completion mutation kernel runs through the session-delivery worker.
 
