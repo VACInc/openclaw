@@ -1,9 +1,18 @@
 import { createHash } from "node:crypto";
-import type { PluginAsyncCallbackBinding } from "./plugin-async-callback.store.js";
+/** Host-derived native identity shared by callback policies and storage adapters. */
+export type PluginAsyncCallbackBinding = {
+  pluginId: string;
+  toolName: string;
+  childSessionKey: string;
+  childSessionId: string;
+  childRunId: string;
+  childGeneration?: number;
+  childCreatedAt: number;
+};
 
-export const PLUGIN_CALLBACK_MAX_TTL_MS = 24 * 60 * 60_000;
+const PLUGIN_CALLBACK_MAX_TTL_MS = 24 * 60 * 60_000;
 export const PLUGIN_CALLBACK_RECEIPT_RETENTION_MS = 7 * 24 * 60 * 60_000;
-export const PLUGIN_CALLBACK_MAX_PENDING_PER_PLUGIN = 100;
+const PLUGIN_CALLBACK_MAX_PENDING_PER_PLUGIN = 100;
 export const PLUGIN_CALLBACK_MAX_PENDING = 1_000;
 export const PLUGIN_CALLBACK_MAX_RESULT_CHARS = 32_000;
 

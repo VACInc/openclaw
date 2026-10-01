@@ -19,8 +19,8 @@ import {
   issueMemoryPluginCallback,
   withPluginCallbackMemoryOwner,
 } from "./plugin-async-callback-memory.js";
+import type { PluginAsyncCallbackBinding } from "./plugin-async-callback-policy.js";
 import { runPluginAsyncCallbackCommand } from "./plugin-async-callback.js";
-import type { PluginAsyncCallbackBinding } from "./plugin-async-callback.store.js";
 import { getLatestLiveSubagentRunByChildSessionKey } from "./subagents/registry/subagent-registry-read.js";
 
 class CallbackChildUnavailableError extends Error {}

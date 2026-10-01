@@ -13,7 +13,7 @@ import {
   resolveIncognitoOpenClawAgentSqlitePath,
 } from "../state/openclaw-agent-db.js";
 import type { PluginCallbackMemoryLifetime } from "./plugin-async-callback-memory.js";
-import type { PluginAsyncCallbackBinding } from "./plugin-async-callback.store.js";
+import type { PluginAsyncCallbackBinding } from "./plugin-async-callback-policy.js";
 
 /** Observe only the already-admitted RAM database, never create/adopt a replacement. */
 export async function capturePluginCallbackMemoryLifetime(

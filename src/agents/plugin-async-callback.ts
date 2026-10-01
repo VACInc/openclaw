@@ -12,7 +12,7 @@ import {
   isMemorySessionDelivery,
   settleMemoryPluginCallback,
 } from "./plugin-async-callback-memory.js";
-import type { PluginAsyncCallbackBinding } from "./plugin-async-callback.store.js";
+import type { PluginAsyncCallbackBinding } from "./plugin-async-callback-policy.js";
 
 type Command = {
   [

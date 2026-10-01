@@ -8,7 +8,7 @@ import {
   PLUGIN_CALLBACK_MAX_RESULT_CHARS,
   PLUGIN_CALLBACK_RECEIPT_RETENTION_MS,
 } from "./plugin-async-callback-policy.js";
-import type { PluginAsyncCallbackBinding } from "./plugin-async-callback.store.js";
+import type { PluginAsyncCallbackBinding } from "./plugin-async-callback-policy.js";
 
 function retainReceipt(entry: QueuedSessionDelivery, memory: boolean): QueuedSessionDelivery {
   if (memory) {

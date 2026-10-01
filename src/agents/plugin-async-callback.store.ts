@@ -20,6 +20,7 @@ import {
   preparePluginCallbackResult,
 } from "./plugin-async-callback-payload.js";
 import {
+  type PluginAsyncCallbackBinding,
   assertPluginAsyncCallbackCapacity,
   hashPluginAsyncCallbackToken as digest,
   pluginAsyncCallbackSlot,
@@ -34,30 +35,12 @@ const LEDGER_PLUGIN_ID = "core:plugin-async-callback";
 const LEDGER_NAMESPACE = "async-tool-callback";
 const ACTIVE_NAMESPACE = "async-tool-callback.active";
 
-type PendingCallback = {
+type PendingCallback = PluginAsyncCallbackBinding & {
   status: "pending" | "completed" | "cancelled" | "expired";
-  pluginId: string;
-  toolName: string;
-  childSessionKey: string;
-  childSessionId: string;
-  childRunId: string;
-  childGeneration?: number;
-  childCreatedAt: number;
   expiresAt: number;
   queueId?: string;
   deliveryStatus?: "delivered" | "failed";
 };
-
-export type PluginAsyncCallbackBinding = Pick<
-  PendingCallback,
-  | "pluginId"
-  | "toolName"
-  | "childSessionKey"
-  | "childSessionId"
-  | "childRunId"
-  | "childGeneration"
-  | "childCreatedAt"
->;
 
 function ledger(database: OpenClawStateDatabase) {
   return getNodeSqliteKysely<Pick<DB, "plugin_state_entries">>(database.db);

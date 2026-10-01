@@ -1,6 +1,7 @@
 import { requestSqliteWorkerOperationAdmission } from "../infra/sqlite-worker-operation-admission.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db-contract.js";
 import { runOpenClawStateWriteTransaction } from "../state/openclaw-state-db.js";
+import type { PluginAsyncCallbackBinding } from "./plugin-async-callback-policy.js";
 import {
   readPluginAsyncCallbackStatusInDatabase,
   settlePluginAsyncCallbackInDatabase,
@@ -9,7 +10,6 @@ import {
   completePluginAsyncCallbackInDatabase,
   cancelPluginAsyncCallbackInDatabase,
   findPluginAsyncCallbackInDatabase,
-  type PluginAsyncCallbackBinding,
 } from "./plugin-async-callback.store.js";
 import type { PluginAsyncCallbackWorkerOperations } from "./plugin-async-callback.worker-contract.js";
 

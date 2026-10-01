@@ -15,7 +15,6 @@ import {
 } from "../state/openclaw-state-db.js";
 import {
   PLUGIN_CALLBACK_MAX_PENDING,
-  PLUGIN_CALLBACK_MAX_PENDING_PER_PLUGIN,
   pluginAsyncCallbackSlot,
 } from "./plugin-async-callback-policy.js";
 import {
@@ -28,6 +27,8 @@ import {
   settlePluginAsyncCallbackInDatabase,
 } from "./plugin-async-callback.store.js";
 
+// This is the documented contract, not an import of the implementation threshold.
+const EXPECTED_PLUGIN_LIMIT = 100;
 const dirs = useAutoCleanupTempDirTracker(afterEach);
 const base = {
   pluginId: "example",
@@ -188,7 +189,7 @@ describe("durable plugin callback claim and outbox", () => {
 
   it("refuses a plugin burst without evicting admitted callbacks and frees cancelled capacity", () => {
     const issued = transact(database, () =>
-      Array.from({ length: PLUGIN_CALLBACK_MAX_PENDING_PER_PLUGIN }, (_, index) =>
+      Array.from({ length: EXPECTED_PLUGIN_LIMIT }, (_, index) =>
         issuePluginAsyncCallbackInDatabase(
           database,
           { ...base, childRunId: "burst-" + index },
@@ -218,7 +219,7 @@ describe("durable plugin callback claim and outbox", () => {
           database,
           {
             ...base,
-            pluginId: "global-" + Math.floor(index / PLUGIN_CALLBACK_MAX_PENDING_PER_PLUGIN),
+            pluginId: "global-" + Math.floor(index / EXPECTED_PLUGIN_LIMIT),
             childRunId: "global-" + index,
           },
           60_000,

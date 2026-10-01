@@ -18,7 +18,7 @@ import {
   validatePluginAsyncCallbackDeadline,
   PLUGIN_CALLBACK_MAX_PENDING,
 } from "./plugin-async-callback-policy.js";
-import type { PluginAsyncCallbackBinding } from "./plugin-async-callback.store.js";
+import type { PluginAsyncCallbackBinding } from "./plugin-async-callback-policy.js";
 
 export interface PluginCallbackMemoryLifetime {
   expiresAt: number;

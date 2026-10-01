@@ -49,9 +49,11 @@ function readSessionDelivery(
 }
 
 function readStatus(database: OpenClawStateDatabase, id: string) {
-  return getDeliveryQueueEntryOwnersInDatabase(database, [resolveSessionDeliveryQueueName(id)], id).get(
-    resolveSessionDeliveryQueueName(id),
-  )?.status;
+  return getDeliveryQueueEntryOwnersInDatabase(
+    database,
+    [resolveSessionDeliveryQueueName(id)],
+    id,
+  ).get(resolveSessionDeliveryQueueName(id))?.status;
 }
 
 function update(
@@ -59,9 +61,13 @@ function update(
   id: string,
   transform: (entry: QueuedSessionDelivery) => QueuedSessionDelivery,
 ) {
-  return updateDeliveryQueueEntryInDatabase(database, resolveSessionDeliveryQueueName(id), id, (entry) =>
-    // SAFETY: Only the session namespace reaches this payload transform.
-    transform(entry as QueuedSessionDelivery),
+  return updateDeliveryQueueEntryInDatabase(
+    database,
+    resolveSessionDeliveryQueueName(id),
+    id,
+    (entry) =>
+      // SAFETY: Only the session namespace reaches this payload transform.
+      transform(entry as QueuedSessionDelivery),
   );
 }
 
@@ -267,7 +273,11 @@ export const sessionDeliveryOperations = {
       }
       const result = terminalizePendingDeliveryQueueEntryInDatabase(
         database,
-        prepareDeliveryQueueTerminalEntry({ queueName: resolveSessionDeliveryQueueName(id), id, entry }),
+        prepareDeliveryQueueTerminalEntry({
+          queueName: resolveSessionDeliveryQueueName(id),
+          id,
+          entry,
+        }),
       );
       if (result.status !== "terminalized") {
         throw deliveryQueueEntryNotFoundError(resolveSessionDeliveryQueueName(id), id);

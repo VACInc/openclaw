@@ -1,7 +1,7 @@
 import type { OpenClawPluginAsyncToolCallbackStatus } from "../plugins/tool-types.js";
+import type { PluginAsyncCallbackBinding } from "./plugin-async-callback-policy.js";
 import type {
   PluginAsyncCallbackSettlement,
-  PluginAsyncCallbackBinding,
   PluginAsyncCallbackCompletion,
 } from "./plugin-async-callback.store.js";
 
