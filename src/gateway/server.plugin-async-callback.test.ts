@@ -1,5 +1,6 @@
 // Public session creation/read, real plugin invocation, durable outbox, and Gateway admission.
 import { describe, expect, it, vi } from "vitest";
+import type { SubagentRunRecord } from "../agents/subagents/registry/subagent-registry.types.js";
 import * as sessionAccessor from "../config/sessions/session-accessor.js";
 import {
   holdExecution,
@@ -21,8 +22,8 @@ describe("durable plugin callback Gateway admission", () => {
         await import("../agents/subagents/registry/subagent-registry-run-pause.js");
       const { loadSubagentRegistryFromSqlite } =
         await import("../agents/subagents/registry/subagent-registry.store.sqlite.js");
-      const { persistSubagentRunsToDiskOrThrow } =
-        await import("../agents/subagents/registry/subagent-registry-state.js");
+      const { mutateSubagentRuns } =
+        await import("../agents/subagents/registry/subagent-registry-persistence.js");
       const { registerAgentRunContext, clearAgentRunContext } =
         await import("../infra/agent-run-registry.js");
       const { createPluginRegistry } = await import("../plugins/registry.js");
@@ -50,8 +51,15 @@ describe("durable plugin callback Gateway admission", () => {
         queued: true,
         sessionEntry: sessionAccessor.loadSessionEntry(f.scope),
       });
-      const child = subagentRuns.get(priorRunId)!;
-      child.execution.status = "running";
+      const updateChild = (update: (draft: SubagentRunRecord) => void) =>
+        mutateSubagentRuns([priorRunId], (rows) => {
+          const draft = structuredClone(rows.get(priorRunId)!);
+          update(draft);
+          return { value: undefined, postimages: new Map([[priorRunId, draft]]) };
+        });
+      await updateChild((draft) => {
+        draft.execution.status = "running";
+      });
       registerAgentRunContext(priorRunId, {
         agentId: "main",
         sessionKey: f.sessionKey,
@@ -107,7 +115,9 @@ describe("durable plugin callback Gateway admission", () => {
           // Change authority after the real owner prepared adoption, before the
           // registered agent handler performs its final revalidation and commit.
           if (mode === "replaced") {
-            child.generation = (child.generation ?? 0) + 1;
+            await updateChild((draft) => {
+              draft.generation = (draft.generation ?? 0) + 1;
+            });
           } else if (mode === "lifecycle-reset") {
             await sessionAccessor.replaceSessionEntry(f.scope, {
               ...sessionAccessor.loadSessionEntry(f.scope)!,
@@ -124,8 +134,9 @@ describe("durable plugin callback Gateway admission", () => {
           ctx.assertInvocationCurrent,
         ).execute("issue", {});
         expect(token).not.toBe("");
-        expect(markSubagentRunPausedAfterYield({ entry: child })).toBe(true);
-        persistSubagentRunsToDiskOrThrow(subagentRuns, [priorRunId]);
+        await updateChild((draft) => {
+          expect(markSubagentRunPausedAfterYield({ entry: draft })).toBe(true);
+        });
         expect(await api.asyncToolCallbacks.complete({ token, resultText: "remote result" })).toBe(
           "accepted",
         );
