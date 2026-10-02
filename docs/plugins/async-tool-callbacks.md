@@ -80,8 +80,13 @@ Ordinary callbacks use one host-owned capability ledger and atomic result
 outbox. Completion and expiry serialize; duplicate redemption cannot enqueue
 another result. Pending work survives restart, while reset/cancellation checks
 remain mandatory at delivery. Receipt retention is separate from redemption:
-ordinary receipts expire seven days after the callback deadline. Retention is
-not permission to redeem after 24 hours.
+ordinary capability receipts become eligible for cleanup **one day after the
+callback deadline**. Compact queue receipts use a **one-day retention window
+after terminal settlement**. Existing bounded maintenance performs the cleanup;
+there is no per-receipt polling loop or exact-time physical-deletion guarantee.
+These are separate from the **24-hour maximum redemption lifetime**: retention
+is not permission to submit a late result. Receipt cleanup does not discard an
+accepted result that the delivery owner has not yet settled.
 
 Callback deliveries use a separate queue namespace under the existing
 session-delivery owner. Compatible older runtimes leave these rows untouched

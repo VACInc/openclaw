@@ -87,14 +87,14 @@ describe("durable plugin callback claim and outbox", () => {
       // The real GC predicate is expires_at <= now; only receipt rows are eligible.
       database.db
         .prepare("DELETE FROM plugin_state_entries WHERE expires_at <= ?")
-        .run(issued.expiresAt + 7 * 24 * 60 * 60_000);
+        .run(issued.expiresAt + 24 * 60 * 60_000);
       expect(findPluginAsyncCallbackInDatabase(database, issued.token)).toBeUndefined();
       expect(
         transact(database, () =>
           expirePluginAsyncCallbackInDatabase(
             database,
             key,
-            issued.expiresAt + 8 * 24 * 60 * 60_000,
+            issued.expiresAt + 2 * 24 * 60 * 60_000,
           ),
         ),
       ).toBe(!accepted);
@@ -130,7 +130,7 @@ describe("durable plugin callback claim and outbox", () => {
     ).toMatchObject({ count: 0 });
   });
 
-  it("keeps receipt retention separate from the 24-hour redemption bound", () => {
+  it("retains ordinary receipts for one day after the separate redemption deadline", () => {
     const now = 10_000;
     const issued = transact(database, () =>
       issuePluginAsyncCallbackInDatabase(database, base, 24 * 60 * 60_000, now),
@@ -141,7 +141,7 @@ describe("durable plugin callback claim and outbox", () => {
       database.db
         .prepare("SELECT expires_at FROM plugin_state_entries WHERE entry_key = ?")
         .get(key),
-    ).toMatchObject({ expires_at: issued.expiresAt + 7 * 24 * 60 * 60_000 });
+    ).toMatchObject({ expires_at: issued.expiresAt + 24 * 60 * 60_000 });
   });
 
   it("allows only one outstanding callback for a native child across plugins", () => {
@@ -388,7 +388,7 @@ describe("durable plugin callback claim and outbox", () => {
     for (const payload of payloads) {
       expect(payload.completionRetention).toEqual({
         idPrefix: payload.id,
-        maxAgeMs: 7 * 24 * 60 * 60_000,
+        maxAgeMs: 24 * 60 * 60_000,
         maxEntries: 1,
       });
     }
@@ -548,7 +548,7 @@ describe("durable plugin callback claim and outbox", () => {
     expect(expiry.enqueuedAt).toBe(10000);
     expect(expiry.completionRetention).toEqual({
       idPrefix: issued.queueId,
-      maxAgeMs: 7 * 24 * 60 * 60_000,
+      maxAgeMs: 24 * 60 * 60_000,
       maxEntries: 1,
     });
     expect(expiry.sessionKey).toBe(base.childSessionKey);
