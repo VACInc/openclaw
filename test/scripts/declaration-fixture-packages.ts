@@ -67,12 +67,14 @@ export function materializeDeclarationPackages(root: string, unified: boolean) {
     fs.readFileSync(path.join(normalizationSource, "package.json"), "utf8"),
   );
   fs.mkdirSync(normalizationCore, { recursive: true });
-  const exports: Record<string, { types: string; default: string }> = {};
-  for (const name of ["error-coercion", "record-coerce"]) {
-    const source = fs.readFileSync(path.join(normalizationSource, `src/${name}.ts`), "utf8");
-    fs.writeFileSync(path.join(normalizationCore, `${name}.ts`), source);
-    fs.writeFileSync(path.join(normalizationCore, `${name}.mjs`), stripNodeTypeScriptTypes(source));
-    exports[`./${name}`] = { types: `./${name}.ts`, default: `./${name}.mjs` };
+  const normalizationEntries = ["error-coercion", "record-coerce"];
+  for (const entry of normalizationEntries) {
+    const source = fs.readFileSync(path.join(normalizationSource, `src/${entry}.ts`), "utf8");
+    fs.writeFileSync(path.join(normalizationCore, `${entry}.ts`), source);
+    fs.writeFileSync(
+      path.join(normalizationCore, `${entry}.mjs`),
+      stripNodeTypeScriptTypes(source),
+    );
   }
   fs.writeFileSync(
     path.join(normalizationCore, "package.json"),
@@ -80,7 +82,12 @@ export function materializeDeclarationPackages(root: string, unified: boolean) {
       name: normalizationManifest.name,
       version: normalizationManifest.version,
       type: "module",
-      exports,
+      exports: Object.fromEntries(
+        normalizationEntries.map((entry) => [
+          `./${entry}`,
+          { types: `./${entry}.ts`, default: `./${entry}.mjs` },
+        ]),
+      ),
     }),
   );
   for (const name of [
