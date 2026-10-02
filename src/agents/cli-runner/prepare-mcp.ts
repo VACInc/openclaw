@@ -1,6 +1,7 @@
 import type { McpLoopbackRequestContext } from "../../gateway/mcp-grant-store.js";
 import type { resolveMcpLoopbackScopedTools } from "../../gateway/mcp-http.runtime.js";
 import type { ResolvedCliBackend } from "../cli-backends.js";
+import { resolveExecConfigState } from "../exec-defaults.js";
 import { normalizeToolPolicyName } from "../tool-policy.js";
 import { finalizeCliMcpGrant } from "./mcp-grant-context.js";
 import { admitCliRunParams } from "./run-admission.js";
@@ -70,6 +71,13 @@ export function resolveCliMcpToolOwnership(
   const hostOwnedTools =
     options.enabled &&
     !options.nodePlacement &&
+    resolveExecConfigState({
+      cfg: run.config,
+      sessionEntry: run.sessionEntry,
+      execOverrides: run.execOverrides,
+      agentId: run.agentId,
+      sessionKey: run.sessionKey,
+    }).host !== "node" &&
     !options.rooted &&
     !options.skipPreparation &&
     !options.sideQuestion &&
