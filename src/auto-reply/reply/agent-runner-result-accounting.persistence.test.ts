@@ -9,6 +9,7 @@ import type { SessionEntry } from "../../config/sessions.js";
 import * as sessionAccessor from "../../config/sessions/session-accessor.js";
 import { applySessionEntryLifecycleMutation } from "../../config/sessions/session-accessor.js";
 import { drainSessionStoreWriterQueuesForTest } from "../../config/sessions/store-writer-state.test-support.js";
+import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
 import { disposeOpenClawAgentDatabaseByPath } from "../../state/openclaw-agent-db-disposal.js";
 import {
   closeOpenClawAgentDatabasesAsync,
@@ -22,9 +23,12 @@ import { recordTurnCompaction } from "./agent-runner-compaction-accounting.js";
 import {
   agentAccountingPersistenceDiagnostic as diagnostic,
   createAgentAccountingPersistenceFixture,
+  observeCompletionCommands,
 } from "./agent-runner-result-accounting.persistence.test-support.js";
 import { finalizeReplyAgentRun } from "./agent-runner-result.js";
 import { createReplyOperation, type ReplyOperation } from "./reply-run-registry.js";
+import { createReplyRestartRecoveryClaimController } from "./restart-recovery-claim.js";
+import { createReplyRecoveryActorFixture } from "./restart-recovery-claim.test-support.js";
 import { incrementCompactionCount } from "./session-updates.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -228,6 +232,95 @@ it("completes against the settled writer when the caller still has its pre-run e
   });
   expect(fixture.read()?.compactionCount).toBeUndefined();
 });
+
+it.each(["success", "publication-failure", "rollback"] as const)(
+  "settles restart claim cleanup with final accounting after %s",
+  async (outcome) => {
+    const fixture = await createFixture();
+    const { context, sessionId } = fixture;
+    const sessionKey = context.sessionKey!;
+    const scope = { agentId: "main", storePath, sessionKey };
+    const entry = {
+      ...fixture.read()!,
+      restartRecoveryDeliveryRunId: "recovery-run",
+      restartRecoveryDeliverySourceRunId: "source-turn",
+    };
+    await sessionAccessor.replaceSessionEntry(scope, entry);
+    context.activeSessionEntry = entry;
+    context.activeSessionStore![sessionKey] = entry;
+    await using actor = createReplyRecoveryActorFixture({
+      ...scope,
+      getSessionId: () => sessionId,
+      operation: context.replyOperation,
+    });
+    const controller = createReplyRestartRecoveryClaimController({
+      ...scope,
+      acquireSessionActor: () => actor.acquireSessionActor(),
+      admissionRunId: "recovery-run",
+      executionRunId: context.runId,
+      lifecycleGeneration: getAgentEventLifecycleGeneration(),
+      getEntry: () => context.activeSessionEntry,
+      getSessionId: () => sessionId,
+      isRestartAbort: () => false,
+      resolveDeliveryContext: () => undefined,
+      setEntry(next) {
+        context.activeSessionEntry = next;
+        context.activeSessionStore![sessionKey] = next;
+      },
+    });
+    await controller.admitUserTurn();
+    context.prepareRestartClaimCleanup = controller.prepareCompletionCleanup;
+    context.execution.result.meta.agentMeta = {
+      sessionId,
+      provider: diagnostic.provider,
+      model: diagnostic.model,
+      usage: { input: 120, output: 8 },
+    };
+    const before = fixture.read();
+    if (outcome === "publication-failure") {
+      context.activeSessionStore = Object.freeze({ ...context.activeSessionStore });
+    }
+    const observer = observeCompletionCommands(
+      outcome === "rollback"
+        ? {
+            beforeCommit() {
+              throw new Error("synthetic completion refusal");
+            },
+          }
+        : {},
+    );
+    try {
+      if (outcome === "success") {
+        await finalizeReplyAgentRun(context);
+      } else {
+        await expect(finalizeReplyAgentRun(context)).rejects.toThrow(
+          outcome === "rollback"
+            ? "synthetic completion refusal"
+            : /read only|readonly|extensible/i,
+        );
+      }
+      if (outcome === "rollback") {
+        expect(fixture.read()).toEqual(before);
+      } else {
+        expect(fixture.read()).toMatchObject({
+          inputTokens: 120,
+          outputTokens: 8,
+          pendingFinalDelivery: { text: "done", deliveries: [{ state: "prepared" }] },
+          restartRecoveryTerminalRunIds: ["source-turn"],
+        });
+        expect(fixture.read()?.restartRecoveryDeliveryRunId).toBeUndefined();
+      }
+      const commandsBeforeCleanup = observer.commands.length;
+      await controller.clear();
+      if (outcome !== "rollback") {
+        expect(observer.commands).toHaveLength(commandsBeforeCleanup);
+      }
+      expect(fixture.read()?.restartRecoveryDeliveryRunId).toBeUndefined();
+    } finally {
+      observer.restore();
+    }
+  },
+);
 
 it.each([
   { name: "typed runtime", tokens: 1_000_000, source: "runtime" as const, expected: 1_000_000 },
