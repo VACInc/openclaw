@@ -59,7 +59,7 @@ type SessionsToolTestConfig = {
   };
   tools: {
     agentToAgent: { enabled: boolean };
-    sessions?: { visibility: "self" | "tree" | "agent" | "all" };
+    sessions?: NonNullable<OpenClawConfig["tools"]>["sessions"];
   };
 };
 
