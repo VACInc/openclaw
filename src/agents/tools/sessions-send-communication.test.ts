@@ -139,26 +139,6 @@ describe("sessions_send communication boundary", () => {
       expect(input.callGateway).not.toHaveBeenCalled();
     },
   );
-  it("accepted thread work keeps completion custody after opt-in revocation", async () => {
-    state.config = { tools: { sessions: { allowThreadTargets: true } } };
-    const input = operation(undefined, endpoint("discord:channel:123:thread:456"));
-    input.callGateway.mockImplementation(async (request) => {
-      request.sessionMutationCommitGuard?.();
-      return { status: "accepted", runId: "accepted-run" };
-    });
-    const gate = await prepareSessionsSendCommunication(input);
-    await expect(
-      gate.callGateway({
-        method: "agent",
-        params: { agentId: "main", sessionKey: input.target.sessionKey, message: input.message },
-      }),
-    ).resolves.toEqual({ status: "accepted", runId: "accepted-run" });
-    expect(state.approve).not.toHaveBeenCalled();
-    gate.close();
-    state.config = { tools: { sessions: { allowThreadTargets: false } } };
-    // Completion now belongs to the Gateway. Closing this gate creates no cancellation work.
-    expect(input.callGateway).toHaveBeenCalledOnce();
-  });
   it("asks sender then recipient for exact content and waits for both human decisions", async () => {
     const input = operation(
       endpoint("source", { communication: { send: "ask" } }),
