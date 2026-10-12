@@ -590,7 +590,12 @@ test.each(["ready", "cleared-selection"] as const)(
     await expect(loadSeededTranscriptEvents(fixture.transcriptScope)).resolves.toEqual(transcript);
 
     if (catalogMode === "cleared-selection") {
-      await patchSessionEntryCore({ storePath, sessionKey: key }, () => ({ thinkingLevel: "off" }));
+      // Model resets retain thinking preferences without consulting the catalog.
+      // A retained context-window selection still needs catalog validation.
+      await patchSessionEntryCore({ storePath, sessionKey: key }, () => ({
+        thinkingLevel: "off",
+        contextWindow: "expanded",
+      }));
     }
     const restore = vi.spyOn(ManagedWorktreeService.prototype, "restore");
     const restored = patch(false);
