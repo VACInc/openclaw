@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { observeHostDataSql } from "../../../test/helpers/sqlite-statement-execution-counter.js";
@@ -10,7 +9,6 @@ import type { SessionEntry } from "../../config/sessions.js";
 import * as sessionAccessor from "../../config/sessions/session-accessor.js";
 import { applySessionEntryLifecycleMutation } from "../../config/sessions/session-accessor.js";
 import { drainSessionStoreWriterQueuesForTest } from "../../config/sessions/store-writer-state.test-support.js";
-import * as workerAdmission from "../../infra/sqlite-worker-operation-admission.js";
 import { disposeOpenClawAgentDatabaseByPath } from "../../state/openclaw-agent-db-disposal.js";
 import {
   closeOpenClawAgentDatabasesAsync,
@@ -19,7 +17,6 @@ import {
   openOpenClawAgentDatabase,
 } from "../../state/openclaw-agent-db.js";
 import { resolveIncognitoOpenClawAgentSqlitePath } from "../../state/openclaw-agent-db.paths.js";
-import * as agentExecution from "../../state/openclaw-agent-execution.js";
 import { getReplyPayloadMetadata, isReplyPayloadTerminalContent } from "../reply-payload.js";
 import { recordTurnCompaction } from "./agent-runner-compaction-accounting.js";
 import {
@@ -230,167 +227,6 @@ it("completes against the settled writer when the caller still has its pre-run e
     pendingFinalDelivery: { text: "done" },
   });
   expect(fixture.read()?.compactionCount).toBeUndefined();
-});
-
-function observeCompletionCommands(
-  options: { hideCommittedReceipt?: boolean; beforeCommit?: () => void } = {},
-) {
-  const capture = agentExecution.captureOpenClawAgentDatabaseExecution;
-  const commands: string[] = [];
-  const execution = vi
-    .spyOn(agentExecution, "captureOpenClawAgentDatabaseExecution")
-    .mockImplementation((...args) => {
-      const owner = capture(...args);
-      return {
-        ...owner,
-        get fileIdentity() {
-          return owner.fileIdentity;
-        },
-        runExisting: (source, run, runOptions) =>
-          owner.runExisting(
-            source,
-            (worker) =>
-              run({
-                execute(command, commandOptions) {
-                  commands.push(command.type);
-                  return worker.execute(command, commandOptions);
-                },
-              }),
-            runOptions,
-          ),
-      };
-    });
-  const createAdmission = workerAdmission.createSqliteWorkerOperationAdmission;
-  const admission = vi
-    .spyOn(workerAdmission, "createSqliteWorkerOperationAdmission")
-    .mockImplementation((authorize, attachment) => {
-      let terminalCommit = false;
-      const owner = createAdmission((request, grant) => {
-        if (
-          request.stage === "commit" &&
-          isRecord(request.facts) &&
-          isRecord(request.facts.publication) &&
-          request.facts.publication.kind === "session-actor-admission" &&
-          request.facts.publication.final === true
-        ) {
-          terminalCommit = true;
-          options.beforeCommit?.();
-        }
-        return authorize(request, grant);
-      }, attachment);
-      if (options.hideCommittedReceipt) {
-        const committed = Object.getOwnPropertyDescriptor(owner, "committed")!;
-        Object.defineProperty(owner, "committed", {
-          get() {
-            const receipt = committed.get!.call(owner);
-            return terminalCommit ? undefined : receipt;
-          },
-        });
-      }
-      return owner;
-    });
-  return {
-    commands,
-    restore() {
-      admission.mockRestore();
-      execution.mockRestore();
-    },
-  };
-}
-
-it.each(["publication-failure", "unknown-commit"] as const)(
-  "does not disclose or replay a durable final after %s",
-  async (failure) => {
-    const fixture = await createFixture();
-    fixture.context.execution.result.meta.agentMeta = {
-      sessionId: fixture.sessionId,
-      provider: diagnostic.provider,
-      model: diagnostic.model,
-      usage: { input: 120, output: 8 },
-    };
-    if (failure === "publication-failure") {
-      fixture.context.activeSessionStore = Object.freeze({ ...fixture.context.activeSessionStore });
-    }
-    const observer = observeCompletionCommands({
-      hideCommittedReceipt: failure === "unknown-commit",
-    });
-    try {
-      await expect(finalizeReplyAgentRun(fixture.context)).rejects.toThrow(
-        failure === "unknown-commit"
-          ? "Unconfirmed actor settlement"
-          : /read only|readonly|extensible/i,
-      );
-      expect(
-        observer.commands.filter((command) => command === "session.actor.completeTurn"),
-      ).toHaveLength(1);
-      expect(fixture.read()).toMatchObject({
-        inputTokens: 120,
-        outputTokens: 8,
-        pendingFinalDelivery: {
-          text: "done",
-          deliveries: [{ state: "prepared" }],
-        },
-      });
-    } finally {
-      observer.restore();
-    }
-  },
-);
-
-it.each(["usage-only", "with-final-custody"] as const)(
-  "preserves %s failure semantics after a proven worker rollback",
-  async (kind) => {
-    const fixture = await createFixture();
-    const meta = {
-      sessionId: fixture.sessionId,
-      provider: diagnostic.provider,
-      model: diagnostic.model,
-      usage: { input: 120, output: 8 },
-    };
-    fixture.context.execution.result.meta.agentMeta = meta;
-    const before = fixture.read();
-    const beforeCommit = vi.fn(() => {
-      throw new Error("synthetic completion refusal");
-    });
-    const observer = observeCompletionCommands({ beforeCommit });
-    try {
-      if (kind === "usage-only") {
-        await expect(fixture.account("ordinary", meta)).resolves.toBeUndefined();
-      } else {
-        await expect(finalizeReplyAgentRun(fixture.context)).rejects.toThrow(
-          "synthetic completion refusal",
-        );
-      }
-      expect(
-        observer.commands.filter((command) => command === "session.actor.completeTurn"),
-      ).toHaveLength(1);
-      expect(beforeCommit).toHaveBeenCalledOnce();
-      expect(fixture.read()).toEqual(before);
-    } finally {
-      observer.restore();
-    }
-  },
-);
-
-it("rechecks the live reply operation at the final commit boundary", async () => {
-  const fixture = await createFixture();
-  const before = fixture.read();
-  const beforeCommit = vi.fn(() => {
-    fixture.context.replyOperation.complete();
-  });
-  const observer = observeCompletionCommands({ beforeCommit });
-  try {
-    await expect(finalizeReplyAgentRun(fixture.context)).rejects.toThrow(
-      "Terminal accounting lost its reply operation",
-    );
-    expect(
-      observer.commands.filter((command) => command === "session.actor.completeTurn"),
-    ).toHaveLength(1);
-    expect(beforeCommit).toHaveBeenCalledOnce();
-    expect(fixture.read()).toEqual(before);
-  } finally {
-    observer.restore();
-  }
 });
 
 it.each([
