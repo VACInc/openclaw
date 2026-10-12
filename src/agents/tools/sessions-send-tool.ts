@@ -3,7 +3,7 @@ import { formatErrorMessage } from "@openclaw/normalization-core/error-coercion"
 import { finiteSecondsToTimerSafeMilliseconds } from "@openclaw/normalization-core/number-coercion";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { readAcpSessionMetaForEntry } from "../../acp/runtime/session-meta-readonly.js";
+import { readAcpSessionMetaForEntryAsync } from "../../acp/runtime/session-meta-readonly.js";
 import { resolveSessionThreadInfo } from "../../channels/plugins/session-conversation.js";
 import { getRuntimeConfig } from "../../config/config.js";
 import { tryResolveLegacyCompatibilityAgentId } from "../../config/legacy.default-agent-owner.js";
@@ -378,7 +378,7 @@ export function createSessionsSendTool(opts?: SessionsSendToolOptions): AnyAgent
       const requesterIsSubagent = isSubagentSessionFromEntry(
         requesterSession.canonicalKey,
         requesterSessionEntry,
-        readAcpSessionMetaForEntry({
+        await readAcpSessionMetaForEntryAsync({
           sessionKey: requesterSession.canonicalKey,
           agentId: requesterSession.agentId,
           cfg,
@@ -482,20 +482,16 @@ export function createSessionsSendTool(opts?: SessionsSendToolOptions): AnyAgent
             ...(requesterIsSubagent ? { sourceRole: "subagent" as const } : {}),
           };
           let dispatchMessage = annotateInterSessionPromptText(message, inputProvenance);
-          const initialAcpMeta = readAcpSessionMetaForEntry({
+          let targetAcpMeta = await readAcpSessionMetaForEntryAsync({
             sessionKey: targetSession.canonicalKey,
             agentId: targetSession.agentId,
             cfg,
             entry: targetSessionEntry,
           });
           if (
-            !initialAcpMeta &&
+            !targetAcpMeta &&
             targetSessionEntry?.status === "interrupted" &&
-            isSubagentSessionFromEntry(
-              targetSession.canonicalKey,
-              targetSessionEntry,
-              initialAcpMeta,
-            )
+            isSubagentSessionFromEntry(targetSession.canonicalKey, targetSessionEntry)
           ) {
             dispatchMessage = `${formatSystemTurnPrompt(RESTART_RECOVERY_INTERRUPTION_NOTE)}\n\n${dispatchMessage}`;
           }
@@ -552,6 +548,12 @@ export function createSessionsSendTool(opts?: SessionsSendToolOptions): AnyAgent
                     }
                     targetSession = await readSession(resolvedKey, targetAgentId);
                     targetSessionEntry = targetSession.store[targetSession.canonicalKey];
+                    targetAcpMeta = await readAcpSessionMetaForEntryAsync({
+                      sessionKey: targetSession.canonicalKey,
+                      agentId: targetSession.agentId,
+                      cfg,
+                      entry: targetSessionEntry,
+                    });
                     return targetEndpoint();
                   }
                 : undefined,
@@ -560,12 +562,6 @@ export function createSessionsSendTool(opts?: SessionsSendToolOptions): AnyAgent
             return sendFailure("forbidden", formatErrorMessage(error), displayKey, runId);
           }
           try {
-            const targetAcpMeta = readAcpSessionMetaForEntry({
-              sessionKey: targetSession.canonicalKey,
-              agentId: targetSession.agentId,
-              cfg,
-              entry: targetSessionEntry,
-            });
             const targetIsSubagent = isSubagentSessionFromEntry(
               targetSession.canonicalKey,
               targetSessionEntry,
