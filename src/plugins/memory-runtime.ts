@@ -422,6 +422,7 @@ export async function classifyActiveMemoryWorkspacePaths(
         const memoryPath = sourcePath && normalizeMemoryArtifactRelativePath(sourcePath);
         if (
           !memoryPath ||
+          memoryPath.includes("\0") ||
           memoryPath !== sourcePath ||
           path.posix.normalize(memoryPath) !== memoryPath
         ) {
