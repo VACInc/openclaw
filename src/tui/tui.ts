@@ -46,6 +46,7 @@ import { getSlashCommands, shouldSubmitExactArgumentCompletion } from "./command
 import { ChatLog } from "./components/chat-log.js";
 import { CustomEditor } from "./components/custom-editor.js";
 import { editorTheme, tuiTheme as theme } from "./theme/theme.js";
+import { createTuiProgramStatusReporter, isTuiBusyActivityStatus } from "./tui-activity-status.js";
 import { createTuiAuthChildOwner } from "./tui-auth-child.js";
 import { createTuiAutocompleteProvider } from "./tui-autocomplete.js";
 import type { TuiBackend } from "./tui-backend.js";
@@ -470,19 +471,6 @@ export async function drainAndStopTuiSafely(tui: DrainableTui): Promise<void> {
   stopTuiSafely(() => tui.stop());
 }
 
-const TUI_BUSY_ACTIVITY_STATUSES = new Set([
-  "sending",
-  "waiting",
-  "streaming",
-  "running",
-  "finishing context",
-  "starting up",
-]);
-
-export function isTuiBusyActivityStatus(status: string): boolean {
-  return TUI_BUSY_ACTIVITY_STATUSES.has(status);
-}
-
 export function resolveTuiToolsToggleActivityStatus(params: {
   currentStatus: string;
   toolsExpanded: boolean;
@@ -728,6 +716,7 @@ async function runTuiUnlocked(opts: RunTuiOptions): Promise<TuiResult> {
   }
 
   const tui = new TuiMainScreen(new TuiProcessTerminal());
+  const programStatus = createTuiProgramStatusReporter(tui.terminal);
   const dedupeBackspace = createBackspaceDeduper();
   tui.addInputListener((data) => {
     const next = dedupeBackspace(data);
@@ -1035,6 +1024,7 @@ async function runTuiUnlocked(opts: RunTuiOptions): Promise<TuiResult> {
       return;
     }
     const isBusy = isTuiBusyActivityStatus(state.activityStatus);
+    programStatus.update(state);
     if (isBusy) {
       if (!statusStartedAt || lastActivityStatus !== state.activityStatus) {
         statusStartedAt = Date.now();
