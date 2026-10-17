@@ -1,15 +1,15 @@
 // Verifies the TUI run lifecycle maps onto Program Status Protocol (OSC 7501) states.
 import { describe, expect, it } from "vitest";
-import { createTuiProgramStatusReporter } from "./tui-activity-status.js";
+import { createTuiProgramStatusReporter, type TuiRunOutcome } from "./tui-activity-status.js";
 
 function createRecorder() {
-  const reports: unknown[] = [];
+  const reports: Array<{ state: string }> = [];
   const reporter = createTuiProgramStatusReporter({
     setProgramStatus: (status) => reports.push(status),
   });
-  const set = (activityStatus: string, isConnected = true) =>
-    reporter.update({ activityStatus, isConnected });
-  const states = () => reports.map((report) => (report as { state: string }).state);
+  const set = (activityStatus: string, isConnected = true, runOutcome?: TuiRunOutcome) =>
+    reporter.update({ activityStatus, isConnected, runOutcome });
+  const states = () => reports.map((report) => report.state);
   return { reports, set, states };
 }
 
@@ -23,7 +23,7 @@ describe("tui program status", () => {
     set("streaming");
     set("running");
     set("finishing context");
-    set("idle");
+    set("idle", true, "completed");
     expect(states()).toEqual(["idle", "working", "done"]);
     expect(reports[2]).toEqual({ state: "done", app: "openclaw" });
   });
@@ -31,7 +31,7 @@ describe("tui program status", () => {
   it("keeps an unseen done result through repeated idle and display-only updates", () => {
     const { set, states } = createRecorder();
     set("running");
-    set("idle");
+    set("idle", true, "completed");
     set("idle");
     set("tools expanded");
     set("idle");
@@ -57,6 +57,17 @@ describe("tui program status", () => {
     set("running");
     set("gateway authentication needs attention", false);
     expect(states()).toEqual(["working", "idle", "working", "idle"]);
+  });
+
+  it("does not infer completion from display idle, but accepts a recovered outcome", () => {
+    const { set, states } = createRecorder();
+    set("streaming");
+    set("idle");
+    set("streaming");
+    set("idle", false, "aborted");
+    set("streaming");
+    set("idle", false, "completed");
+    expect(states()).toEqual(["working", "idle", "working", "idle", "working", "done"]);
   });
 
   it("survives a terminal write failure", () => {

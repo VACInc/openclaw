@@ -46,7 +46,11 @@ import { getSlashCommands, shouldSubmitExactArgumentCompletion } from "./command
 import { ChatLog } from "./components/chat-log.js";
 import { CustomEditor } from "./components/custom-editor.js";
 import { editorTheme, tuiTheme as theme } from "./theme/theme.js";
-import { createTuiProgramStatusReporter, isTuiBusyActivityStatus } from "./tui-activity-status.js";
+import {
+  createTuiProgramStatusReporter,
+  isTuiBusyActivityStatus,
+  type TuiRunOutcome,
+} from "./tui-activity-status.js";
 import { createTuiAuthChildOwner } from "./tui-auth-child.js";
 import { createTuiAutocompleteProvider } from "./tui-autocomplete.js";
 import type { TuiBackend } from "./tui-backend.js";
@@ -1019,12 +1023,16 @@ async function runTuiUnlocked(opts: RunTuiOptions): Promise<TuiResult> {
     statusLoader = null;
   };
 
-  const renderStatus = () => {
+  const renderStatus = (runOutcome?: TuiRunOutcome) => {
     if (exitRequested) {
       return;
     }
     const isBusy = isTuiBusyActivityStatus(state.activityStatus);
-    programStatus.update(state);
+    programStatus.update({
+      activityStatus: state.activityStatus,
+      isConnected: state.isConnected,
+      runOutcome,
+    });
     if (isBusy) {
       if (!statusStartedAt || lastActivityStatus !== state.activityStatus) {
         statusStartedAt = Date.now();
@@ -1064,9 +1072,9 @@ async function runTuiUnlocked(opts: RunTuiOptions): Promise<TuiResult> {
     }
   };
 
-  const setActivityStatus = (text: string) => {
+  const setActivityStatus = (text: string, runOutcome?: TuiRunOutcome) => {
     state.activityStatus = text;
-    renderStatus();
+    renderStatus(runOutcome);
   };
 
   const withTuiSuspended = async <T>(work: () => Promise<T>): Promise<T> => {
