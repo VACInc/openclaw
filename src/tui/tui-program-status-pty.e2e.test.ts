@@ -1,7 +1,12 @@
+import { writeFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { iterateAnsiSegments } from "../../packages/terminal-core/src/ansi-sequences.js";
-import { objectFieldEquals, startTuiFixture } from "./tui-pty-harness-fixture-test-support.js";
-import { waitFor } from "./tui-pty-test-support.js";
+import {
+  objectFieldEquals,
+  selectTuiFixtureSession,
+  startTuiFixture,
+  waitForSynchronizedFrameRows,
+} from "./tui-pty-harness-fixture-test-support.js";
 
 function programStatusSequences(output: string): string[] {
   const sequences: string[] = [];
@@ -45,15 +50,13 @@ it.for([
         signal,
       );
       await fixture.run.waitForOutput("PTY_RESPONSE:", 20_000);
-      // The run settles back to idle after its final reply renders.
-      await waitFor({
-        timeoutMs: 20_000,
-        read: () => {
-          const raw = fixture.run.output();
-          return raw.slice(raw.lastIndexOf("PTY_RESPONSE:")).includes("| idle") ? true : null;
-        },
-        onTimeout: () => new Error("timed out waiting for the run to settle"),
-      });
+      await waitForSynchronizedFrameRows(
+        fixture.run,
+        (rows) =>
+          rows.some((row) => row.includes("PTY_RESPONSE:")) &&
+          rows.some((row) => row.includes("| idle")),
+        20_000,
+      );
       await fixture.run.write("/exit\r", { delay: false });
       expect((await fixture.run.waitForExit()).exitCode).toBe(0);
       const sequences = programStatusSequences(fixture.run.output());
@@ -66,3 +69,57 @@ it.for([
     }
   },
 );
+
+it("does not report completion when switching away from a streaming session", async ({
+  signal,
+}) => {
+  const fixture = await startTuiFixture({ env: { PI_PROGRAM_STATUS: "1" } });
+  const releaseStream = () =>
+    writeFile(`${fixture.logPath}.streaming.release`, "release\n", "utf8");
+  try {
+    await fixture.run.waitForOutput("local ready", 20_000);
+    await fixture.run.write("burst streaming proof\r", { delay: false });
+    await waitForSynchronizedFrameRows(
+      fixture.run,
+      (rows) =>
+        rows.some((row) => row.includes("T063")) && rows.some((row) => row.includes("streaming")),
+      20_000,
+    );
+    await selectTuiFixtureSession(fixture, "agent:main:program-status-other", signal);
+    await waitForSynchronizedFrameRows(
+      fixture.run,
+      (rows) => rows.some((row) => row.includes("| idle")),
+      20_000,
+    );
+    expect(programStatusSequences(fixture.run.output())).toEqual([
+      "state=idle:app=openclaw",
+      "state=working:app=openclaw",
+      "state=idle:app=openclaw",
+    ]);
+
+    // Complete the retired run, then prove the new session can report its own success.
+    await releaseStream();
+    await fixture.waitForLogEntry((entry) => entry.method === "streamingComplete", signal);
+    await fixture.run.write("new session reply\r", { delay: false });
+    await waitForSynchronizedFrameRows(
+      fixture.run,
+      (rows) =>
+        rows.some((row) => row.includes("PTY_RESPONSE: new session reply")) &&
+        rows.some((row) => row.includes("| idle")),
+      20_000,
+    );
+    await fixture.run.write("/exit\r", { delay: false });
+    expect((await fixture.run.waitForExit()).exitCode).toBe(0);
+    expect(programStatusSequences(fixture.run.output())).toEqual([
+      "state=idle:app=openclaw",
+      "state=working:app=openclaw",
+      "state=idle:app=openclaw",
+      "state=working:app=openclaw",
+      "state=done:app=openclaw",
+      "state=clear",
+    ]);
+  } finally {
+    await releaseStream();
+    await fixture.cleanup();
+  }
+}, 30_000);
