@@ -5,6 +5,7 @@ import {
   createTuiProgramStatusReporter,
   type SetTuiActivityStatus,
 } from "./tui-activity-status.js";
+import { createTuiCommandHandlersHarness } from "./tui-command-handlers-test-support.js";
 import { createEventHandlers } from "./tui-event-handlers.js";
 import {
   createMockBtwPresenter,
@@ -424,6 +425,36 @@ describe("tui-event-handlers: handleAgentEvent", () => {
       h.agent("run-next", { phase: "start" });
       h.text("run-next", "second reply", "final");
       expect(h.programStates).toEqual(["working", "done"]);
+    },
+  );
+
+  it.each(["final", "error", "aborted"] as const)(
+    "preserves a %s outcome when the accepted run finishes before its differently keyed ACK",
+    async (outcome) => {
+      const ack = createDeferred<{ runId: string }>();
+      const h = createHarness({ activeChatRunId: null });
+      const commands = createTuiCommandHandlersHarness({
+        state: h.state,
+        sendChat: vi.fn(() => ack.promise),
+        setActivityStatus: h.status,
+        consumeCompletedRunForPendingSend: vi.fn(h.consumeCompletedRunForPendingSend),
+        isRunObserved: h.isRunObserved,
+        flushPendingHistoryRefreshIfIdle: vi.fn(h.flushPendingHistoryRefreshIfIdle),
+      });
+      const sending = commands.handleCommand("steered request");
+      expect(h.state.pendingSubmit?.runId).not.toBe("accepted-run");
+      h.agent("accepted-run", { phase: "start" }, { sessionKey: h.state.currentSessionKey });
+      h.chat("accepted-run", { state: outcome, message: { content: "reply" } });
+      expect(h.state.pendingSubmit).not.toBeNull();
+      ack.resolve({ runId: "accepted-run" });
+      await sending;
+      expect(h.state.pendingSubmit).toBeNull();
+      expect(h.programStates.at(-1)).toBe(
+        outcome === "final" ? "done" : outcome === "error" ? "error" : "idle",
+      );
+      if (outcome !== "final") {
+        expect(h.programStates).not.toContain("done");
+      }
     },
   );
 

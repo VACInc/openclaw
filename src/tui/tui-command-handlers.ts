@@ -962,7 +962,18 @@ export function createCommandHandlers(context: CommandHandlerContext) {
       if (hasPendingSubmit(state)) {
         if (acceptedRunAlreadyCompleted) {
           clearPendingSubmit(state, acceptedRunId);
-          setActivityStatus("idle");
+          if (!state.activeChatRunId && !hasPendingSubmit(state)) {
+            const outcome = state.sessionProjection?.runs[acceptedRunId]?.status;
+            if (outcome === "error" || outcome === "timeout") {
+              setActivityStatus("error");
+            } else if (outcome === "completed" || outcome === "yielded") {
+              setActivityStatus("idle", "completed");
+            } else if (outcome === "aborted") {
+              setActivityStatus("idle", "aborted");
+            } else {
+              setActivityStatus("idle");
+            }
+          }
           flushPendingHistoryRefreshIfIdle?.();
         } else {
           setActivityStatus("waiting");
