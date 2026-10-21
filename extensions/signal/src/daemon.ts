@@ -196,6 +196,10 @@ const SIGNAL_CLI_INHERITED_ENV_KEYS = new Set([
   "JDK_JAVA_OPTIONS",
   "_JAVA_OPTIONS",
   "SIGNAL_CLI_OPTS",
+  // signal-cli reads these itself: the user config file (it can set trustNewIdentities,
+  // dataDir and account, and replaces the XDG lookup when set) and the server user agent.
+  "SIGNAL_CLI_CONFIG",
+  "SIGNAL_CLI_USER_AGENT",
   // Builds without a bundled libsignal_jni for the platform locate it through the loader path.
   "LD_LIBRARY_PATH",
   "DYLD_LIBRARY_PATH",

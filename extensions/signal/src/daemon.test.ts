@@ -150,6 +150,21 @@ describe("spawnSignalDaemon", () => {
     }
   });
 
+  it("keeps the environment signal-cli reads for its own configuration", () => {
+    vi.stubEnv("SIGNAL_CLI_CONFIG", "/srv/signal-test/config.json");
+    vi.stubEnv("SIGNAL_CLI_USER_AGENT", "Signal-Android/9.0.0");
+    try {
+      startDaemon();
+      const env = spawnMock.mock.calls[0]?.[2]?.env as NodeJS.ProcessEnv;
+      expect(env).toMatchObject({
+        SIGNAL_CLI_CONFIG: "/srv/signal-test/config.json",
+        SIGNAL_CLI_USER_AGENT: "Signal-Android/9.0.0",
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("matches Windows environment names case-insensitively", () => {
     const platform = Object.getOwnPropertyDescriptor(process, "platform");
     if (!platform) {
