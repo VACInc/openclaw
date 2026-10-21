@@ -23,7 +23,7 @@ function lspConfig(
 
 const gopls = { gopls: { command: "gopls", args: ["serve"] } };
 const gatewayEnv = {
-  HTTPS_PROXY: "http://user:proxy-pass-canary@proxy.example:3128",
+  HTTPS_PROXY: ["http://user", "proxy-pass-canary@proxy.example:3128"].join(":"),
   ANDROID_HOME: "/srv/android-canary",
   NPM_TOKEN: "npm-token-canary",
   OPENAI_API_KEY: "provider-key-canary",

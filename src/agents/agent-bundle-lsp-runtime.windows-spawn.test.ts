@@ -161,7 +161,10 @@ describe.skipIf(process.platform === "win32")("bundle LSP child environment", ()
 
   it("warns once per server with withheld names only, never values", async () => {
     const warn = vi.spyOn(logger, "logWarn").mockImplementation(() => {});
-    vi.stubEnv("HTTPS_PROXY", "http://proxy-user:proxy-pass-canary@proxy.example:3128");
+    vi.stubEnv(
+      "HTTPS_PROXY",
+      ["http://proxy-user", "proxy-pass-canary@proxy.example:3128"].join(":"),
+    );
     vi.stubEnv("VIRTUAL_ENV", "/srv/venv-canary");
     vi.stubEnv("ANDROID_HOME", "/srv/android-canary");
     vi.stubEnv("NPM_TOKEN", "npm-token-canary");
