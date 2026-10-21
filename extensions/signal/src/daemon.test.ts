@@ -117,8 +117,62 @@ describe("spawnSignalDaemon", () => {
         "127.0.0.1:8080",
         "--no-receive-stdout",
       ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      { env: expect.any(Object), stdio: ["ignore", "pipe", "pipe"] },
     );
+  });
+
+  it("starts signal-cli with process essentials but without Gateway secrets", () => {
+    vi.stubEnv("JAVA_HOME", "/opt/java");
+    vi.stubEnv("JAVA_OPTS", "-Xmx256m");
+    vi.stubEnv("LC_ALL", "C.UTF-8");
+    vi.stubEnv("XDG_DATA_HOME", "/srv/signal-test/share");
+    vi.stubEnv("OPENCLAW_GATEWAY_TOKEN", "synthetic-gateway-token");
+    vi.stubEnv("OPENCLAW_HOOK_TOKEN", "synthetic-hook-token");
+    vi.stubEnv("OP_CONNECT_TOKEN", "synthetic-connect-token");
+    vi.stubEnv("OPENAI_API_KEY", "synthetic-provider-key");
+    try {
+      startDaemon();
+      const env = spawnMock.mock.calls[0]?.[2]?.env as NodeJS.ProcessEnv;
+      // PATH and HOME are kept too, but Windows hosts expose them under their own casing.
+      expect(env).toMatchObject({
+        JAVA_HOME: "/opt/java",
+        JAVA_OPTS: "-Xmx256m",
+        LC_ALL: "C.UTF-8",
+        XDG_DATA_HOME: "/srv/signal-test/share",
+      });
+      expect(Object.values(env).join("\n")).not.toContain("synthetic-");
+      expect(env).not.toHaveProperty("OPENCLAW_GATEWAY_TOKEN");
+      expect(env).not.toHaveProperty("OPENCLAW_HOOK_TOKEN");
+      expect(env).not.toHaveProperty("OP_CONNECT_TOKEN");
+      expect(env).not.toHaveProperty("OPENAI_API_KEY");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("matches Windows environment names case-insensitively", () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform");
+    if (!platform) {
+      throw new Error("process.platform descriptor is unavailable");
+    }
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    vi.stubEnv("SystemRoot", "C:\\Windows");
+    vi.stubEnv("ComSpec", "C:\\Windows\\System32\\cmd.exe");
+    vi.stubEnv("LocalAppData", "C:\\Users\\signal\\AppData\\Local");
+    vi.stubEnv("Openclaw_Hook_Token", "synthetic-hook-token");
+    try {
+      startDaemon();
+      const env = spawnMock.mock.calls[0]?.[2]?.env as NodeJS.ProcessEnv;
+      expect(env).toMatchObject({
+        SystemRoot: "C:\\Windows",
+        ComSpec: "C:\\Windows\\System32\\cmd.exe",
+        LocalAppData: "C:\\Users\\signal\\AppData\\Local",
+      });
+      expect(env).not.toHaveProperty("Openclaw_Hook_Token");
+    } finally {
+      vi.unstubAllEnvs();
+      Object.defineProperty(process, "platform", platform);
+    }
   });
 
   it("classifies complete UTF-8 output lines through the spawned process", async () => {

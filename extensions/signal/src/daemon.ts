@@ -176,6 +176,83 @@ function resolveSignalCliConfigPath(raw: string): string {
   return value;
 }
 
+// signal-cli needs process essentials, its Java launcher inputs, and data-dir hints.
+// Everything else in the Gateway environment (provider keys, Gateway and hook tokens,
+// secret-manager credentials) stays out of the daemon's long-lived environment.
+const SIGNAL_CLI_INHERITED_ENV_KEYS = new Set([
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "LANG",
+  "LANGUAGE",
+  "TZ",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "JAVA_HOME",
+  "JAVA_OPTS",
+  "JAVA_TOOL_OPTIONS",
+  "JDK_JAVA_OPTIONS",
+  "_JAVA_OPTIONS",
+  "SIGNAL_CLI_OPTS",
+  // Builds without a bundled libsignal_jni for the platform locate it through the loader path.
+  "LD_LIBRARY_PATH",
+  "DYLD_LIBRARY_PATH",
+  "DYLD_FALLBACK_LIBRARY_PATH",
+  "SYSTEMROOT",
+  "SYSTEMDRIVE",
+  "WINDIR",
+  "COMSPEC",
+  "PATHEXT",
+  "USERPROFILE",
+  "USERNAME",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "PROGRAMDATA",
+  "PROGRAMFILES",
+  "PROGRAMFILES(X86)",
+  "PROGRAMW6432",
+  "ALLUSERSPROFILE",
+  "PUBLIC",
+  "OS",
+  "PROCESSOR_ARCHITECTURE",
+  "NUMBER_OF_PROCESSORS",
+]);
+const SIGNAL_CLI_INHERITED_ENV_PREFIXES = ["LC_", "XDG_"];
+
+function buildSignalDaemonEnv(
+  source: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  const retainedWindowsKeys = new Map<string, string>();
+  for (const [key, value] of Object.entries(source)) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    // Windows environment names are case-insensitive; POSIX names are exact.
+    const name = platform === "win32" ? key.toUpperCase() : key;
+    if (
+      !SIGNAL_CLI_INHERITED_ENV_KEYS.has(name) &&
+      !SIGNAL_CLI_INHERITED_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))
+    ) {
+      continue;
+    }
+    if (platform === "win32") {
+      const previousKey = retainedWindowsKeys.get(name);
+      if (previousKey !== undefined) {
+        delete env[previousKey];
+      }
+      retainedWindowsKeys.set(name, key);
+    }
+    env[key] = value;
+  }
+  return env;
+}
+
 function buildDaemonArgs(opts: SignalDaemonOpts): string[] {
   const args: string[] = [];
   if (opts.configPath?.trim()) {
@@ -216,6 +293,7 @@ export function spawnSignalDaemon(opts: SignalDaemonOpts): SignalDaemonHandle {
   // The executable is operator-selected or setup-discovered signal-cli.
   // Runtime message content only flows through the daemon HTTP API, not argv.
   const child = spawn(opts.cliPath, args, {
+    env: buildSignalDaemonEnv(),
     stdio: ["ignore", "pipe", "pipe"],
   });
   const log = opts.runtime?.log ?? (() => {});

@@ -116,6 +116,8 @@ signal-cli --version
 
 If you use the JVM build (`signal-cli-${VERSION}.tar.gz`), install a JRE first. Keep `signal-cli` updated; upstream notes old releases can break as Signal server APIs change.
 
+A managed `signal-cli` daemon gets only process essentials from the Gateway environment: `PATH`, `HOME`, user, locale (`LANG`, `LC_*`), `TZ`, temp directories, `XDG_*`, the Java launcher inputs (`JAVA_HOME`, `JAVA_OPTS`, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, `_JAVA_OPTIONS`, `SIGNAL_CLI_OPTS`), the native library path (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, `DYLD_FALLBACK_LIBRARY_PATH`), and common Windows system variables. Provider keys, Gateway tokens and other secrets in the Gateway environment do not reach it. If a `cliPath` wrapper script needs more variables, set them inside the wrapper or run the daemon yourself in [external native daemon mode](#external-native-daemon-mode).
+
 3. Register and verify the number:
 
 ```bash
