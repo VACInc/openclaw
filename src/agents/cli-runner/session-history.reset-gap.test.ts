@@ -33,7 +33,11 @@ async function createSession() {
     storePath: path.join(dir, "openclaw-agent.sqlite"),
   };
   await upsertSessionEntryCore(target, { sessionId: target.sessionId, updatedAt: 1 });
-  return { target, manager: SessionManager.open(target, dir), params: { sessionTarget: target } };
+  return {
+    target,
+    manager: await SessionManager.openAsync(target, dir),
+    params: { sessionTarget: target },
+  };
 }
 
 describe("Claude session gaps after a reset", () => {
@@ -58,11 +62,12 @@ describe("Claude session gaps after a reset", () => {
     const admittedRunContext = await admission.admit("embedded");
     try {
       for (const [index, provider] of ["claude-cli", "mock"].entries()) {
-        manager.appendMessage(makeUserMessage(`PRE-RESET-${index}`, index * 2000 + 1000));
-        manager.appendMessage(assistant(provider, index * 2000 + 2000));
+        await manager.appendMessageAsync(
+          makeUserMessage(`PRE-RESET-${index}`, index * 2000 + 1000),
+        );
+        await manager.appendMessageAsync(assistant(provider, index * 2000 + 2000));
       }
-      manager.appendResetBoundary(reason);
-      manager.flushPendingPersistence();
+      await manager.appendResetBoundaryAsync(reason);
       const load = async (nativeSessionId?: string) =>
         (
           await loadCliSessionPromptContext({
@@ -79,9 +84,8 @@ describe("Claude session gaps after a reset", () => {
         ).sessionGapContext;
       // The first turn after the reset has no earlier messages in this chat.
       await expect(load()).resolves.toBeUndefined();
-      manager.appendMessage(makeUserMessage("POST-RESET", 5000));
-      manager.appendMessage(assistant("mock", 6000));
-      manager.flushPendingPersistence();
+      await manager.appendMessageAsync(makeUserMessage("POST-RESET", 5000));
+      await manager.appendMessageAsync(assistant("mock", 6000));
       // Persisted row timestamps are wall-clock, so the window is asserted by count and models.
       const after =
         /^\[OpenClaw: 2 (earlier messages in this chat|messages occurred outside this Claude session) from \S+ to \S+, using "mock\/test-model"\. /;
@@ -102,12 +106,11 @@ describe("Claude session gaps after a reset", () => {
     const admission = prepareSystemAgentRunAdmission({}, "reset-gap-retained", "main", "test");
     const admittedRunContext = await admission.admit("embedded");
     try {
-      manager.appendMessage(makeUserMessage("DROPPED", 1000));
-      manager.appendMessage(assistant("mock", 2000));
-      const kept = manager.appendMessage(makeUserMessage("RETAINED", 3000));
-      manager.appendMessage(assistant("mock", 4000));
-      manager.appendResetBoundary("idle", kept);
-      manager.flushPendingPersistence();
+      await manager.appendMessageAsync(makeUserMessage("DROPPED", 1000));
+      await manager.appendMessageAsync(assistant("mock", 2000));
+      const kept = await manager.appendMessageAsync(makeUserMessage("RETAINED", 3000));
+      await manager.appendMessageAsync(assistant("mock", 4000));
+      await manager.appendResetBoundaryAsync("idle", kept);
       const context = await loadCliSessionPromptContext({
         ...params,
         sessionKey: target.sessionKey,
