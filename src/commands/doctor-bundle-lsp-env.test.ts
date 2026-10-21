@@ -87,6 +87,29 @@ it("omits a name the server's own env supplies", async () => {
   expect(text).not.toContain("ANDROID_HOME");
 });
 
+it("evaluates each workspace's config when workspaces reuse a server name", async () => {
+  const configs: Record<string, Record<string, Record<string, unknown>>> = {
+    "/synthetic/android-a": {
+      kotlin: { command: "kotlin-lsp", env: { ANDROID_HOME: "/bundle/android" } },
+    },
+    "/synthetic/android-b": { kotlin: { command: "kotlin-lsp" } },
+  };
+  const loadLspConfig = vi.fn(({ workspaceDir }: { workspaceDir: string }) => ({
+    config: { lspServers: configs[workspaceDir] ?? {} },
+    diagnostics: [],
+  })) as unknown as typeof loadEnabledBundleLspConfig;
+
+  const text = await diagnose({
+    workspaceDirs: Object.keys(configs),
+    env: { ANDROID_HOME: "/srv/android" },
+    loadLspConfig,
+  });
+
+  expect(loadLspConfig).toHaveBeenCalledTimes(2);
+  expect(text).toContain(`- "kotlin": ANDROID_HOME: add to the server's "env"`);
+  expect(text).not.toMatch(/\/srv\/android|\/bundle\/android/);
+});
+
 it("includes the installed Gateway service environment", async () => {
   shouldManageGatewayService.mockResolvedValue(true);
   service.readCommand.mockResolvedValue({

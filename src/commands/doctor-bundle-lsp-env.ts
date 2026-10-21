@@ -22,8 +22,10 @@ function collectRunnableLspServers(params: {
   workspaceDirs: readonly string[];
   loadLspConfig: LoadBundleLspConfig;
   runWithPluginMetadataSnapshot?: PluginMetadataSnapshotScopeRunner;
-}): Map<string, Record<string, string> | undefined> {
-  const servers = new Map<string, Record<string, string> | undefined>();
+}): Map<string, Array<Record<string, string> | undefined>> {
+  // Each workspace resolves its own servers at runtime, so one name can carry
+  // different launch envs; keep every one so none hides another's withheld names.
+  const servers = new Map<string, Array<Record<string, string> | undefined>>();
   for (const workspaceDir of params.workspaceDirs) {
     const load = () => params.loadLspConfig({ workspaceDir, cfg: params.cfg });
     const loaded = params.runWithPluginMetadataSnapshot
@@ -31,8 +33,8 @@ function collectRunnableLspServers(params: {
       : load();
     for (const [name, raw] of Object.entries(loaded.config.lspServers)) {
       const launch = resolveStdioMcpServerLaunchConfig(raw);
-      if (launch.ok && !servers.has(name)) {
-        servers.set(name, launch.config.env);
+      if (launch.ok) {
+        servers.set(name, [...(servers.get(name) ?? []), launch.config.env]);
       }
     }
   }
@@ -88,13 +90,15 @@ export async function noteBundleLspEnvPassthrough(params: {
     service: params.service ?? resolveGatewayService(),
   });
   const lines: string[] = [];
-  for (const [name, serverEnv] of [...servers].toSorted(([a], [b]) => a.localeCompare(b))) {
+  for (const [name, serverEnvs] of [...servers].toSorted(([a], [b]) => a.localeCompare(b))) {
     const withheld = mergeWithheld(
-      sources.map((parentEnv) =>
-        collectWithheldLspEnvNames({
-          parentEnv,
-          childEnv: resolveLspServerEnv(serverEnv, parentEnv),
-        }),
+      serverEnvs.flatMap((serverEnv) =>
+        sources.map((parentEnv) =>
+          collectWithheldLspEnvNames({
+            parentEnv,
+            childEnv: resolveLspServerEnv(serverEnv, parentEnv),
+          }),
+        ),
       ),
     );
     for (const hint of formatWithheldLspEnvHints(withheld)) {
