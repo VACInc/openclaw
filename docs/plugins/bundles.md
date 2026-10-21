@@ -127,6 +127,13 @@ them:
   restriction must permit the tool.
 - Only supported stdio-backed LSP servers are runnable; unsupported
   transports still show up in `openclaw plugins inspect <id>`.
+- LSP servers do not inherit the Gateway environment. They start with the
+  same process essentials as stdio MCP servers (`HOME`, `LOGNAME`, `PATH`,
+  `TERM`, `USER`, or the standard system variables on Windows), plus locale,
+  temp, and XDG directories, the toolchain locations `GOROOT`, `JAVA_HOME`,
+  `RUSTUP_HOME`, and `RUSTUP_TOOLCHAIN`, and then the server's own `env`.
+  Provider API keys, Gateway tokens, and other Gateway environment variables
+  are not passed to language servers.
 - Canceling a turn or compaction cancels pending LSP startup, stops additional
   servers from starting, and cleans up servers already acquired by that operation.
 
