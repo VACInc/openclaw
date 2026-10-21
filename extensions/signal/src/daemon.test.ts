@@ -8,6 +8,18 @@ import { assertSignalDaemonEndpointAvailable, spawnSignalDaemon } from "./daemon
 
 const spawnMock = vi.hoisted(() => vi.fn());
 const ensurePortAvailableMock = vi.hoisted(() => vi.fn());
+const subsystemWarnMock = vi.hoisted(() => vi.fn());
+
+vi.mock("openclaw/plugin-sdk/runtime-env", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/runtime-env")>();
+  return {
+    ...actual,
+    createSubsystemLogger: (subsystem: string) => ({
+      ...actual.createSubsystemLogger(subsystem),
+      warn: (...args: unknown[]) => subsystemWarnMock(subsystem, ...args),
+    }),
+  };
+});
 
 vi.mock("openclaw/plugin-sdk/security-runtime", async (importOriginal) => {
   const actual = await importOriginal<typeof import("openclaw/plugin-sdk/security-runtime")>();
@@ -46,6 +58,7 @@ beforeEach(() => {
   child = createMockChild();
   spawnMock.mockReset().mockReturnValue(child);
   ensurePortAvailableMock.mockClear();
+  subsystemWarnMock.mockClear();
 });
 
 afterEach(() => {
@@ -188,6 +201,80 @@ describe("spawnSignalDaemon", () => {
       vi.unstubAllEnvs();
       Object.defineProperty(process, "platform", platform);
     }
+  });
+
+  describe("dropped proxy and CA environment notice", () => {
+    const hintNames = [
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "NO_PROXY",
+      "ALL_PROXY",
+      "http_proxy",
+      "https_proxy",
+      "no_proxy",
+      "all_proxy",
+      "SSL_CERT_FILE",
+      "SSL_CERT_DIR",
+      "REQUESTS_CA_BUNDLE",
+      "CURL_CA_BUNDLE",
+      "NODE_EXTRA_CA_CERTS",
+    ];
+
+    // The notice is once per process, so each case loads a fresh daemon module.
+    async function loadFreshDaemon() {
+      vi.resetModules();
+      return (await import("./daemon.js")).spawnSignalDaemon;
+    }
+
+    beforeEach(() => {
+      for (const name of hintNames) {
+        vi.stubEnv(name, undefined);
+      }
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("warns once, by name only, when proxy or CA variables are not passed through", async () => {
+      vi.stubEnv("HTTPS_PROXY", "http://synthetic-user:synthetic-pass@proxy.invalid:3128");
+      vi.stubEnv("no_proxy", "synthetic-internal.invalid");
+      vi.stubEnv("SSL_CERT_FILE", "/srv/synthetic-ca/bundle.pem");
+      vi.stubEnv("OPENCLAW_GATEWAY_TOKEN", "synthetic-gateway-token");
+      const spawnFresh = await loadFreshDaemon();
+      const startFresh = () =>
+        spawnFresh({ cliPath: "signal-cli", httpHost: "127.0.0.1", httpPort: 8080 });
+
+      startFresh();
+      startFresh();
+
+      expect(subsystemWarnMock).toHaveBeenCalledTimes(1);
+      const [subsystem, message] = subsystemWarnMock.mock.calls[0] as [string, string];
+      expect(subsystem).toBe("signal/daemon");
+      expect(message).toContain("HTTPS_PROXY, SSL_CERT_FILE, no_proxy");
+      expect(message).toContain("JAVA_TOOL_OPTIONS");
+      expect(message).toContain("-Dhttps.proxyHost=<host> -Dhttps.proxyPort=<port>");
+      expect(message).toContain("transport.cliPath");
+      expect(message).toContain("external-native");
+      expect(message).toContain(
+        "https://docs.openclaw.ai/channels/signal#managed-daemon-environment",
+      );
+      expect(message).not.toContain("synthetic-");
+      expect(message).not.toContain("OPENCLAW_GATEWAY_TOKEN");
+      const env = spawnMock.mock.calls[0]?.[2]?.env as NodeJS.ProcessEnv;
+      expect(env).not.toHaveProperty("HTTPS_PROXY");
+      expect(env).not.toHaveProperty("SSL_CERT_FILE");
+    });
+
+    it("stays quiet when no proxy or CA variables are set", async () => {
+      vi.stubEnv("HTTPS_PROXY", " ");
+      vi.stubEnv("OPENCLAW_GATEWAY_TOKEN", "synthetic-gateway-token");
+      const spawnFresh = await loadFreshDaemon();
+
+      spawnFresh({ cliPath: "signal-cli", httpHost: "127.0.0.1", httpPort: 8080 });
+
+      expect(subsystemWarnMock).not.toHaveBeenCalled();
+    });
   });
 
   it("classifies complete UTF-8 output lines through the spawned process", async () => {
