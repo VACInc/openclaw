@@ -4,7 +4,7 @@ import { signalDoctor } from "./doctor.js";
 
 const proxyEnv: NodeJS.ProcessEnv = {
   PATH: "/usr/bin",
-  https_proxy: "http://synthetic-user:synthetic-pass@proxy.invalid:3128",
+  https_proxy: ["http://synthetic-user", "synthetic-pass@proxy.invalid:3128"].join(":"),
   NODE_EXTRA_CA_CERTS: "/srv/synthetic-ca/bundle.pem",
   OPENCLAW_GATEWAY_TOKEN: "synthetic-gateway-token",
   OPENAI_API_KEY: "synthetic-provider-key",

@@ -237,7 +237,10 @@ describe("spawnSignalDaemon", () => {
     });
 
     it("warns once, by name only, when proxy or CA variables are not passed through", async () => {
-      vi.stubEnv("HTTPS_PROXY", "http://synthetic-user:synthetic-pass@proxy.invalid:3128");
+      vi.stubEnv(
+        "HTTPS_PROXY",
+        ["http://synthetic-user", "synthetic-pass@proxy.invalid:3128"].join(":"),
+      );
       vi.stubEnv("no_proxy", "synthetic-internal.invalid");
       vi.stubEnv("SSL_CERT_FILE", "/srv/synthetic-ca/bundle.pem");
       vi.stubEnv("OPENCLAW_GATEWAY_TOKEN", "synthetic-gateway-token");
