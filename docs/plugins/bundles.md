@@ -152,8 +152,8 @@ on top: it drops inherited `GOPATH` and `CARGO_HOME`, and it refuses some names
 even in the server's `env`, including proxy variables (`HTTP_PROXY`,
 `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`), CA bundle variables (`SSL_CERT_FILE`,
 `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`),
-`VIRTUAL_ENV`, `PYTHONPATH`, `NODE_OPTIONS`, `NODE_PATH`, and Go settings such
-as `GOPATH`, `GOFLAGS`, `GOPROXY`, and `GOPRIVATE`.
+`GRADLE_USER_HOME`, `VIRTUAL_ENV`, `PYTHONPATH`, `NODE_OPTIONS`, `NODE_PATH`,
+and Go settings such as `GOPATH`, `GOFLAGS`, `GOPROXY`, and `GOPRIVATE`.
 
 To pass a variable a language server needs:
 

@@ -159,6 +159,22 @@ describe.skipIf(process.platform === "win32")("bundle LSP child environment", ()
     expect(env).not.toHaveProperty("CARGO_HOME");
   });
 
+  it("withholds GRADLE_USER_HOME, which the host env policy alone lets a child inherit", async () => {
+    const warn = vi.spyOn(logger, "logWarn").mockImplementation(() => {});
+    vi.stubEnv("GRADLE_USER_HOME", "/srv/gradle");
+
+    expect(realSanitize({ baseEnv: { GRADLE_USER_HOME: "/srv/gradle" } }).GRADLE_USER_HOME).toBe(
+      "/srv/gradle",
+    );
+    const env = await capturedChildEnv(undefined, "env-gradle-probe");
+
+    expect(env).not.toHaveProperty("GRADLE_USER_HOME");
+    const message = warn.mock.calls
+      .map(([entry]) => entry)
+      .find((entry) => entry.includes('"env-gradle-probe"'));
+    expect(message).toMatch(/GRADLE_USER_HOME[^:]*: refused by the host exec env policy/);
+  });
+
   it("warns once per server with withheld names only, never values", async () => {
     const warn = vi.spyOn(logger, "logWarn").mockImplementation(() => {});
     vi.stubEnv(
