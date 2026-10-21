@@ -1,57 +1,43 @@
 /** Spawns bundled LSP server processes with sanitized environment and platform handling. */
-import { getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
-import { sanitizeHostExecEnv } from "../infra/host-env-security.js";
+import { logWarn } from "../logger.js";
 import {
   materializeWindowsSpawnProgram,
   resolveWindowsSpawnProgram,
 } from "../plugin-sdk/windows-spawn.js";
 import { createOwnedStdioProcess, type OwnedStdioProcess } from "../process/owned-stdio.js";
+import {
+  collectWithheldLspEnvNames,
+  formatWithheldLspEnvHints,
+  LSP_ENV_PASSTHROUGH_DOCS_URL,
+  resolveLspServerEnv,
+} from "./agent-bundle-lsp-env.js";
 import type { StdioMcpServerLaunchConfig } from "./mcp-stdio.js";
 
-// Locale, temp, XDG, and toolchain locations language servers read. None is a
-// credential. Bundle authors, not operators, write a server's `env`, and the exec
-// override policy refuses the XDG and rustup names there, so keep them inherited.
-const LSP_INHERITED_ENV_KEYS = new Set([
-  "LANG",
-  "LANGUAGE",
-  "TZ",
-  "TMPDIR",
-  "TMP",
-  "TEMP",
-  "XDG_CACHE_HOME",
-  "XDG_CONFIG_HOME",
-  "XDG_DATA_HOME",
-  "XDG_STATE_HOME",
-  "XDG_RUNTIME_DIR",
-  "XDG_CONFIG_DIRS",
-  "XDG_DATA_DIRS",
-  "GOROOT",
-  "RUSTUP_HOME",
-  "RUSTUP_TOOLCHAIN",
-  "JAVA_HOME",
-]);
+// Servers restart every turn; repeat a warning only when its server or names change.
+const warnedWithheldEnv = new Set<string>();
 
-/** Bundle LSP base env: the MCP stdio defaults plus toolchain locations, never Gateway secrets. */
-function resolveLspBaseEnv(): Record<string, string> {
-  const env: Record<string, string> = getDefaultEnvironment();
-  for (const [key, value] of Object.entries(process.env)) {
-    // Windows names are case-insensitive; keep the spelling the host used.
-    const name = process.platform === "win32" ? key.toUpperCase() : key;
-    if (value !== undefined && (name.startsWith("LC_") || LSP_INHERITED_ENV_KEYS.has(name))) {
-      env[key] = value;
-    }
+function warnWithheldLspEnvOnce(serverName: string, childEnv: Record<string, string>): void {
+  const hints = formatWithheldLspEnvHints(
+    collectWithheldLspEnvNames({ parentEnv: process.env, childEnv }),
+  ).join(" ");
+  const key = `${serverName}\0${hints}`;
+  if (!hints || warnedWithheldEnv.has(key)) {
+    return;
   }
-  return env;
+  warnedWithheldEnv.add(key);
+  logWarn(
+    `bundle-lsp: server "${serverName}" starts without these Gateway environment variables. ${hints} See ${LSP_ENV_PASSTHROUGH_DOCS_URL}`,
+  );
 }
 
 export async function spawnLspServerProcess(
   config: StdioMcpServerLaunchConfig,
-  options: { abortSignal?: AbortSignal } = {},
+  options: { abortSignal?: AbortSignal; serverName?: string } = {},
 ): Promise<OwnedStdioProcess> {
-  const mergedEnv = sanitizeHostExecEnv({
-    baseEnv: resolveLspBaseEnv(),
-    overrides: config.env ?? null,
-  });
+  const mergedEnv = resolveLspServerEnv(config.env);
+  if (options.serverName !== undefined) {
+    warnWithheldLspEnvOnce(options.serverName, mergedEnv);
+  }
   const program = resolveWindowsSpawnProgram({
     command: config.command,
     env: mergedEnv,

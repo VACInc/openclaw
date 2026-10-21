@@ -1,6 +1,7 @@
 import { getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import * as hostEnv from "../infra/host-env-security.js";
+import * as logger from "../logger.js";
 import * as windowsSpawn from "../plugin-sdk/windows-spawn.js";
 import type { WindowsSpawnProgram } from "../plugin-sdk/windows-spawn.js";
 import * as ownedStdio from "../process/owned-stdio.js";
@@ -95,17 +96,20 @@ it("preserves Windows shell arguments through the real owned adapter", async () 
   );
 });
 
-async function capturedChildEnv(env?: Record<string, string>) {
+async function capturedChildEnv(env?: Record<string, string>, serverName?: string) {
   sanitize.mockImplementation(realSanitize);
   vi.spyOn(ownedStdio, "createOwnedStdioProcess").mockImplementation(spawn);
   await expect(
-    spawnLspServerProcess({
-      command: "typescript-language-server",
-      args: ["--stdio"],
-      ...(env ? { env } : {}),
-    }),
+    spawnLspServerProcess(
+      {
+        command: "typescript-language-server",
+        args: ["--stdio"],
+        ...(env ? { env } : {}),
+      },
+      serverName === undefined ? {} : { serverName },
+    ),
   ).rejects.toThrow("stop after spawn");
-  return spawn.mock.calls[0]?.[0]?.env ?? {};
+  return spawn.mock.calls.at(-1)?.[0]?.env ?? {};
 }
 
 describe.skipIf(process.platform === "win32")("bundle LSP child environment", () => {
@@ -139,5 +143,58 @@ describe.skipIf(process.platform === "win32")("bundle LSP child environment", ()
 
     expect(env.LSP_LOG_LEVEL).toBe("verbose");
     expect(env.OPENAI_API_KEY).toBe("server-owned");
+  });
+
+  it("keeps Go module and install dirs; the host env policy still drops GOPATH and CARGO_HOME", async () => {
+    vi.stubEnv("GOMODCACHE", "/srv/go/mod");
+    vi.stubEnv("GOBIN", "/srv/go/bin");
+    vi.stubEnv("GOPATH", "/srv/go");
+    vi.stubEnv("CARGO_HOME", "/srv/cargo");
+
+    const env = await capturedChildEnv();
+
+    expect(env.GOMODCACHE).toBe("/srv/go/mod");
+    expect(env.GOBIN).toBe("/srv/go/bin");
+    expect(env).not.toHaveProperty("GOPATH");
+    expect(env).not.toHaveProperty("CARGO_HOME");
+  });
+
+  it("warns once per server with withheld names only, never values", async () => {
+    const warn = vi.spyOn(logger, "logWarn").mockImplementation(() => {});
+    vi.stubEnv("HTTPS_PROXY", "http://proxy-user:proxy-pass-canary@proxy.example:3128");
+    vi.stubEnv("VIRTUAL_ENV", "/srv/venv-canary");
+    vi.stubEnv("ANDROID_HOME", "/srv/android-canary");
+    vi.stubEnv("NPM_TOKEN", "npm-token-canary");
+    vi.stubEnv("GOMODCACHE", "/srv/go/mod-canary");
+
+    await capturedChildEnv(undefined, "env-warn-probe");
+    await capturedChildEnv(undefined, "env-warn-probe");
+
+    const messages = warn.mock.calls.map(([message]) => message);
+    const ours = messages.filter((message) => message.includes('"env-warn-probe"'));
+    expect(ours).toHaveLength(1);
+    const [message] = ours;
+    expect(message).toMatch(/ANDROID_HOME[^:]*: add to the server's "env"/);
+    expect(message).toMatch(
+      /HTTPS_PROXY[^:]*VIRTUAL_ENV[^:]*: refused by the host exec env policy/,
+    );
+    expect(message).toContain("https://docs.openclaw.ai/plugins/bundles#lsp-server-environment");
+    expect(message).not.toContain("NPM_TOKEN");
+    expect(message).not.toContain("GOMODCACHE");
+    expect(message).not.toMatch(/canary|proxy-pass|proxy\.example/);
+  });
+
+  it("does not list a withheld name the server's env supplies", async () => {
+    const warn = vi.spyOn(logger, "logWarn").mockImplementation(() => {});
+    vi.stubEnv("ANDROID_HOME", "/srv/android");
+    vi.stubEnv("DOTNET_ROOT", "/srv/dotnet");
+
+    await capturedChildEnv({ ANDROID_HOME: "/bundle/android" }, "env-covered-probe");
+
+    const message = warn.mock.calls
+      .map(([entry]) => entry)
+      .find((entry) => entry.includes('"env-covered-probe"'));
+    expect(message).toContain("DOTNET_ROOT");
+    expect(message).not.toContain("ANDROID_HOME");
   });
 });
