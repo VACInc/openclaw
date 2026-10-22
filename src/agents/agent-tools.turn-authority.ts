@@ -42,8 +42,6 @@ export function resolveTurnToolSurface(params: {
    * scheduler authorizes without an owner grant.
    */
   schedulerSystemTurn?: boolean;
-  /** A tool exported to descendants but never offered on this turn. */
-  withheld?: AnyAgentTool;
 }) {
   const turnAuthorizedNames = new Set(
     params.turnTools
@@ -52,9 +50,7 @@ export function resolveTurnToolSurface(params: {
   );
   const turnAuthorized = (tool: { name: string }) => turnAuthorizedNames.has(tool.name);
   const turnPolicyTools = new Map(params.turnTools.map((tool) => [tool.name, tool]));
-  const offered = (params.sessionTools ?? params.turnTools).filter(
-    (tool) => tool !== params.withheld,
-  );
+  const offered = params.sessionTools ?? params.turnTools;
   const tools = offered.map((tool) => {
     if (turnAuthorized(tool)) {
       return tool;
@@ -94,7 +90,7 @@ export function resolveTurnToolSurface(params: {
   return {
     tools,
     turnAuthorized,
-    /** Policy-approved tools for descendant snapshots, including a withheld tool. */
+    /** Policy-approved tools for descendant snapshots. */
     exportedTools: params.turnTools.filter(turnAuthorized),
     /** Tools this turn may call. */
     callableTools: offered.filter(turnAuthorized),
