@@ -220,8 +220,11 @@ a project's `.claude/agents/` are not loaded.
 - Known limitations: native calls made by descendants (nested `Agent` or
   `Workflow`) reach `before_tool_call` but do not emit `after_tool_call`, and the
   parent sees only the descendant's result. OpenClaw does not track native
-  descendants as tasks, so `sessions_yield` does not wait for them, and Claude
-  Code may finish a background descendant after the parent's first reply. A
+  descendants as tasks, so `sessions_yield` does not wait for them. If an
+  `Agent` or `Workflow` descendant is still running when the turn ends,
+  OpenClaw closes the warm Claude Code process instead of reusing it, so that
+  descendant stops and can never act under a later turn's authority; the next
+  turn resumes the stored session in a fresh process. A
   `Workflow` call can read its script from a workspace path through
   `scriptPath`; the script itself can only orchestrate agents.
 
