@@ -1,6 +1,6 @@
 // Real built UI, Gateway persistence, queue admission and OpenAI plugin; only external I/O is synthetic.
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -30,7 +30,9 @@ const call = <T = unknown>(method: string, params: Record<string, unknown>) =>
 let dir: string;
 let programs: string[] | undefined = ["standard", "daybreak_blue", "daybreak_red"];
 let reasoningEfforts = ["medium"];
-const receipts: Array<{ model: string; access?: unknown; tier?: string }> = [];
+const receipts: Array<{ model: string; access?: unknown; tier?: string; credential: string }> = [];
+let preparationGate: ServerResponse | undefined;
+const unentitledKey = "sk-synthetic-unentitled-fixture";
 const held = new Map<number, ServerResponse>();
 let holdNext = false;
 let inferenceRequests = 0;
@@ -64,6 +66,13 @@ const suite = createControlUiE2eSuite({
         createServer((request, response) => {
           void (async () => {
             const url = new URL(request.url ?? "/", "http://fixture");
+            if (url.pathname === "/fixture/preparation-gate") {
+              request.resume();
+              preparationGate = response;
+              return;
+            }
+            const advertised =
+              request.headers.authorization === "Bearer " + unentitledKey ? [] : programs;
             if (url.pathname === "/v1/models") {
               response.setHeader("content-type", "application/json");
               response.end(JSON.stringify({ data: [{ id: "gpt-6.1-sol", object: "model" }] }));
@@ -85,7 +94,7 @@ const suite = createControlUiE2eSuite({
                         description: effort,
                       })),
                       service_tiers: [{ id: "priority" }, { id: "ultrafast" }],
-                      ...(programs ? { available_access_programs: { cyber: programs } } : {}),
+                      ...(advertised ? { available_access_programs: { cyber: advertised } } : {}),
                     },
                   ],
                 }),
@@ -114,6 +123,14 @@ const suite = createControlUiE2eSuite({
                 model: body.model,
                 access: body.access_programs,
                 tier: body.service_tier,
+                credential:
+                  request.headers.authorization === "Bearer sk-synthetic-configured-fixture"
+                    ? "configured"
+                    : request.headers.authorization === "Bearer " + unentitledKey
+                      ? "unentitled"
+                      : request.headers.authorization === "Bearer sk-synthetic-platform-fixture"
+                        ? "saved-profile"
+                        : "subscription",
               });
               if (holdNext) {
                 holdNext = false;
@@ -138,11 +155,42 @@ const suite = createControlUiE2eSuite({
 // Keep fetch and its dispatcher on the same Undici version.
 const original = undici.fetch;
 const localDispatcher = new undici.Agent();
-globalThis.fetch = (input, init) => { const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url); if (url.hostname === "chatgpt.com" || url.hostname === "api.openai.com") { const local = "http://127.0.0.1:PORT" + url.pathname + url.search; const { dispatcher, ...localInit } = init ?? {}; return original(typeof input === "string" || input instanceof URL ? local : new Request(local, input), { ...localInit, dispatcher: localDispatcher }); } if (url.hostname === "127.0.0.1" || url.hostname === "localhost") return original(input, init); throw new Error("External network forbidden in Daybreak fixture: " + url.hostname); };
+globalThis.fetch = (input, init) => { const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url); if (url.hostname === "chatgpt.com" || url.hostname === "api.openai.com") { const local = "http://127.0.0.1:PORT" + url.pathname + url.search; const { dispatcher, ...localInit } = init ?? {}; return original(typeof input === "string" || input instanceof URL ? local : new Request(local, input), { ...localInit, dispatcher: localDispatcher }); } if (url.hostname === "127.0.0.1" || url.hostname === "localhost") return original(input, { ...init, dispatcher: localDispatcher }); throw new Error("External network forbidden in Daybreak fixture: " + url.hostname); };
 // Cover native dispatcher fetch as well as global fetch; no provider I/O leaves the fixture.
 globalThis.fetch.mock = {};
 globalThis.__OPENCLAW_TEST_UNDICI_RUNTIME_DEPS__ = { ...undici, fetch: globalThis.fetch };
 `.replace("PORT", String(provider.claim.port)),
+    );
+    const gatePlugin = path.join(dir, "preparation-gate");
+    await mkdir(gatePlugin);
+    await writeFile(
+      path.join(gatePlugin, "openclaw.plugin.json"),
+      JSON.stringify({
+        id: "daybreak-proof-gate",
+        activation: { onStartup: true },
+        configSchema: { type: "object", additionalProperties: false, properties: {} },
+      }),
+    );
+    await writeFile(
+      path.join(gatePlugin, "package.json"),
+      JSON.stringify({
+        name: "daybreak-proof-gate",
+        version: "0.0.0",
+        type: "module",
+        openclaw: { extensions: ["./index.js"] },
+      }),
+    );
+    await writeFile(
+      path.join(gatePlugin, "index.js"),
+      `export default { id: "daybreak-proof-gate", register(api) {
+      api.on("before_agent_run", async (event) => {
+        if (event.prompt.includes("DAYBREAK_REPLACEMENT_BARRIER")) {
+          const response = await fetch(${JSON.stringify("http://127.0.0.1:" + provider.claim.port + "/fixture/preparation-gate")}, {method:"POST"});
+          if (!response.ok) throw new Error("Preparation barrier failed");
+          await response.text();
+        }
+      });
+    } };`,
     );
     owner = await createOpenClawTestInstance({
       name: "daybreak-real-gateway",
@@ -175,7 +223,14 @@ globalThis.__OPENCLAW_TEST_UNDICI_RUNTIME_DEPS__ = { ...undici, fetch: globalThi
             },
           },
         },
-        plugins: { allow: ["openai"], entries: { codex: { enabled: false } } },
+        plugins: {
+          allow: ["openai", "daybreak-proof-gate"],
+          load: { paths: [gatePlugin] },
+          entries: {
+            codex: { enabled: false },
+            "daybreak-proof-gate": { enabled: true, hooks: { allowConversationAccess: true } },
+          },
+        },
         models: {
           catalogRefresh: { enabled: false },
           providers: {
@@ -222,6 +277,8 @@ globalThis.__OPENCLAW_TEST_UNDICI_RUNTIME_DEPS__ = { ...undici, fetch: globalThi
         await writeFile(path.join(dir, "gateway.private.log"), owner.logs());
         await owner.cleanup();
       } finally {
+        preparationGate?.destroy();
+        preparationGate = undefined;
         for (const response of held.values()) {
           response.destroy();
         }
@@ -349,6 +406,120 @@ suite.define(() => {
       discoveryInferenceRequests: 0,
       selectedAccessRequests: 1,
     };
+  }, 90_000);
+
+  it("rejects foreign grants and credential replacement before final Responses dispatch", async () => {
+    programs = ["standard", "daybreak_blue"];
+    const configureKey = async (apiKey: string) => {
+      const config = await call<{ hash: string }>("config.get", {});
+      await call("config.patch", {
+        baseHash: config.hash,
+        raw: JSON.stringify({ models: { providers: { openai: { apiKey } } } }),
+        response: "summary",
+      });
+      await call("models.list", { agentId: "main", provider: "openai", refresh: true });
+    };
+    const catalog = async (key: string) =>
+      (
+        await call<ModelCatalogResult>("models.list", {
+          sessionKey: key,
+          view: "configured",
+          provider: "openai",
+          refresh: true,
+        })
+      ).models.find((model) => model.id === "gpt-6.1-sol")?.availableAccessPrograms?.cyber;
+    const create = async (key: string) => {
+      await call("sessions.create", { key, agentId: "main", label: key });
+      await call("sessions.patch", { key, cyberAccessProgram: "daybreak_blue" });
+    };
+    await configureKey("sk-synthetic-configured-fixture");
+    const control = "agent:main:dispatch-control";
+    await create(control);
+    const donor = "agent:main:dispatch-donor";
+    await call("sessions.create", {
+      key: donor,
+      agentId: "main",
+      label: "Independent saved account",
+    });
+    await call("sessions.patch", {
+      key: donor,
+      model: "openai/gpt-6.1-sol@openai:platform-fixture",
+    });
+    const runCli = async (args: string[]) => {
+      const result = await owner.cli(args);
+      expect(result.code, result.stderr).toBe(0);
+      return result.stdout;
+    };
+    await suite.withPage({ viewport: { width: 1440, height: 900 } }, async ({ page }) => {
+      await pairControlUiPage(page, runCli);
+      await page.goto(controlUiSessionUrl(suite.server.baseUrl, control));
+      await waitForControlUiGatewayReady(page);
+      const send = (key: string, message: string) =>
+        evaluateControlUiContext(
+          page,
+          async (context, data) =>
+            context.gateway.snapshot.client!.request<{ runId: string }>("chat.send", {
+              sessionKey: data.key,
+              message: data.message,
+              idempotencyKey: data.id,
+            }),
+          { key, message, id: randomUUID() },
+        );
+      const wait = (runId: string) =>
+        call<{ status: string; error?: string }>("agent.wait", { runId, timeoutMs: 10_000 });
+      const initialRequests = receipts.length;
+      const positive = await send(control, "Daybreak dispatch positive control.");
+      expect((await wait(positive.runId)).status).toBe("ok");
+      expect(receipts.slice(initialRequests)).toEqual([
+        expect.objectContaining({ credential: "configured", access: { cyber: "daybreak_blue" } }),
+      ]);
+      const trace = [];
+      for (const phase of ["before-admission", "during-preparation"] as const) {
+        await configureKey("sk-synthetic-configured-fixture");
+        const key = "agent:main:dispatch-" + phase;
+        await create(key);
+        expect(await catalog(key)).toEqual(["standard", "daybreak_blue"]);
+        const before = receipts.length;
+        let runId: string;
+        if (phase === "during-preparation") {
+          preparationGate = undefined;
+          runId = (await send(key, "DAYBREAK_REPLACEMENT_BARRIER")).runId;
+          await expect.poll(() => Boolean(preparationGate)).toBe(true);
+          expect(receipts).toHaveLength(before);
+        }
+        await configureKey(unentitledKey);
+        const selectedPrograms = await catalog(key);
+        const foreignPrograms = await catalog(donor);
+        expect(selectedPrograms).toEqual([]);
+        expect(foreignPrograms).toEqual(["standard", "daybreak_blue"]);
+        if (phase === "during-preparation") {
+          preparationGate!.end("released");
+          preparationGate = undefined;
+        } else {
+          runId = (await send(key, "Reject the unentitled configured credential.")).runId;
+        }
+        const terminal = await wait(runId!);
+        expect(["ok", "error"]).toContain(terminal.status);
+        const history = await call("chat.history", { sessionKey: key, limit: 20 });
+        // Replacement retires the prepared runtime before transport; a fresh run reaches Access.
+        const rejection =
+          phase === "during-preparation"
+            ? "prepared model runtime publication was superseded"
+            : "not advertised for the current account";
+        expect(JSON.stringify({ terminal, history })).toContain(rejection);
+        expect(receipts).toHaveLength(before);
+        trace.push({
+          phase,
+          selectedPrograms,
+          foreignPrograms,
+          terminal: terminal.status,
+          rejection,
+          preparationBarrierObserved: phase === "during-preparation",
+          outboundResponsesRequests: receipts.length - before,
+        });
+      }
+      proof.directCredentialAuthority = { complete: true, positiveRequests: 1, cases: trace };
+    });
   }, 90_000);
 
   it("persists visible selections and refreshes queued requests on desktop and mobile", async () => {
