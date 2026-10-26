@@ -1,13 +1,22 @@
-import { expect, it, vi } from "vitest";
-import { buildOpenAIProvider } from "../../../../extensions/openai/api.js";
+import { beforeAll, expect, it, vi } from "vitest";
 import { fetchWithSsrFGuard } from "../../../infra/net/fetch-guard.js";
 import { withGuardedFetchBeforeRequest } from "../../../infra/net/fetch-request-authority.js";
+import type { ProviderPlugin } from "../../../plugins/types.js";
+import { loadBundledPluginFacade } from "../../../test-utils/bundled-plugin-public-surface.js";
 import type { OAuthCredential } from "../../auth-profiles/types.js";
 import type { ModelCatalogSnapshot } from "../../model-catalog.types.js";
 import { setPreparedModelFullCatalogAuth } from "../../prepared-model-runtime-auth.js";
 import { createPreparedAccountCatalogAccess } from "../../prepared-model-runtime.catalog-auth.js";
 import { prepareEmbeddedAccessProgramGuard } from "./access-program.js";
 import type { EmbeddedRunAttemptParams } from "./types.js";
+
+let provider: ProviderPlugin;
+beforeAll(async () => {
+  const { buildOpenAIProvider } = await loadBundledPluginFacade<{
+    buildOpenAIProvider: () => ProviderPlugin;
+  }>({ pluginId: "openai", artifactBasename: "api.js" });
+  provider = buildOpenAIProvider();
+});
 
 const profileId = "openai:default";
 const route = {
@@ -70,7 +79,7 @@ function attemptWith(credential: OAuthCredential) {
     authProfileStore: { version: 1, profiles: { [profileId]: credential } },
     runtimePlan: { auth: { modelRoute: route, selectedAuthMode: "oauth" } },
     preparedModelRuntime: {
-      pluginRegistry: { providers: [{ provider: buildOpenAIProvider() }] },
+      pluginRegistry: { providers: [{ provider }] },
       accountCatalog: createPreparedAccountCatalogAccess(() => true),
       readFullModelCatalog: () => snapshot,
       isCurrent: () => true,
