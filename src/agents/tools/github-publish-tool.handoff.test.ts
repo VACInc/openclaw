@@ -1,5 +1,6 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, expect, it, vi } from "vitest";
+import type { SessionGitHubPublicationResult } from "../../../packages/gateway-protocol/src/schema/session-github-publication.js";
 import { withinTest } from "../../../test/helpers/promise.js";
 import { createTestReplyOperation } from "../../auto-reply/reply/reply-run-registry.test-helpers.js";
 import * as events from "../../auto-reply/reply/session-event-handoff.js";
@@ -61,10 +62,26 @@ afterEach(() => {
   resetSystemEventsForTest();
 });
 
-it.for(["prepared", "published", "failed", "stop", "undelivered", "reset"] as const)(
+it.for([
+  "prepared",
+  "published",
+  "publication-failed",
+  "failed",
+  "stop",
+  "undelivered",
+  "reset",
+] as const)(
   "hands PR preparation to its registered owner after cleanup: %s",
   async (outcome, { signal }) => {
-    const localPublication = outcome === "published";
+    const localPublication = outcome === "published" || outcome === "publication-failed";
+    const failedPublication = {
+      status: "failed",
+      requestId: "local-publication",
+      code: "github_rejected",
+      message: "Branch pushed; pull request creation failed.",
+      nextAction: "Inspect the existing branch before retrying publication.",
+      effect: { kind: "push", status: "observed", headCommit: "a".repeat(40) },
+    } satisfies SessionGitHubPublicationResult;
     await withOpenClawTestState(
       { scenario: "minimal", prepareProfileCatalog: true, env: { OPENCLAW_TEST_FAST: "0" } },
       async (state) => {
@@ -144,6 +161,8 @@ it.for(["prepared", "published", "failed", "stop", "undelivered", "reset"] as co
           order.push("prepare");
           if (outcome === "failed") {
             respond(false, undefined, { code: "UNAVAILABLE", message: "Saved source preserved" });
+          } else if (outcome === "publication-failed") {
+            respond(true, failedPublication);
           } else if (localPublication) {
             respond(true, {
               status: "published",
@@ -357,11 +376,13 @@ it.for(["prepared", "published", "failed", "stop", "undelivered", "reset"] as co
             expect(enqueue).not.toHaveBeenCalled();
           } else {
             expect(await resumed.promise).toContain(
-              outcome === "failed"
-                ? "Saved source preserved"
-                : localPublication
-                  ? '"status":"published"'
-                  : '"status":"prepared"',
+              outcome === "publication-failed"
+                ? JSON.stringify(failedPublication)
+                : outcome === "failed"
+                  ? "Saved source preserved"
+                  : localPublication
+                    ? '"status":"published"'
+                    : '"status":"prepared"',
             );
             expect(order).toEqual(["yield", "cleanup", "prepare", "resume"]);
             expect(enqueue).toHaveBeenCalledOnce();

@@ -266,25 +266,26 @@ export function createGitHubPublishTool(
                   timeoutMs: null,
                 }),
             ),
-          // Import can change the whole repository; keep the resumed input bounded.
+          // Only PR import can return repository-sized path lists.
           formatResult: (result) =>
-            JSON.stringify({
-              status: result.status,
-              requestId: result.requestId,
-              url: result.url,
-              headCommit: result.headCommit,
-              headChanged: result.headChanged,
-              review: result.review,
-              ...(result.ok === false
-                ? {
-                    ok: false,
-                    error:
-                      typeof result.error === "string"
-                        ? truncateUtf16Safe(result.error, 1600)
-                        : name + " failed.",
-                  }
-                : {}),
-            }),
+            method === "sessions.github.publish"
+              ? JSON.stringify(result)
+              : JSON.stringify({
+                  status: result.status,
+                  url: result.url,
+                  headCommit: result.headCommit,
+                  headChanged: result.headChanged,
+                  review: result.review,
+                  ...(result.ok === false
+                    ? {
+                        ok: false,
+                        error:
+                          typeof result.error === "string"
+                            ? truncateUtf16Safe(result.error, 1600)
+                            : name + " failed.",
+                      }
+                    : {}),
+                }),
         });
       };
       if (input.draft !== undefined && input.action && input.action !== "publish") {
