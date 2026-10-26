@@ -9,9 +9,10 @@ import {
 } from "./github-publication.test-support.js";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { makeUserMessage } from "../../test/helpers/user-message.js";
 import { SessionManager } from "../agents/sessions/session-manager.js";
+import { resolveIngressWorkspaceOverrideForSessionRun } from "../agents/spawned-context.js";
 import { withGatewayToolCallerIdentity } from "../agents/tools/gateway-caller-context.js";
 import { deleteRegistryWorktree } from "../agents/worktrees/registry.js";
 import { getRuntimeConfig, setRuntimeConfigSnapshot } from "../config/config.js";
@@ -33,6 +34,8 @@ import type { GatewayRequestContext } from "./server-methods/types.js";
 import { createSyntheticPluginRuntimeClient } from "./server-plugin-runtime-client.js";
 import { createOperatorWsClient } from "./server/ws-connection/authenticated-request-dispatch.test-support.js";
 import { prepareGatewayConnectOperatorAccess } from "./server/ws-connection/connect-operator-access.js";
+import { resolveSessionWorkspaceRoots } from "./session-workspace-roots.js";
+import * as allocation from "./session-worktree-preparation.js";
 
 const mocks = githubPublicationTestMocks();
 const createFixture = () =>
@@ -56,119 +59,185 @@ describe("local checkout publication", () => {
     creatorEmail: "publication-guest@example.test",
     realWorktree: true,
   });
-  it("publishes an unbound local checkout without admin authority or changing the source", async () => {
-    const f = await createFixture();
-    const source = f.local!;
-    const scope = { agentId: "main", sessionKey: SESSION_KEY };
-    const scopes = ["operator.read", "operator.write"];
-    setRuntimeConfigSnapshot({
-      ...f.config,
-      agents: { entries: { main: { workspace: root } } },
-      gateway: {
-        roles: {
-          default: "writer",
-          definitions: {
-            writer: { scopes, agents: ["main"], sessions: { others: "none" } },
+  it.each(["published", "before binding", "before push", "before PR"] as const)(
+    "local checkout outcome: %s",
+    async (outcome) => {
+      const f = await createFixture();
+      const source = f.local!;
+      const scope = { agentId: "main", sessionKey: SESSION_KEY };
+      const scopes: OperatorScope[] = ["operator.read", "operator.write"];
+      setRuntimeConfigSnapshot({
+        ...f.config,
+        agents: { entries: { main: { workspace: root } } },
+        gateway: {
+          roles: {
+            default: "writer",
+            definitions: {
+              ...f.config.gateway!.roles!.definitions,
+              writer: { scopes, agents: ["main"], sessions: { others: "none" } },
+            },
           },
         },
-      },
-    });
-    await deleteRegistryWorktree(process.env, loadSessionEntryReadOnly(scope)!.worktree!.id);
-    await upsertSessionEntryCore(scope, {
-      worktree: undefined,
-      sessionRoot: source.cwd,
-      spawnedCwd: source.cwd,
-    });
-    const actual = await vi.importActual<typeof import("../agents/worktrees/service.js")>(
-      "../agents/worktrees/service.js",
-    );
-    const registry = await vi.importActual<typeof import("../agents/worktrees/registry-read.js")>(
-      "../agents/worktrees/registry-read.js",
-    );
-    mocks.resolveRepository.mockImplementation(
-      actual.managedWorktrees.resolveRepositoryIdentity.bind(actual.managedWorktrees),
-    );
-    mocks.readWorktree.mockImplementation(registry.readLiveRegistryWorktreeByOwner);
-    await source.git("remote", "add", "origin", "https://github.com/openclaw/openclaw.git");
-    const manager = await SessionManager.openAsync(
-      {
-        ...scope,
-        sessionId: SESSION_ID,
-        storePath: resolveSessionStorePathCore(undefined, { agentId: "main" }),
-      },
-      source.cwd,
-    );
-    await manager.appendMessageAsync(
-      makeUserMessage("Implement this change and publish its PR", 1),
-    );
-    const requester = await createGitHubPublicationRequesterFixture({
-      ...scope,
-      profileId: f.guestProfile,
-      scopes,
-    });
-    const context = {
-      ...createDirectChatContext({ getRuntimeConfig }),
-      workerSessionPlacementService: f.placements,
-      githubPublicationService: f.coordinator,
-    };
-    const invoke = async (handoff = true) => {
-      const respond = vi.fn();
-      const params = {
-        sessionKey: SESSION_KEY,
-        idempotencyKey: "local-checkout",
-        workspacePath: source.cwd,
-      };
-      await withGatewayToolCallerIdentity(
+      });
+      await deleteRegistryWorktree(process.env, loadSessionEntryReadOnly(scope)!.worktree!.id);
+      await upsertSessionEntryCore(scope, {
+        worktree: undefined,
+        sessionRoot: source.cwd,
+        spawnedCwd: source.cwd,
+        spawnedWorkspaceDir: source.cwd,
+        spawnedBy: "agent:main:parent",
+        thinkingLevel: "high",
+        label: "Existing task",
+      });
+      const actual = await vi.importActual<typeof import("../agents/worktrees/service.js")>(
+        "../agents/worktrees/service.js",
+      );
+      const registry = await vi.importActual<typeof import("../agents/worktrees/registry-read.js")>(
+        "../agents/worktrees/registry-read.js",
+      );
+      mocks.resolveRepository.mockImplementation(
+        actual.managedWorktrees.resolveRepositoryIdentity.bind(actual.managedWorktrees),
+      );
+      mocks.readWorktree.mockImplementation(registry.readLiveRegistryWorktreeByOwner);
+      await source.git("remote", "add", "origin", "https://github.com/openclaw/openclaw.git");
+      const manager = await SessionManager.openAsync(
         {
           ...scope,
-          ...(handoff ? { workspacePrAdoptionSessionId: SESSION_ID } : {}),
+          sessionId: SESSION_ID,
+          storePath: resolveSessionStorePathCore(undefined, { agentId: "main" }),
         },
-        () =>
-          handleGatewayRequest({
-            req: {
-              type: "req",
-              id: params.idempotencyKey,
-              method: "sessions.github.publish",
-              params,
-            },
-            context,
-            client: requester.client,
-            isWebchatConnect: () => false,
-            respond,
-          }),
+        source.cwd,
       );
-      return respond.mock.calls[0];
-    };
-    const dirty = await worktreeState(source);
-    expect(await invoke(false)).toMatchObject([
-      false,
-      undefined,
-      { message: expect.stringContaining("agent handoff") },
-    ]);
-    expect(await invoke()).toMatchObject([
-      false,
-      undefined,
-      { message: expect.stringContaining("Commit the task changes") },
-    ]);
-    expect(await worktreeState(source)).toEqual(dirty);
-    await source.git("add", "artifact.txt");
-    await source.git("commit", "-m", "Implement the requested change");
-    const before = await worktreeState(source);
-    const result = await invoke();
-    expect(result).toMatchObject([
-      true,
-      { status: "published", url: expect.stringContaining("/pull/") },
-    ]);
-    const prepared = loadSessionEntryReadOnly(scope)!;
-    expect(prepared.spawnedCwd).not.toBe(source.cwd);
-    expect(await fs.readFile(path.join(prepared.spawnedCwd!, "artifact.txt"), "utf8")).toBe(
-      "accepted\n",
-    );
-    expect(await worktreeState(source)).toEqual(before);
-    expect(source.effects).toEqual(["push", "pull_request"]);
-    expect(await invoke()).toEqual(result);
-    expect(source.effects).toEqual(["push", "pull_request"]);
-  });
+      await manager.appendMessageAsync(
+        makeUserMessage("Implement this change and publish its PR", 1),
+      );
+      const requester = await createGitHubPublicationRequesterFixture({
+        ...scope,
+        profileId: f.guestProfile,
+        scopes,
+      });
+      const context = {
+        ...createDirectChatContext({ getRuntimeConfig }),
+        workerSessionPlacementService: f.placements,
+        githubPublicationService: f.coordinator,
+      };
+      const invoke = async (handoff = true) => {
+        const respond = vi.fn();
+        const params = {
+          sessionKey: SESSION_KEY,
+          idempotencyKey: "local-checkout",
+          workspacePath: source.cwd,
+        };
+        await withGatewayToolCallerIdentity(
+          {
+            ...scope,
+            ...(handoff ? { workspacePrAdoptionSessionId: SESSION_ID } : {}),
+          },
+          () =>
+            handleGatewayRequest({
+              req: {
+                type: "req",
+                id: params.idempotencyKey,
+                method: "sessions.github.publish",
+                params,
+              },
+              context,
+              client: requester.client,
+              isWebchatConnect: () => false,
+              respond,
+            }),
+        );
+        return respond.mock.calls[0];
+      };
+      const dirty = await worktreeState(source);
+      expect(await invoke(false)).toMatchObject([
+        false,
+        undefined,
+        { message: expect.stringContaining("agent handoff") },
+      ]);
+      expect(await invoke()).toMatchObject([
+        false,
+        undefined,
+        { message: expect.stringContaining("Commit the task changes") },
+      ]);
+      expect(await worktreeState(source)).toEqual(dirty);
+      await source.git("add", "artifact.txt");
+      await source.git("commit", "-m", "Implement the requested change");
+      const before = await worktreeState(source);
+      if (outcome === "before binding") {
+        const prepare = allocation.prepareSessionWorktree;
+        const spy = vi
+          .spyOn(allocation, "prepareSessionWorktree")
+          .mockImplementationOnce(async (...args) => {
+            const allocated = await prepare(...args);
+            await f.revoke();
+            return allocated;
+          });
+        onTestFinished(() => spy.mockRestore());
+      } else if (outcome === "before push") {
+        const update = mocks.updateIndex.getMockImplementation()!;
+        mocks.updateIndex.mockImplementationOnce(async (...args) => {
+          const result = await update(...args);
+          await f.revoke();
+          return result;
+        });
+      } else if (outcome === "before PR") {
+        const transport = mocks.runCommand.getMockImplementation()!;
+        mocks.runCommand.mockImplementation(async (...args) => {
+          const result = await transport(...args);
+          if (args[0].includes("push")) {
+            await f.revoke();
+          }
+          return result;
+        });
+      }
+      const result = await invoke();
+      expect(await worktreeState(source)).toEqual(before);
+      if (outcome !== "published") {
+        expect(result).toMatchObject(
+          outcome === "before binding"
+            ? [false, undefined, { message: expect.stringContaining("no longer authorized") }]
+            : [
+                false,
+                undefined,
+                { code: "FORBIDDEN", message: expect.stringContaining("role changed") },
+              ],
+        );
+        expect(source.effects).toEqual(outcome === "before PR" ? ["push"] : []);
+        if (outcome === "before binding") {
+          expect(loadSessionEntryReadOnly(scope)?.worktree).toBeUndefined();
+        }
+        return;
+      }
+      expect(result).toMatchObject([
+        true,
+        { status: "published", url: expect.stringContaining("/pull/") },
+      ]);
+      const prepared = loadSessionEntryReadOnly(scope)!;
+      expect(prepared.spawnedCwd).not.toBe(source.cwd);
+      expect(prepared).toMatchObject({
+        thinkingLevel: "high",
+        label: "Existing task",
+        priorWorkspace: { fileRoot: source.cwd },
+      });
+      const resumedRoot = resolveIngressWorkspaceOverrideForSessionRun({
+        spawnedBy: prepared.spawnedBy,
+        workspaceDir: prepared.spawnedWorkspaceDir,
+        cwd: prepared.spawnedCwd,
+      });
+      expect(resumedRoot).toBe(prepared.spawnedCwd);
+      expect(resolveSessionWorkspaceRoots(getRuntimeConfig(), "main", prepared).root).toBe(
+        resumedRoot,
+      );
+      expect(await fs.readFile(path.join(prepared.spawnedCwd!, "artifact.txt"), "utf8")).toBe(
+        "accepted\n",
+      );
+      expect(await worktreeState(source)).toEqual(before);
+      expect(source.effects).toEqual(["push", "pull_request"]);
+      expect(await invoke()).toEqual(result);
+      expect(source.effects).toEqual(["push", "pull_request"]);
+    },
+  );
 });
 
 describe("registered session GitHub publication access", () => {
