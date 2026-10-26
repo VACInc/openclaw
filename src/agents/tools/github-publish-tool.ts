@@ -17,6 +17,7 @@ import {
   type SessionGitHubActionResult,
   type SessionGitHubPublicationResult,
   type SessionGitHubPublishParams,
+  SessionGitHubPublishParamsSchema,
 } from "../../../packages/gateway-protocol/src/schema/session-github-publication.js";
 import { captureExecRequestOwners } from "../../infra/exec-request-context.js";
 import { resolveReplyRunForCurrentSessionId } from "../../sessions/session-controller.identity.js";
@@ -66,6 +67,7 @@ export const githubPublishToolDefinition = {
       title: Type.Optional(GitHubPublicationTitleSchema),
       body: GitHubPublicationEditSchema.properties.body,
       draft: Type.Optional(Type.Boolean()),
+      workspacePath: SessionGitHubPublishParamsSchema.properties.workspacePath,
     },
     { additionalProperties: false },
   ),
@@ -101,6 +103,7 @@ function resolveGitHubPublishParameters(params: {
   prepareAvailable: boolean;
   refreshBaseAvailable: boolean;
   evidenceAvailable: boolean;
+  workspacePreparationAvailable: boolean;
   workspaceActions: readonly string[];
 }): AnyAgentTool["parameters"] {
   const { publicationAvailable, refreshBaseAvailable, evidenceAvailable, workspaceActions } =
@@ -111,6 +114,7 @@ function resolveGitHubPublishParameters(params: {
     params.prepareAvailable,
     refreshBaseAvailable,
     evidenceAvailable,
+    params.workspacePreparationAvailable,
   ].join(":");
   let schema = githubPublishParameterSchemas.get(key);
   if (!schema) {
@@ -130,6 +134,9 @@ function resolveGitHubPublishParameters(params: {
             title: Type.Optional(GitHubPublicationTitleSchema),
             body: GitHubPublicationEditSchema.properties.body,
             draft: Type.Optional(Type.Boolean()),
+            ...(params.workspacePreparationAvailable
+              ? { workspacePath: SessionGitHubPublishParamsSchema.properties.workspacePath }
+              : {}),
           },
           { additionalProperties: false },
         )
@@ -156,6 +163,7 @@ export function createGitHubPublishTool(
   } = {},
 ): AnyAgentTool {
   const publicationAvailable = options.publicationAvailable !== false;
+  const workspacePreparationAvailable = !options.sandbox;
   const prepareAvailable = canPrepareGitHubPullRequest(options.sandbox);
   // An unbound sandboxed conversation prepares by yielding and adopting a managed workspace.
   const adopting = prepareAvailable && options.sandbox?.workspaceSource !== "managed-worktree";
@@ -178,7 +186,9 @@ export function createGitHubPublishTool(
     name: githubPublishToolDefinition.name,
     // An unbound sandboxed preparation yields this turn. Like sessions_yield, it stays a direct
     // call: a Code Mode exec cannot carry a turn handoff.
-    ...(adopting ? { async: false as const, catalogMode: "direct-only" as const } : {}),
+    ...(adopting || (publicationAvailable && workspacePreparationAvailable)
+      ? { async: false as const, catalogMode: "direct-only" as const }
+      : {}),
     description: describeGitHubPublishTool(
       publicationAvailable,
       prepareAvailable,
@@ -190,6 +200,7 @@ export function createGitHubPublishTool(
       prepareAvailable,
       refreshBaseAvailable,
       evidenceAvailable,
+      workspacePreparationAvailable,
       workspaceActions,
     }),
     execute: async (toolCallId, rawArgs, signal) => {
@@ -212,11 +223,70 @@ export function createGitHubPublishTool(
           baseCommit?: string;
         };
       const action = input.action ?? "publish";
+      if (
+        input.workspacePath !== undefined &&
+        (action !== "publish" || !workspacePreparationAvailable)
+      ) {
+        throw new Error("workspacePath is only available for local host publication.");
+      }
       // The Gateway authorizes each action against the current caller; listing never grants it.
       const caller = getGatewayToolCallerIdentity();
       if (!caller?.sessionKey) {
         throw new Error("GitHub publication requires the current Gateway session.");
       }
+      const handoff = async (
+        name: string,
+        method: "sessions.github.action" | "sessions.github.publish",
+        params: Record<string, unknown>,
+      ) => {
+        const { handoffSessionTool } = await import("./session-tool-handoff.js");
+        return handoffSessionTool({
+          name,
+          sessionId: options.sessionId,
+          runId: options.runId,
+          operation,
+          requestOwners,
+          onYield: options.onYield,
+          signal,
+          fenceSuccessors: true,
+          run: ({ assertCurrent, signal: handoffSignal }) =>
+            withGatewayToolCallerIdentity(
+              {
+                agentId: caller.agentId,
+                sessionKey: caller.sessionKey,
+                workspaceBaseRefreshSandbox: options.sandbox ?? undefined,
+                workspacePrAdoptionSessionId: options.sessionId,
+              },
+              () =>
+                callAgentToolGatewayRequest({
+                  method,
+                  params,
+                  sessionMutationCommitGuard: assertCurrent,
+                  signal: handoffSignal,
+                  timeoutMs: null,
+                }),
+            ),
+          // Import can change the whole repository; keep the resumed input bounded.
+          formatResult: (result) =>
+            JSON.stringify({
+              status: result.status,
+              requestId: result.requestId,
+              url: result.url,
+              headCommit: result.headCommit,
+              headChanged: result.headChanged,
+              review: result.review,
+              ...(result.ok === false
+                ? {
+                    ok: false,
+                    error:
+                      typeof result.error === "string"
+                        ? truncateUtf16Safe(result.error, 1600)
+                        : name + " failed.",
+                  }
+                : {}),
+            }),
+        });
+      };
       if (input.draft !== undefined && input.action && input.action !== "publish") {
         throw new Error("draft only selects the state when publishing a new PR.");
       }
@@ -236,62 +306,14 @@ export function createGitHubPublishTool(
           );
         }
         if (adopting && options.sandbox) {
-          const { handoffSessionTool } = await import("./session-tool-handoff.js");
-          const sandbox = options.sandbox;
-          return handoffSessionTool({
-            name: "PR preparation",
-            sessionId: options.sessionId,
-            runId: options.runId,
-            operation,
-            requestOwners,
-            onYield: options.onYield,
-            signal,
-            fenceSuccessors: true,
-            run: ({ assertCurrent, signal: handoffSignal }) =>
-              withGatewayToolCallerIdentity(
-                {
-                  agentId: caller.agentId,
-                  sessionKey: caller.sessionKey,
-                  workspaceBaseRefreshSandbox: sandbox,
-                  workspacePrAdoptionSessionId: options.sessionId,
-                },
-                () =>
-                  callAgentToolGatewayRequest({
-                    method: "sessions.github.action",
-                    params: {
-                      sessionKey: caller.sessionKey,
-                      action: "prepare_pr",
-                      pullRequestUrl: input.pullRequestUrl,
-                      ...(input.conflictsResolved !== undefined
-                        ? { conflictsResolved: input.conflictsResolved }
-                        : {}),
-                      ...(input.expectedHeadCommit
-                        ? { expectedHeadCommit: input.expectedHeadCommit }
-                        : {}),
-                    },
-                    sessionMutationCommitGuard: assertCurrent,
-                    signal: handoffSignal,
-                    timeoutMs: null,
-                  }),
-              ),
-            // A first import can change the whole repository; keep its resume input bounded.
-            formatResult: (result) =>
-              JSON.stringify({
-                status: result.status,
-                url: result.url,
-                headCommit: result.headCommit,
-                headChanged: result.headChanged,
-                review: result.review,
-                ...(result.ok === false
-                  ? {
-                      ok: false,
-                      error:
-                        typeof result.error === "string"
-                          ? truncateUtf16Safe(result.error, 1600)
-                          : "PR preparation failed.",
-                    }
-                  : {}),
-              }),
+          return handoff("PR preparation", "sessions.github.action", {
+            sessionKey: caller.sessionKey,
+            action: "prepare_pr",
+            pullRequestUrl: input.pullRequestUrl,
+            ...(input.conflictsResolved !== undefined
+              ? { conflictsResolved: input.conflictsResolved }
+              : {}),
+            ...(input.expectedHeadCommit ? { expectedHeadCommit: input.expectedHeadCommit } : {}),
           });
         }
         return jsonResult(
@@ -474,13 +496,21 @@ export function createGitHubPublishTool(
       }
       // The persisted assistant turn keeps replays stable, even when recovery runs them again.
       const assistantTurnId = getAgentToolAssistantTurnId();
-      const result = await callGateway<SessionGitHubPublicationResult>("sessions.github.publish", {
+      const publishParams: SessionGitHubPublishParams = {
         sessionKey: caller.sessionKey,
         idempotencyKey: assistantTurnId ? `${assistantTurnId}:${toolCallId}` : toolCallId,
         ...(input.title ? { title: input.title } : {}),
         ...(input.body !== undefined ? { body: input.body } : {}),
         ...(input.draft !== undefined ? { draft: input.draft } : {}),
-      });
+        ...(input.workspacePath !== undefined ? { workspacePath: input.workspacePath } : {}),
+      };
+      if (input.workspacePath !== undefined) {
+        return handoff("GitHub publication", "sessions.github.publish", publishParams);
+      }
+      const result = await callGateway<SessionGitHubPublicationResult>(
+        "sessions.github.publish",
+        publishParams,
+      );
       return jsonResult(result);
     },
   };

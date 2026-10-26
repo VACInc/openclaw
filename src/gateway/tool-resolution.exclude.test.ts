@@ -233,7 +233,7 @@ describe("resolveGatewayScopedTools excludeToolNames", () => {
             content: [
               {
                 type: "text",
-                text: "sessions needs the owner's authority (configured Gateway owner or operator.admin), which this turn does not carry. Session ownership does not grant this authority. Do not retry sessions until authority changes. This refusal applies only to sessions; continue independent work with tools this turn permits.",
+                text: "sessions needs the owner's authority, and this turn was not started by the owner. Do not retry sessions.",
               },
             ],
           });

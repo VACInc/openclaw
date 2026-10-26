@@ -71,17 +71,6 @@ export class GitHubPublicationBranchChangedError extends GitHubPublicationKnownF
   }
 }
 
-export class GitHubPublicationWorkspaceRequiredError extends GitHubPublicationKnownFailure {
-  constructor() {
-    const nextAction =
-      "Preserve saved work. Do not retry github_publish until this session has a managed publication workspace. Use a session-owned repository workspace, or independently authorized Git tools when available; this refusal does not change their permissions. An ordinary checkout or shell-created worktree does not register a publication target.";
-    super(
-      `GitHub publication is unavailable because this session has no session-owned Git worktree or repository workspace. ${nextAction}`,
-      { code: "unavailable", nextAction },
-    );
-  }
-}
-
 export class GitHubPublicationSessionChangedError extends GitHubPublicationKnownFailure {
   constructor() {
     super("GitHub publication session lifecycle changed.", {

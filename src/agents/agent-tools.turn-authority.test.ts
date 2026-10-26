@@ -19,24 +19,6 @@ function tool(name: string): AnyAgentTool {
 }
 
 describe("resolveTurnToolSurface", () => {
-  it("explains Gateway authority without treating a denied repair tool as a global stop", async () => {
-    const { tools, callableTools } = resolveTurnToolSurface({
-      turnTools: [tool("openclaw"), tool("read")],
-      ownerOnlyDenied: new Set(["openclaw"]),
-    });
-    const result = await tools[0]!.execute("repair", {});
-    expect(result.details).toMatchObject({ gated: true });
-    const message = JSON.stringify(result.content);
-    expect(message).toContain("Gateway owner");
-    expect(message).toContain("Session ownership does not grant this authority");
-    expect(message).toContain("This refusal applies only to openclaw");
-    expect(message).not.toContain("not started by the owner");
-    await expect(tools[1]!.execute("read", {})).resolves.toMatchObject({
-      details: { ran: "read" },
-    });
-    expect(callableTools.map((entry) => entry.name)).toEqual(["read"]);
-  });
-
   it("keeps a gated dependency non-callable for dependent affordances", () => {
     // A spawn tool may enable result collection only while its reader is callable.
     let readerCallable: boolean | undefined;

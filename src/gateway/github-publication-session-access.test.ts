@@ -3,22 +3,31 @@
 import {
   SESSION_ID,
   SESSION_KEY,
+  root,
   githubPublicationTestMocks,
   installGitHubPublicationTestHarness,
 } from "./github-publication.test-support.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { makeUserMessage } from "../../test/helpers/user-message.js";
+import { SessionManager } from "../agents/sessions/session-manager.js";
+import { withGatewayToolCallerIdentity } from "../agents/tools/gateway-caller-context.js";
+import { deleteRegistryWorktree } from "../agents/worktrees/registry.js";
 import { getRuntimeConfig, setRuntimeConfigSnapshot } from "../config/config.js";
+import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
+import { loadSessionEntryReadOnly } from "../config/sessions/session-accessor.js";
 import { upsertSessionEntryCore } from "../config/sessions/session-accessor.sqlite-entry.js";
 import { addSessionMember } from "../config/sessions/session-sharing-store.js";
 import { ensureCanonicalUserProfileForEmail } from "../state/user-profile-writes.js";
 import { prepareGitHubPublicationSession } from "./github-publication-availability.js";
 import {
   createRequesterPublicationFixture,
+  createGitHubPublicationRequesterFixture,
   guestScopes,
 } from "./github-publication-requester.test-support.js";
 import type { OperatorScope } from "./operator-scopes.js";
+import { createDirectChatContext } from "./server-chat.agent-events.test-helpers.js";
 import { handleGatewayRequest } from "./server-methods.js";
 import type { GatewayRequestContext } from "./server-methods/types.js";
 import { createSyntheticPluginRuntimeClient } from "./server-plugin-runtime-client.js";
@@ -42,49 +51,131 @@ async function worktreeState(
   };
 }
 
+describe("local checkout publication", () => {
+  installGitHubPublicationTestHarness({
+    creatorEmail: "publication-guest@example.test",
+    realWorktree: true,
+  });
+  it("publishes an unbound local checkout without admin authority or changing the source", async () => {
+    const f = await createFixture();
+    const source = f.local!;
+    const scope = { agentId: "main", sessionKey: SESSION_KEY };
+    const scopes = ["operator.read", "operator.write"];
+    setRuntimeConfigSnapshot({
+      ...f.config,
+      agents: { entries: { main: { workspace: root } } },
+      gateway: {
+        roles: {
+          default: "writer",
+          definitions: {
+            writer: { scopes, agents: ["main"], sessions: { others: "none" } },
+          },
+        },
+      },
+    });
+    await deleteRegistryWorktree(process.env, loadSessionEntryReadOnly(scope)!.worktree!.id);
+    await upsertSessionEntryCore(scope, {
+      worktree: undefined,
+      sessionRoot: source.cwd,
+      spawnedCwd: source.cwd,
+    });
+    const actual = await vi.importActual<typeof import("../agents/worktrees/service.js")>(
+      "../agents/worktrees/service.js",
+    );
+    const registry = await vi.importActual<typeof import("../agents/worktrees/registry-read.js")>(
+      "../agents/worktrees/registry-read.js",
+    );
+    mocks.resolveRepository.mockImplementation(
+      actual.managedWorktrees.resolveRepositoryIdentity.bind(actual.managedWorktrees),
+    );
+    mocks.readWorktree.mockImplementation(registry.readLiveRegistryWorktreeByOwner);
+    await source.git("remote", "add", "origin", "https://github.com/openclaw/openclaw.git");
+    const manager = await SessionManager.openAsync(
+      {
+        ...scope,
+        sessionId: SESSION_ID,
+        storePath: resolveSessionStorePathCore(undefined, { agentId: "main" }),
+      },
+      source.cwd,
+    );
+    await manager.appendMessageAsync(
+      makeUserMessage("Implement this change and publish its PR", 1),
+    );
+    const requester = await createGitHubPublicationRequesterFixture({
+      ...scope,
+      profileId: f.guestProfile,
+      scopes,
+    });
+    const context = {
+      ...createDirectChatContext({ getRuntimeConfig }),
+      workerSessionPlacementService: f.placements,
+      githubPublicationService: f.coordinator,
+    };
+    const invoke = async (handoff = true) => {
+      const respond = vi.fn();
+      const params = {
+        sessionKey: SESSION_KEY,
+        idempotencyKey: "local-checkout",
+        workspacePath: source.cwd,
+      };
+      await withGatewayToolCallerIdentity(
+        {
+          ...scope,
+          ...(handoff ? { workspacePrAdoptionSessionId: SESSION_ID } : {}),
+        },
+        () =>
+          handleGatewayRequest({
+            req: {
+              type: "req",
+              id: params.idempotencyKey,
+              method: "sessions.github.publish",
+              params,
+            },
+            context,
+            client: requester.client,
+            isWebchatConnect: () => false,
+            respond,
+          }),
+      );
+      return respond.mock.calls[0];
+    };
+    const dirty = await worktreeState(source);
+    expect(await invoke(false)).toMatchObject([
+      false,
+      undefined,
+      { message: expect.stringContaining("agent handoff") },
+    ]);
+    expect(await invoke()).toMatchObject([
+      false,
+      undefined,
+      { message: expect.stringContaining("Commit the task changes") },
+    ]);
+    expect(await worktreeState(source)).toEqual(dirty);
+    await source.git("add", "artifact.txt");
+    await source.git("commit", "-m", "Implement the requested change");
+    const before = await worktreeState(source);
+    const result = await invoke();
+    expect(result).toMatchObject([
+      true,
+      { status: "published", url: expect.stringContaining("/pull/") },
+    ]);
+    const prepared = loadSessionEntryReadOnly(scope)!;
+    expect(prepared.spawnedCwd).not.toBe(source.cwd);
+    expect(await fs.readFile(path.join(prepared.spawnedCwd!, "artifact.txt"), "utf8")).toBe(
+      "accepted\n",
+    );
+    expect(await worktreeState(source)).toEqual(before);
+    expect(source.effects).toEqual(["push", "pull_request"]);
+    expect(await invoke()).toEqual(result);
+    expect(source.effects).toEqual(["push", "pull_request"]);
+  });
+});
+
 describe("registered session GitHub publication access", () => {
   installGitHubPublicationTestHarness({
     creatorEmail: "publication-guest@example.test",
     sandbox: "required",
     realWorktree: true,
-  });
-
-  it("reports an unbound workspace without suggesting a lifecycle retry or changing saved work", async () => {
-    const f = await createFixture();
-    if (!f.local) {
-      throw new Error("Expected a local publication fixture.");
-    }
-    await upsertSessionEntryCore(
-      { agentId: "main", sessionKey: SESSION_KEY },
-      { worktree: undefined },
-    );
-    const before = await worktreeState(f.local);
-    const respond = vi.fn();
-    const params = { sessionKey: SESSION_KEY, idempotencyKey: "unbound-workspace" };
-    await handleGatewayRequest({
-      req: { type: "req", id: params.idempotencyKey, method: "sessions.github.publish", params },
-      context: {
-        ...f.guestSource.context,
-        githubPublicationService: f.coordinator,
-      } as GatewayRequestContext,
-      client: f.guestSource.client,
-      isWebchatConnect: () => false,
-      respond,
-    });
-    expect(respond).toHaveBeenCalledWith(
-      false,
-      undefined,
-      expect.objectContaining({
-        code: "UNAVAILABLE",
-        message: expect.stringContaining("no session-owned Git worktree or repository workspace"),
-      }),
-    );
-    const message = respond.mock.calls[0]?.[2]?.message;
-    expect(message).toContain("Do not retry github_publish until");
-    expect(message).toContain("independently authorized Git tools");
-    expect(message).not.toContain("lifecycle changed");
-    expect(f.local.effects).toEqual([]);
-    expect(await worktreeState(f.local)).toEqual(before);
   });
 
   it.each([
