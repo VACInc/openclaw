@@ -307,6 +307,7 @@ export const sessionsGitHubHandlers: GatewayRequestHandlers = {
       using selectedSession = await prepareGitHubPublicationSession(sessionKey, {
         agentId,
         assertCurrent: () => sessionMutationAuthorization?.assertCurrent(),
+        projection: params.workspacePath === undefined ? undefined : ["skillsSnapshot"],
       });
       const loaded = selectedSession.loaded;
       if (!loaded.entry?.sessionId) {

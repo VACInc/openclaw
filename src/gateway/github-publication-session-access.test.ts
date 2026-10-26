@@ -88,6 +88,18 @@ describe("local checkout publication", () => {
         spawnedBy: "agent:main:parent",
         thinkingLevel: "high",
         label: "Existing task",
+        skillsSnapshot: {
+          prompt: "",
+          skills: [],
+          librarySelections: [
+            {
+              skillId: "11111111-1111-4111-8111-111111111111",
+              revision: "a".repeat(64),
+              name: "notes",
+              ownerProfileId: f.guestProfile,
+            },
+          ],
+        },
       });
       const actual = await vi.importActual<typeof import("../agents/worktrees/service.js")>(
         "../agents/worktrees/service.js",
