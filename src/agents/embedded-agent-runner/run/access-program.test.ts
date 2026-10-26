@@ -70,7 +70,9 @@ function attemptWith(credential: OAuthCredential) {
   };
   setPreparedModelFullCatalogAuth(snapshot, {
     authStore: { version: 1, profiles: { [profileId]: discovered } },
-  } as Parameters<typeof setPreparedModelFullCatalogAuth>[1]);
+    authModes: { openai: "oauth" },
+    providerAuthLabels: new Map(),
+  });
   return {
     provider: "openai",
     modelId: "synthetic-model",
