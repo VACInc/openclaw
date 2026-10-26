@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { buffer } from "node:stream/consumers";
 import { zstdDecompressSync } from "node:zlib";
@@ -133,7 +134,7 @@ const suite = createControlUiE2eSuite({
     const preload = path.join(dir, "provider-network-fixture.cjs");
     await writeFile(
       preload,
-      `const undici = require("undici/index.js");
+      `const undici = require(${JSON.stringify(createRequire(import.meta.url).resolve("undici/index.js"))});
 // Keep fetch and its dispatcher on the same Undici version.
 const original = undici.fetch;
 const localDispatcher = new undici.Agent();
@@ -351,6 +352,14 @@ suite.define(() => {
   }, 90_000);
 
   it("persists visible selections and refreshes queued requests on desktop and mobile", async () => {
+    // The subscription scenario owns its original route, independently of the configured-key case.
+    const config = await call<{ hash: string }>("config.get", {});
+    await call("config.patch", {
+      baseHash: config.hash,
+      raw: JSON.stringify({ models: { providers: { openai: null } } }),
+      replacePaths: ["models.providers.openai.models"],
+      response: "summary",
+    });
     const runCli = async (args: string[]) => {
       const result = await owner.cli(args);
       expect(result.code, result.stderr).toBe(0);
@@ -362,8 +371,12 @@ suite.define(() => {
       programs = ["standard", "daybreak_blue", "daybreak_red"];
       reasoningEfforts = ["medium"];
       proof.initialCatalog = await call("models.list", { agentId: "main", refresh: true });
+      expect(proof.initialCatalog).toMatchObject({
+        providerOutcomes: expect.arrayContaining([
+          expect.objectContaining({ profileId: "openai:daybreak-fixture", status: "ready" }),
+        ]),
+      });
       await call("sessions.create", { key, agentId: "main", label: "Daybreak " + name });
-      await call("sessions.patch", { key, model: "openai/gpt-6.1-sol@openai:daybreak-fixture" });
       await suite.withPage(
         {
           viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 },

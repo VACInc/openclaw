@@ -101,24 +101,34 @@ describe("handleEmbeddedPromptFailure", () => {
   it("admits current configured-key programs and rejects stale or foreign discovery at execution", async () => {
     let current = true;
     const modelRoute = {
+      provider: "openai",
+      modelId: "fixture",
       api: "openai-responses",
       baseUrl: "https://api.openai.com/v1",
       authRequirement: "api-key",
       requestTransportOverrides: "none",
     } as const;
-    const runtime = createEmptyPreparedModelRuntimeFixture({
-      agentDir: "/fixture/agent",
-      config: {},
-      metadataSnapshot: createPluginMetadataSnapshotFixture({ plugins: [] }),
-      createStores: createEmptyAgentDiscoveryStores,
-    });
-    runtime.isCurrent = () => current;
+    const runtime = {
+      ...createEmptyPreparedModelRuntimeFixture({
+        agentDir: "/fixture/agent",
+        config: {},
+        metadataSnapshot: createPluginMetadataSnapshotFixture({ plugins: [] }),
+        createStores: createEmptyAgentDiscoveryStores,
+      }),
+      isCurrent: () => current,
+    };
     runtime.modelCatalog.providerOutcomes = [
       {
         provider: "openai",
         status: "ready",
         modelAccessPrograms: [
-          { modelId: "fixture", runtimeId: "openclaw", ...modelRoute, cyber: ["daybreak_blue"] },
+          {
+            modelId: "fixture",
+            runtimeId: "openclaw",
+            api: modelRoute.api,
+            baseUrl: modelRoute.baseUrl,
+            cyber: ["daybreak_blue"],
+          },
         ],
       },
     ];
