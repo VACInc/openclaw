@@ -907,7 +907,7 @@ describe("restricted CLI tool preparation", () => {
           [
             "intent",
             { action: "create", description: "Must not create", triggerKeywords: ["completion"] },
-            "intent needs the owner's authority, and this turn was not started by the owner. Do not retry intent.",
+            "intent needs the owner's authority (configured Gateway owner or operator.admin), which this turn does not carry. Session ownership does not grant this authority. Do not retry intent until authority changes. This refusal applies only to intent; continue independent work with tools this turn permits.",
           ],
         ] as const) {
           await expect(

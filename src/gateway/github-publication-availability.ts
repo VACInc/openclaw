@@ -35,6 +35,7 @@ import {
 import { requestCurrentGitHubOAuthRefresh } from "./github-oauth-lifecycle.js";
 import {
   GitHubPublicationWorkspaceChangedError,
+  GitHubPublicationWorkspaceRequiredError,
   GitHubPublicationSessionChangedError,
   rejectGitHubPublicationSelection,
   type GitHubPublicationPreparation,
@@ -348,6 +349,11 @@ function preparePublicationWorktreeRead(
     lifecycleRevision: loaded.entry.lifecycleRevision ?? null,
   };
   const workspaceId = loaded.entry.repositoryWorkspaceId;
+  // Missing initial setup is not a lifecycle change; retained publications still
+  // validate their expected worktree rather than suggesting a different target.
+  if (!expected && !workspaceId && !loaded.entry.worktree?.id) {
+    throw new GitHubPublicationWorkspaceRequiredError();
+  }
   const selection = expected ? { ...expected } : undefined;
   return async () => {
     const acceptRead = captureWorktreeRegistryReadGuard(context, "publication");
@@ -488,7 +494,7 @@ export async function prepareGitHubPublicationWorkspaceOwner(
     const loaded = requirePublicationSessionOwner(params, snapshot);
     const workspaceId = loaded.entry.repositoryWorkspaceId;
     if (!workspaceId && !loaded.entry.worktree?.id) {
-      throw new GitHubPublicationSessionChangedError();
+      throw new GitHubPublicationWorkspaceRequiredError();
     }
     const identity = { ...params, lifecycleRevision: loaded.entry.lifecycleRevision ?? null };
     const readWorktree = preparePublicationWorktreeRead(

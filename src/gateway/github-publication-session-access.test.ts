@@ -49,6 +49,44 @@ describe("registered session GitHub publication access", () => {
     realWorktree: true,
   });
 
+  it("reports an unbound workspace without suggesting a lifecycle retry or changing saved work", async () => {
+    const f = await createFixture();
+    if (!f.local) {
+      throw new Error("Expected a local publication fixture.");
+    }
+    await upsertSessionEntryCore(
+      { agentId: "main", sessionKey: SESSION_KEY },
+      { worktree: undefined },
+    );
+    const before = await worktreeState(f.local);
+    const respond = vi.fn();
+    const params = { sessionKey: SESSION_KEY, idempotencyKey: "unbound-workspace" };
+    await handleGatewayRequest({
+      req: { type: "req", id: params.idempotencyKey, method: "sessions.github.publish", params },
+      context: {
+        ...f.guestSource.context,
+        githubPublicationService: f.coordinator,
+      } as GatewayRequestContext,
+      client: f.guestSource.client,
+      isWebchatConnect: () => false,
+      respond,
+    });
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        code: "UNAVAILABLE",
+        message: expect.stringContaining("no session-owned Git worktree or repository workspace"),
+      }),
+    );
+    const message = respond.mock.calls[0]?.[2]?.message;
+    expect(message).toContain("Do not retry github_publish until");
+    expect(message).toContain("independently authorized Git tools");
+    expect(message).not.toContain("lifecycle changed");
+    expect(f.local.effects).toEqual([]);
+    expect(await worktreeState(f.local)).toEqual(before);
+  });
+
   it.each([
     { target: "own", policy: "absent", actor: "guest", outcome: "published" },
     { target: "foreign", policy: "view", actor: "guest", outcome: "INVALID_REQUEST" },

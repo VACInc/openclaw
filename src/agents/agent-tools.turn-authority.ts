@@ -73,12 +73,12 @@ export function resolveTurnToolSurface(params: {
       !turnTool
         ? `${tool.name} is not available during a child-completion turn because it is outside the authority carried from its requester. Do not retry ${tool.name}.`
         : scopedReads
-          ? `On this automation-started turn, ${tool.name} runs only the ${CRON_SCOPED_READ_ACTIONS.join(", ")} actions. Other actions need the owner's authority, and this turn was not started by the owner. Do not retry them.`
-          : `${tool.name} needs the owner's authority, and this turn was not started by the owner. ${
+          ? `On this automation-started turn, ${tool.name} runs only the ${CRON_SCOPED_READ_ACTIONS.join(", ")} actions. Other actions need Gateway owner authority, which this turn does not carry. Do not retry those actions until authority changes; the listed scoped reads remain available.`
+          : `${tool.name} needs the owner's authority (configured Gateway owner or operator.admin), which this turn does not carry. Session ownership does not grant this authority. ${
               tool.requiredClientCaps?.length
-                ? `Ask the owner to request it again from the open Control UI with ${tool.requiredClientCaps.join(", ")}.`
-                : `Do not retry ${tool.name}.`
-            }`,
+                ? `Ask an authorized Gateway owner to request it from the open Control UI with ${tool.requiredClientCaps.join(", ")}.`
+                : `Do not retry ${tool.name} until authority changes.`
+            } This refusal applies only to ${tool.name}; continue independent work with tools this turn permits.`,
     );
     // Copying hook metadata also copies the availability binding; re-mark the denial
     // so dependent affordances (for example collector spawns) never treat it as callable.
