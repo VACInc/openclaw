@@ -4,6 +4,10 @@ import {
   normalizeOptionalString,
   normalizeOptionalThreadValue,
 } from "@openclaw/normalization-core/string-coerce";
+import {
+  sessionCreatorProfileId,
+  type SessionCreatedActor,
+} from "../config/sessions/session-entry-provenance.js";
 import type {
   CronConfig,
   CronDefaultDeliveryDestinationConfig,
@@ -16,24 +20,42 @@ import { assertCanonicalCronDeliveryMode } from "./store/delivery-codec.js";
 import type { CronAgentScope } from "./types-shared.js";
 import type { CronDelivery, CronJob } from "./types.js";
 
-/** Gateway config and job owner used to select configured default destinations. */
+/** Gateway config, job owner, and job creator used to select configured default destinations. */
 export type CronDeliveryDefaultsScope = {
-  cronConfig?: Pick<CronConfig, "delivery" | "failureAlert" | "agents">;
+  cronConfig?: Pick<CronConfig, "delivery" | "failureAlert" | "agents" | "creators">;
   /** Effective agent that owns the job; selects `cron.agents.<agentId>` defaults. */
   agentId?: string;
+  /** Gateway profile of the human who created the job; selects `cron.creators.<profileId>`. */
+  creatorProfileId?: string;
 };
 
 /**
  * Builds the defaults scope for one job. The owner follows cron ownership
  * (explicit agentId, then the session-key agent, then the default agent) so
  * create, preview, run, and failure-alert paths select the same agent defaults.
+ * The creator is the trusted, creation-stamped human profile attribution
+ * (including a profile that delegated creation to an agent); legacy jobs without
+ * `createdActor` and channel-only, unknown, agent, or system creators have none.
  */
 export function resolveCronDeliveryDefaultsScope(
   cronConfig: CronDeliveryDefaultsScope["cronConfig"],
-  job: CronAgentScope,
+  job: CronAgentScope & { createdActor?: SessionCreatedActor },
   defaultAgentId: string | undefined,
 ): CronDeliveryDefaultsScope {
-  return { cronConfig, agentId: tryResolveCronJobEffectiveAgentId(job, defaultAgentId) };
+  return {
+    cronConfig,
+    agentId: tryResolveCronJobEffectiveAgentId(job, defaultAgentId),
+    creatorProfileId: sessionCreatorProfileId(job.createdActor),
+  };
+}
+
+function resolveCreatorCronDefaults(scope: CronDeliveryDefaultsScope | undefined) {
+  const creators = scope?.cronConfig?.creators;
+  const profileId = scope?.creatorProfileId?.trim();
+  // Profile ids are opaque Gateway identifiers: match exactly, never normalize.
+  return creators && profileId && Object.hasOwn(creators, profileId)
+    ? creators[profileId]
+    : undefined;
 }
 
 function resolveAgentCronDefaults(scope: CronDeliveryDefaultsScope | undefined) {
@@ -52,26 +74,32 @@ function resolveAgentCronDefaults(scope: CronDeliveryDefaultsScope | undefined) 
 }
 
 /**
- * The most specific configured primary destination wins whole: an agent default
- * replaces the Gateway default instead of merging fields, because a recipient,
+ * The most specific configured primary destination wins whole (creator, then
+ * owner agent, then Gateway) instead of merging fields, because a recipient,
  * thread, and account belong to the channel that supplied them.
  */
 export function resolveCronDefaultDeliveryDestination(
   scope: CronDeliveryDefaultsScope | undefined,
 ): CronDefaultDeliveryDestinationConfig | undefined {
-  return resolveAgentCronDefaults(scope)?.delivery ?? scope?.cronConfig?.delivery;
+  return (
+    resolveCreatorCronDefaults(scope)?.delivery ??
+    resolveAgentCronDefaults(scope)?.delivery ??
+    scope?.cronConfig?.delivery
+  );
 }
 
 /**
- * Returns the failure-alert config whose route fields come from the job owner's
- * agent default when one exists. Tuning (enabled, after, cooldown, skipped runs)
- * stays Gateway-wide; the agent route replaces the global route fields whole.
+ * Returns the failure-alert config whose route fields come from the job creator's
+ * default, else the owner agent's default, when one exists. Tuning (enabled,
+ * after, cooldown, skipped runs) stays Gateway-wide; the scoped route replaces
+ * the global route fields whole.
  */
 export function resolveCronFailureAlertDefaults(
   scope: CronDeliveryDefaultsScope | undefined,
 ): CronConfig["failureAlert"] {
   const global = scope?.cronConfig?.failureAlert;
   const agentRoute: CronFailureDestinationConfig | undefined =
+    resolveCreatorCronDefaults(scope)?.failureAlert ??
     resolveAgentCronDefaults(scope)?.failureAlert;
   if (!agentRoute) {
     return global;

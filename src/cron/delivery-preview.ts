@@ -27,7 +27,7 @@ import {
 import type { CronDeliveryPreview, CronStoredJob } from "./types.js";
 
 type CronDeliveryPreviewJob = Pick<CronStoredJob, "delivery" | "payload" | "sessionTarget"> &
-  Partial<Pick<CronStoredJob, "agentId" | "sessionKey" | "sourceConversation">>;
+  Partial<Pick<CronStoredJob, "agentId" | "sessionKey" | "sourceConversation" | "createdActor">>;
 
 function formatTarget(channel?: string, to?: string | null): string {
   if (!channel) {

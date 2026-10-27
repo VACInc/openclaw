@@ -1,7 +1,11 @@
-// Cron default destination tests cover the global/agent/explicit precedence matrix.
+// Cron default destination tests cover the global/agent/creator/explicit precedence matrix.
 import { describe, expect, it } from "vitest";
+import type { SessionCreatedActor } from "../config/sessions/session-entry-provenance.js";
 import type { CronConfig } from "../config/types.cron.js";
-import { resolveCronDefaultDeliveryDestination } from "./delivery-defaults.js";
+import {
+  resolveCronDefaultDeliveryDestination,
+  resolveCronDeliveryDefaultsScope,
+} from "./delivery-defaults.js";
 import { resolveCronDeliveryPlan } from "./delivery-plan.js";
 import { makeCronJob } from "./delivery.test-helpers.js";
 import { resolveFailureAlert } from "./service/failure-alerts.js";
@@ -200,5 +204,116 @@ describe("cron default failure-alert route", () => {
 
   it("stays quiet with no defaults and no route", () => {
     expect(resolve({}, { agentId: "ops", delivery: { mode: "none" } })).toBeNull();
+  });
+});
+
+describe("cron creator-profile defaults", () => {
+  const creatorDelivery = { channel: "discord", to: "user:111", accountId: "home" };
+  const creatorAlert = { channel: "discord", to: "user:111" };
+  const agentAlert = { channel: "slack", to: "channel:C999", accountId: "work" };
+  const cronConfig: CronConfig = {
+    delivery: globalDelivery,
+    failureAlert: { after: 2, cooldownMs: 9_000, channel: "telegram", to: "-100123456789" },
+    agents: { ops: { delivery: agentDelivery, failureAlert: agentAlert } },
+    creators: { alice: { delivery: creatorDelivery, failureAlert: creatorAlert } },
+  };
+  const alice: SessionCreatedActor = { type: "human", source: "profile", id: "alice" };
+  const scopedPlan = (createdActor: SessionCreatedActor | undefined, delivery?: CronDelivery) => {
+    const job = makeCronJob({ agentId: "ops", delivery: delivery ?? { mode: "announce" } });
+    return resolveCronDeliveryPlan(
+      job,
+      resolveCronDeliveryDefaultsScope(cronConfig, { ...job, createdActor }, "main"),
+    );
+  };
+  const alert = (createdActor: SessionCreatedActor | undefined, config = cronConfig) =>
+    resolveFailureAlert(
+      { deps: { cronConfig: config, defaultAgentId: "main" } },
+      { agentId: "ops", delivery: { mode: "none" }, createdActor },
+    );
+
+  it("routes a route-less announce job to its human creator's default over agent and global", () => {
+    expect(scopedPlan(alice)).toMatchObject({
+      mode: "announce",
+      channel: "discord",
+      to: "user:111",
+      accountId: "home",
+      threadId: undefined,
+    });
+  });
+
+  it("applies the creator default when only the creator has one", () => {
+    const job = makeCronJob({ delivery: { mode: "announce" } });
+    expect(
+      resolveCronDeliveryPlan(
+        job,
+        resolveCronDeliveryDefaultsScope(
+          { creators: { alice: { delivery: creatorDelivery } } },
+          { ...job, createdActor: alice },
+          "main",
+        ),
+      ),
+    ).toMatchObject({ mode: "announce", channel: "discord", to: "user:111" });
+  });
+
+  it("attributes an agent-created job to the human profile that delegated it", () => {
+    expect(
+      scopedPlan({
+        type: "agent",
+        id: "ops",
+        delegatedBy: { type: "human", source: "profile", id: "alice" },
+      }),
+    ).toMatchObject({ channel: "discord", to: "user:111" });
+  });
+
+  it.each<[string, SessionCreatedActor | undefined]>([
+    ["legacy job without createdActor", undefined],
+    ["channel-only human", { type: "human", source: "channel", id: "alice" }],
+    ["unknown human", { type: "human", source: "unknown", id: "alice" }],
+    ["agent", { type: "agent", id: "alice" }],
+    ["system", { type: "system", id: "alice" }],
+    ["other profile", { type: "human", source: "profile", id: "bob" }],
+    ["profile id differing by case", { type: "human", source: "profile", id: "Alice" }],
+  ])("gives no creator default to a %s", (_name, createdActor) => {
+    expect(scopedPlan(createdActor)).toMatchObject({ channel: "slack", to: "channel:C123" });
+    expect(alert(createdActor)).toMatchObject({ channel: "slack", to: "channel:C999" });
+  });
+
+  it.each<[string, CronDelivery]>([
+    ["channel", { mode: "announce", channel: "telegram", to: "42" }],
+    ["owner target", { mode: "announce", target: "owner" }],
+    ["none", { mode: "none" }],
+    ["webhook", { mode: "webhook", to: "https://example.invalid/hook" }],
+  ])("keeps the job's own %s route over the creator default", (_name, delivery) => {
+    expect(scopedPlan(alice, delivery)).toEqual(scopedPlan(undefined, delivery));
+  });
+
+  it("replaces agent and global failure routes with the creator route and keeps global tuning", () => {
+    expect(alert(alice)).toMatchObject({
+      after: 2,
+      cooldownMs: 9_000,
+      channel: "discord",
+      to: "user:111",
+      accountId: undefined,
+    });
+  });
+
+  it("falls through to the owner agent failure route when the creator has only a delivery default", () => {
+    expect(
+      alert(alice, { ...cronConfig, creators: { alice: { delivery: creatorDelivery } } }),
+    ).toMatchObject({ channel: "slack", to: "channel:C999" });
+  });
+
+  it("keeps an explicit per-job failure route over the creator route", () => {
+    expect(
+      resolveFailureAlert(
+        { deps: { cronConfig, defaultAgentId: "main" } },
+        {
+          agentId: "ops",
+          delivery: { mode: "none" },
+          failureAlert: { channel: "telegram", to: "7" },
+          createdActor: alice,
+        },
+      ),
+    ).toMatchObject({ channel: "telegram", to: "7" });
   });
 });

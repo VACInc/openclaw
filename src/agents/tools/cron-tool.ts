@@ -514,6 +514,7 @@ export function createCronTool(opts?: CronToolOptions): AnyAgentTool {
                     cfg: runtimeConfig,
                     agentId: callerAgentId,
                     job: { agentId: job.agentId, delivery },
+                    requesterOrigin: getGatewayToolCallerIdentity()?.requesterOrigin,
                     currentDeliveryContext: opts.currentDeliveryContext,
                     agentSessionKey: opts.agentSessionKey,
                   });

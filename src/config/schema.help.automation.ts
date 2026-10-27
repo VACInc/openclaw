@@ -123,7 +123,7 @@ export const AUTOMATION_FIELD_HELP: Record<string, string> = {
   "cron.webhookSsrfPolicy.allowIpv6UniqueLocalRange":
     "Allows automation webhooks to IPv6 Unique Local Addresses (fc00::/7). Use only with trusted fake-IP proxy environments.",
   "cron.delivery":
-    "Gateway-wide default announce destination for automations that name no route of their own (no channel other than `last`, `to`, `threadId`, `accountId`, or owner targeting). It replaces the remembered session route at run time and never applies to `none` or `webhook` delivery. A `cron.agents.<agentId>.delivery` default wins over this one.",
+    "Gateway-wide default announce destination for automations that name no route of their own (no channel other than `last`, `to`, `threadId`, `accountId`, or owner targeting). It replaces the remembered session route at run time and never applies to `none` or `webhook` delivery. A `cron.creators.<profileId>.delivery` or `cron.agents.<agentId>.delivery` default wins over this one.",
   "cron.delivery.channel":
     "Channel for the default destination, such as `telegram`. Omit to use `last` resolution against the default recipient.",
   "cron.delivery.to":
@@ -135,9 +135,15 @@ export const AUTOMATION_FIELD_HELP: Record<string, string> = {
   "cron.agents":
     "Per-agent automation defaults keyed by agent id. Each automation uses the entry for its effective agent (its agentId, else the agent in its session key, else the default agent).",
   "cron.agents.*.delivery":
-    "Default announce destination for this agent's automations that name no route. Replaces `cron.delivery` whole for this agent; fields are not merged.",
+    "Default announce destination for this agent's automations that name no route. Replaces `cron.delivery` whole for this agent; fields are not merged. A creator default for the job's human creator wins over it.",
   "cron.agents.*.failureAlert":
     "Default failure-alert route (`mode`, `channel`, `to`, `accountId`) for this agent's automations. Replaces the `cron.failureAlert` route fields whole; `enabled`, `after`, `cooldownMs`, and `includeSkipped` stay Gateway-wide.",
+  "cron.creators":
+    "Per-creator automation defaults keyed by the Gateway profile id of the human who created the automation. Applies only when the automation records a human profile creator (directly, or as the profile that delegated creation to an agent); legacy automations and channel-only, unknown, agent, or system creators use no creator entry. Keys match exactly.",
+  "cron.creators.*.delivery":
+    "Default announce destination for this person's automations that name no route. Wins over `cron.agents.<agentId>.delivery` and `cron.delivery`; replaces them whole.",
+  "cron.creators.*.failureAlert":
+    "Default failure-alert route (`mode`, `channel`, `to`, `accountId`) for this person's automations. Wins over the owner agent's route and replaces the `cron.failureAlert` route fields whole; `enabled`, `after`, `cooldownMs`, and `includeSkipped` stay Gateway-wide.",
   "cron.sessionRetention":
     "Controls how long completed automation run sessions are kept before pruning (`24h`, `7d`, `1h30m`, or `false` to disable pruning; a zero duration such as `0h` also disables; default: `24h`). Use shorter retention to reduce storage growth on high-frequency schedules.",
   transcripts:

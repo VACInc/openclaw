@@ -1,4 +1,5 @@
 /** Converts live or stored session routing into cron delivery config. */
+import { requesterCreatorProfileId, type RequesterOrigin } from "../agents/requester-origin.js";
 import { extractDeliveryInfo } from "../config/sessions/delivery-info.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
@@ -75,6 +76,8 @@ export async function resolveCronCreationDelivery(params: {
   agentId?: string;
   /** Requested job owner and delivery; a configured default destination skips inference. */
   job?: { agentId?: unknown; delivery?: Record<string, unknown> };
+  /** Authenticated requester; its human profile is the creator the Gateway stamps. */
+  requesterOrigin?: RequesterOrigin;
   currentDeliveryContext?: DeliveryContext;
   agentSessionKey?: string;
 }): Promise<CronDelivery | null> {
@@ -90,6 +93,7 @@ export async function resolveCronCreationDelivery(params: {
     resolveCronDefaultDeliveryDestination({
       cronConfig: params.cfg.cron,
       agentId: jobAgentId || params.agentId,
+      creatorProfileId: requesterCreatorProfileId(params.requesterOrigin),
     })
   ) {
     return null;

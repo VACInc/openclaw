@@ -24,7 +24,10 @@ import {
   installCronToolTestFixture,
   readGatewayCall,
 } from "./cron-tool.test-support.js";
-import { getGatewayToolCallerIdentity } from "./gateway-caller-context.js";
+import {
+  getGatewayToolCallerIdentity,
+  withGatewayToolCallerIdentity,
+} from "./gateway-caller-context.js";
 
 type Options = Parameters<typeof createCronTool>[0];
 const ok = { ok: true };
@@ -811,6 +814,27 @@ it("still pins the creating chat when the default belongs to another agent", asy
       currentDeliveryContext: { channel: "discord", to: "user:buddy" },
     }),
   ).toMatchObject({ mode: "announce", channel: "discord", to: "user:buddy" });
+});
+
+it.each([
+  { name: "the requesting profile", origin: { operatorProfileId: "alice" }, pinned: false },
+  { name: "a delegating profile", origin: { delegatedCreatorProfileId: "alice" }, pinned: false },
+  { name: "another profile", origin: { operatorProfileId: "bob" }, pinned: true },
+  { name: "a requester without a profile", origin: {}, pinned: true },
+])("applies a creator default to create-time pinning for $name", async ({ origin, pinned }) => {
+  setRuntimeConfigSnapshot({
+    cron: { creators: { alice: { delivery: { channel: "telegram", to: "-100123456789" } } } },
+  });
+  const sessionKey = "agent:main:discord:dm:buddy";
+  const delivery = await withGatewayToolCallerIdentity(
+    { agentId: "main", sessionKey, requesterOrigin: { sessionKey, ...origin } },
+    () =>
+      executeAddAndReadDelivery({
+        agentSessionKey: sessionKey,
+        currentDeliveryContext: { channel: "discord", to: "user:buddy" },
+      }),
+  );
+  expect(delivery?.to).toBe(pinned ? "user:buddy" : undefined);
 });
 
 it("recovers flat text and toolsAllow as a systemEvent payload", async () => {

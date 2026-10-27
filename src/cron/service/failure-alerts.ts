@@ -28,6 +28,7 @@ import type {
   CronJob,
   CronMessageChannel,
   CronRunErrorClassification,
+  CronStoredJob,
 } from "../types.js";
 import { buildCronAutoDisableNotice } from "./auto-disable.js";
 import { buildCronFailureRepairBrief } from "./failure-repair-brief.js";
@@ -118,7 +119,8 @@ export function resolveFailureAlert(
         CronJob,
         "id" | "owner" | "payload" | "schedule" | "agentId" | "sessionKey" | "sessionTarget"
       >
-    >,
+    > &
+    Partial<Pick<CronStoredJob, "createdActor">>,
 ): ResolvedFailureAlert | null {
   const prepared = state.preparedFailureAlert;
   if (prepared) {

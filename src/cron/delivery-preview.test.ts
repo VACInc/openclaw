@@ -152,6 +152,22 @@ it.each<[string, OpenClawConfig["cron"]]>([
   }),
 );
 
+it("routes a route-less current job to its human creator's default over the agent default", () =>
+  withCurrentOrigin({ source: sourceRoute }, async ({ cfg, job }) => {
+    const cron = {
+      agents: { main: { delivery: { channel: "telegram", to: "agent-recipient" } } },
+      creators: { alice: { delivery: { channel: "telegram", to: "creator-recipient" } } },
+    };
+    const withDefaults = { ...cfg, cron };
+    const createdActor = { type: "human", source: "profile", id: "alice" } as const;
+    expect(
+      await resolveCronDeliveryPreview({ cfg: withDefaults, job: { ...job, createdActor } }),
+    ).toEqual(externalPreview("creator-recipient"));
+    expect(await resolveCronDeliveryPreview({ cfg: withDefaults, job })).toEqual(
+      externalPreview("agent-recipient"),
+    );
+  }));
+
 it("keeps the creator's route when only another agent has a default", () =>
   withCurrentOrigin({ source: sourceRoute }, async ({ cfg, job }) => {
     const cron = {

@@ -57,6 +57,11 @@ const CronFailureAlertRouteSchema = z.strictObject({
   to: z.string().optional(),
 });
 
+const CronScopedDefaultsSchema = z.strictObject({
+  delivery: CronDefaultDeliveryDestinationSchema.optional(),
+  failureAlert: CronFailureAlertRouteSchema.optional(),
+});
+
 export const OpenClawSchemaShape = {
   $schema: z.string().optional(),
   meta: z
@@ -434,15 +439,12 @@ export const OpenClawSchemaShape = {
         includeSkipped: z.boolean().optional(),
       }).optional(),
       /** Per-agent destinations that replace the Gateway-wide ones for that agent's jobs. */
-      agents: z
-        .record(
-          AgentIdKeySchema,
-          z.strictObject({
-            delivery: CronDefaultDeliveryDestinationSchema.optional(),
-            failureAlert: CronFailureAlertRouteSchema.optional(),
-          }),
-        )
-        .optional(),
+      agents: z.record(AgentIdKeySchema, CronScopedDefaultsSchema).optional(),
+      /**
+       * Per-creator destinations keyed by the Gateway profile id of the human who
+       * created the job; they replace agent and Gateway-wide defaults for those jobs.
+       */
+      creators: z.record(z.string().trim().min(1), CronScopedDefaultsSchema).optional(),
     })
     .superRefine((val, ctx) => {
       if (val.sessionRetention !== undefined && val.sessionRetention !== false) {
