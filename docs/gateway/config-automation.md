@@ -39,11 +39,38 @@ For the full key index and the other top-level config domains, see [Configuratio
 - `webhookSsrfPolicy.blockedHostnames`: denies exact hosts and wildcard subdomains before DNS and all allow rules. `*.example.com` excludes the apex; add `example.com` separately to block it. Empty or unset adds no denials.
 
 The `cron` block is strict; `cron.enabled`, `cron.skipMissedJobs`, `cron.triggers`, `cron.webhookToken`,
-`cron.webhookSsrfPolicy`, `cron.sessionRetention`, and `cron.failureAlert` are the only accepted keys. The
+`cron.webhookSsrfPolicy`, `cron.sessionRetention`, `cron.delivery`, `cron.failureAlert`, and `cron.agents` are the only accepted keys. The
 retired `cron.webhook` fallback URL is gone: runtime delivery uses per-job
 `delivery.mode = "webhook"` plus `delivery.to`, or `delivery.completionDestination`
 when preserving announce delivery. `openclaw doctor --fix` strips a leftover
 `cron.webhook` from existing config files.
+
+### `cron.delivery` and `cron.agents`
+
+```json5
+{
+  cron: {
+    // Gateway-wide default for jobs that name no route of their own
+    delivery: { channel: "telegram", to: "-100123456789", threadId: 1 },
+    failureAlert: { channel: "telegram", to: "-100123456789:topic:1" },
+    agents: {
+      // Jobs owned by this agent use these instead of the Gateway-wide routes
+      ops: {
+        delivery: { channel: "telegram", to: "-100123456789", threadId: 2 },
+        failureAlert: { channel: "telegram", to: "-100123456789:topic:2" },
+      },
+    },
+  },
+}
+```
+
+- `delivery`: default announce destination (`channel`, `to`, optional `threadId` and `accountId`; `to` is required). It applies at run time to `announce` jobs that set no `channel` other than `"last"`, no `to`, `threadId`, or `accountId`, and no owner targeting. It replaces the remembered creating-chat route and the single-channel fallback for those jobs. Jobs with `delivery.mode` `"none"` or `"webhook"` never gain a chat destination.
+- `agents.<agentId>.delivery`: the same shape, for jobs owned by that agent. The owner is the job's `agentId`, else the agent in its session key, else the default agent. It replaces `cron.delivery` whole; fields are not merged.
+- `agents.<agentId>.failureAlert`: failure-alert route fields only (`mode`, `channel`, `to`, `accountId`) for jobs owned by that agent. They replace the route fields of `cron.failureAlert` whole; `enabled`, `after`, `cooldownMs`, and `includeSkipped` stay Gateway-wide, so `cron.failureAlert.enabled: false` still disables inherited alerts. Like a `cron.failureAlert` object, an agent route activates the alert policy for that agent's jobs.
+- Defaults resolve at run time and never rewrite stored jobs. Editing them moves future results of every job that relies on them.
+- Primary precedence: the job's own routing fields, then `agents.<agentId>.delivery`, then `delivery`, then the remembered session route.
+
+See [Automation delivery](/automation/cron-jobs/delivery#default-destinations).
 
 ### `cron.failureAlert`
 
@@ -79,7 +106,7 @@ activates/tunes the policy even when no route existed. The retired
 - `channel`: channel override for announce delivery. `"last"` reuses the last known delivery channel.
 - `to`: explicit announce target or webhook URL. Required for webhook mode.
 - `accountId`: optional account or channel id to scope alert delivery.
-- Route precedence is per-job `failureAlert` route fields, then per-job `delivery.failureDestination` layered over these global destination fields, then the primary announce target.
+- Route precedence is per-job `failureAlert` route fields, then per-job `delivery.failureDestination` layered over these global destination fields (or the owning agent's `cron.agents.<agentId>.failureAlert` route when set), then the primary announce target, including a configured default destination.
 - Per-job `failureAlert: false` disables execution and required-delivery failure alerts for that job; the auto-disable safety notification remains active. Any per-job `failureAlert` object explicitly enables and tunes that job.
 - `delivery.bestEffort: true` suppresses inherited/default execution alerts; an explicit per-job `failureAlert` remains authoritative.
 - Required completion-delivery failure (`status: "ok"`, `completionStatus: "failed"`) does not increment execution backoff and may notify immediately only through a resolved alternate failure destination, not the failed primary route.

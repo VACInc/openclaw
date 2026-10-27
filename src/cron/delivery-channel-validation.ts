@@ -188,12 +188,21 @@ export async function assertValidCronFailureAlert(params: {
   cfg: OpenClawConfig;
   failureAlert?: CronFailureAlert | false;
   delivery?: CronDelivery;
+  /** Job owner fields that select agent-scoped default routes. */
+  owner?: Pick<CronJobCreate, "agentId" | "sessionKey" | "sessionTarget">;
+  defaultAgentId?: string;
 }) {
   // Validate the scheduler-owned route so prefix, global, and inheritance
   // decisions cannot diverge between mutations and actual alert delivery.
   const failureAlert = resolveFailureAlert(
-    { deps: { cronConfig: params.cfg.cron } },
-    { delivery: params.delivery, failureAlert: params.failureAlert },
+    { deps: { cronConfig: params.cfg.cron, defaultAgentId: params.defaultAgentId } },
+    {
+      agentId: params.owner?.agentId,
+      sessionKey: params.owner?.sessionKey,
+      sessionTarget: params.owner?.sessionTarget,
+      delivery: params.delivery,
+      failureAlert: params.failureAlert,
+    },
   );
   if (!failureAlert || failureAlert.mode === "webhook") {
     return;
@@ -210,11 +219,17 @@ export async function assertValidCronFailureAlert(params: {
   });
 }
 
-export async function assertValidCronCreateDelivery(cfg: OpenClawConfig, job: CronJobCreate) {
+export async function assertValidCronCreateDelivery(
+  cfg: OpenClawConfig,
+  job: CronJobCreate,
+  defaultAgentId?: string,
+) {
   await assertValidCronAnnounceDelivery({ cfg, delivery: job.delivery });
   await assertValidCronFailureAlert({
     cfg,
     failureAlert: job.failureAlert,
     delivery: job.delivery,
+    owner: job,
+    defaultAgentId,
   });
 }

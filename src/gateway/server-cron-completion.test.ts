@@ -612,6 +612,26 @@ describe("completion announcement", () => {
     },
   );
 
+  it("routes a route-less job to its session-key owner's default destination", async () => {
+    await withCompletionFixture("script", async (fixture) => {
+      // The job names its agent only through its session key; the resolver's
+      // fallback agent must not select the defaults.
+      fixture.job.agentId = undefined;
+      fixture.job.delivery = { mode: "announce" };
+      const cfg = {
+        ...fixture.cfg,
+        cron: {
+          delivery: { channel: "telegram", to: "999" },
+          agents: { main: { delivery: { channel: "telegram", to: "123" } } },
+        },
+      };
+      const result = await fixture.finalize({
+        resolveCronAgent: () => ({ agentId: "other", cfg }),
+      });
+      expect(result.delivery.intended).toMatchObject({ channel: "telegram", to: "123" });
+    });
+  });
+
   it("does not commit or notify an aborted occurrence", async () => {
     await withCompletionFixture("script", async (fixture) => {
       const controller = new AbortController();

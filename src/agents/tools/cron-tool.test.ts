@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { setRuntimeConfigSnapshot } from "../../config/runtime-snapshot.js";
 import {
   consumeCronCreatorAuthorityGrant,
   createCronCreatorAuthorityRunScope,
@@ -782,6 +783,34 @@ it.each([
   },
 ])("$name", async ({ name: _name, expected, ...params }) => {
   expect(await executeAddAndReadDelivery(params)).toEqual(expected);
+});
+
+it.each([
+  { name: "Gateway default", cron: { delivery: { channel: "telegram", to: "-100123456789" } } },
+  {
+    name: "agent default",
+    cron: { agents: { main: { delivery: { channel: "telegram", to: "-100123456789" } } } },
+  },
+])("leaves a route-less job unpinned when a $name applies", async ({ cron }) => {
+  setRuntimeConfigSnapshot({ cron });
+  const delivery = await executeAddAndReadDelivery({
+    agentSessionKey: "agent:main:discord:dm:buddy",
+    currentDeliveryContext: { channel: "discord", to: "user:buddy" },
+  });
+  expect(delivery?.channel).toBeUndefined();
+  expect(delivery?.to).toBeUndefined();
+});
+
+it("still pins the creating chat when the default belongs to another agent", async () => {
+  setRuntimeConfigSnapshot({
+    cron: { agents: { other: { delivery: { channel: "telegram", to: "-100123456789" } } } },
+  });
+  expect(
+    await executeAddAndReadDelivery({
+      agentSessionKey: "agent:main:discord:dm:buddy",
+      currentDeliveryContext: { channel: "discord", to: "user:buddy" },
+    }),
+  ).toMatchObject({ mode: "announce", channel: "discord", to: "user:buddy" });
 });
 
 it("recovers flat text and toolsAllow as a systemEvent payload", async () => {

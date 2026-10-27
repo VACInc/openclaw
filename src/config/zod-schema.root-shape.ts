@@ -4,7 +4,12 @@ import { z } from "zod";
 import { parseDurationMs } from "../cli/parse-duration.js";
 import { SilentReplyPolicyConfigSchema } from "./zod-schema.agent-defaults.js";
 import { ToolsSchema } from "./zod-schema.agent-runtime.js";
-import { AgentsSchema, BindingsSchema, BroadcastSchema } from "./zod-schema.agents.js";
+import {
+  AgentIdKeySchema,
+  AgentsSchema,
+  BindingsSchema,
+  BroadcastSchema,
+} from "./zod-schema.agents.js";
 import { ApprovalsSchema } from "./zod-schema.approvals.js";
 import { ChannelsSchema } from "./zod-schema.channels-config.js";
 import { CloudWorkersConfigSchema } from "./zod-schema.cloud-workers.js";
@@ -37,6 +42,20 @@ import { sensitive } from "./zod-schema.sensitive.js";
 import { CommandsSchema, MessagesSchema, SessionSchema } from "./zod-schema.session.js";
 import { StorageConfigSchema } from "./zod-schema.storage.js";
 import { TelemetryConfigSchema } from "./zod-schema.telemetry.js";
+
+const CronDefaultDeliveryDestinationSchema = z.strictObject({
+  channel: z.string().optional(),
+  to: z.string().trim().min(1),
+  threadId: z.union([z.string().trim().min(1), z.number().int()]).optional(),
+  accountId: z.string().optional(),
+});
+
+const CronFailureAlertRouteSchema = z.strictObject({
+  mode: z.enum(["announce", "webhook"]).optional(),
+  accountId: z.string().optional(),
+  channel: z.string().optional(),
+  to: z.string().optional(),
+});
 
 export const OpenClawSchemaShape = {
   $schema: z.string().optional(),
@@ -406,17 +425,23 @@ export const OpenClawSchemaShape = {
        * Default: "24h".
        */
       sessionRetention: z.union([z.string(), z.literal(false)]).optional(),
-      failureAlert: z
-        .strictObject({
-          enabled: z.boolean().optional(),
-          after: z.number().int().min(1).optional(),
-          cooldownMs: z.number().int().min(0).optional(),
-          includeSkipped: z.boolean().optional(),
-          mode: z.enum(["announce", "webhook"]).optional(),
-          accountId: z.string().optional(),
-          channel: z.string().optional(),
-          to: z.string().optional(),
-        })
+      /** Default announce destination for jobs that do not name their own route. */
+      delivery: CronDefaultDeliveryDestinationSchema.optional(),
+      failureAlert: CronFailureAlertRouteSchema.extend({
+        enabled: z.boolean().optional(),
+        after: z.number().int().min(1).optional(),
+        cooldownMs: z.number().int().min(0).optional(),
+        includeSkipped: z.boolean().optional(),
+      }).optional(),
+      /** Per-agent destinations that replace the Gateway-wide ones for that agent's jobs. */
+      agents: z
+        .record(
+          AgentIdKeySchema,
+          z.strictObject({
+            delivery: CronDefaultDeliveryDestinationSchema.optional(),
+            failureAlert: CronFailureAlertRouteSchema.optional(),
+          }),
+        )
         .optional(),
     })
     .superRefine((val, ctx) => {

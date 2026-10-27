@@ -9,6 +9,7 @@ import {
   CRON_AGENT_SELECTION_REQUIRED_MESSAGE,
   tryResolveCronJobEffectiveAgentId,
 } from "./agent-id.js";
+import { resolveCronDeliveryDefaultsScope } from "./delivery-defaults.js";
 import { resolveCronDeliveryPlan } from "./delivery-plan.js";
 import { hasExplicitCronDeliveryTarget } from "./delivery-target-validation.js";
 import type { CronDeliveryTargetContext } from "./isolated-agent/delivery-target-context.js";
@@ -70,7 +71,10 @@ function prepareCronDeliveryPreview(params: CronDeliveryPreviewParams) {
       },
     };
   }
-  const plan = resolveCronDeliveryPlan(params.job);
+  const plan = resolveCronDeliveryPlan(
+    params.job,
+    resolveCronDeliveryDefaultsScope(params.cfg.cron, params.job, agentId),
+  );
   if (plan.mode === "none" && !hasExplicitCronDeliveryTarget(plan)) {
     return { preview: { label: "not requested", detail: "not requested" } };
   }

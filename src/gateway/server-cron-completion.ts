@@ -4,6 +4,11 @@ import { resolveControlUiAutomationRunUrl } from "../config/control-ui-link-base
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { commitCronConversationResult } from "../cron/conversation-result.js";
 import type { CronCompletionDeliveryFence } from "../cron/delivery-attempt-fence.js";
+import {
+  cronDeliveryUsesDefaultDestination,
+  resolveCronDeliveryDefaultsScope,
+  resolveCronDeliveryMode,
+} from "../cron/delivery-defaults.js";
 import { hasExplicitCronDeliveryTarget } from "../cron/delivery-target-validation.js";
 import { resolveCronDeliveryPlan, sendCronAnnouncePayloadStrict } from "../cron/delivery.js";
 import { normalizeDirectCronDeliveryPayloads } from "../cron/isolated-agent/delivery-payload-normalization.js";
@@ -54,7 +59,17 @@ export async function finalizeCronCompletionAnnouncement(params: {
   label: string;
   traceResolvedFailure?: boolean;
 }) {
-  const plan = resolveCronDeliveryPlan(params.job);
+  let agent: { agentId: string; cfg: OpenClawConfig } | undefined;
+  const resolveAgent = () => (agent ??= params.resolveCronAgent(params.job.agentId));
+  // Only a route-less announce job needs the owner before planning; others keep
+  // resolving their agent at send time.
+  const owner = cronDeliveryUsesDefaultDestination(params.job, resolveCronDeliveryMode(params.job))
+    ? resolveAgent()
+    : undefined;
+  const plan = resolveCronDeliveryPlan(
+    params.job,
+    owner && resolveCronDeliveryDefaultsScope(owner.cfg.cron, params.job, owner.agentId),
+  );
   const delivery: CronDeliveryTrace = {
     intended: pickDefined(
       {
@@ -93,7 +108,7 @@ export async function finalizeCronCompletionAnnouncement(params: {
     return finish(false);
   }
 
-  const { agentId, cfg } = params.resolveCronAgent(params.job.agentId);
+  const { agentId, cfg } = resolveAgent();
   const inspectUrl = resolveControlUiAutomationRunUrl(cfg, {
     jobId: params.job.id,
     runId:

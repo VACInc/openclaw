@@ -172,7 +172,7 @@ export const cronAddHandler: GatewayRequestHandler = async ({
       runtimeAuthority !== undefined,
     );
     await assertCronDoesNotTargetAgentHarness(jobCreate, cfg);
-    await assertValidCronCreateDelivery(cfg, jobCreate);
+    await assertValidCronCreateDelivery(cfg, jobCreate, context.cron.getDefaultAgentId());
   } catch (err) {
     creatorOptions?.disposeInferenceAuthorization?.();
     respondInvalidCronParams(respond, "cron.add", formatErrorMessage(err));

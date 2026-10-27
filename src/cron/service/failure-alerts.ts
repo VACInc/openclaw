@@ -14,6 +14,10 @@ import { normalizeAnyChannelId } from "../../channels/registry-normalize.js";
 import { sha256Hex } from "../../infra/crypto-digest.js";
 import { resolveTargetPrefixedChannel } from "../../infra/outbound/channel-target-prefix.js";
 import { normalizeTargetForProvider } from "../../infra/outbound/target-normalization.js";
+import {
+  resolveCronDeliveryDefaultsScope,
+  resolveCronFailureAlertDefaults,
+} from "../delivery-defaults.js";
 import { resolveCronDeliveryPlan, resolveFailureDestination } from "../delivery-plan.js";
 import { cronFailureDetailLines } from "../failure-notification-text.js";
 import { hasCanonicalCronDeliveryMode } from "../store/delivery-codec.js";
@@ -102,11 +106,19 @@ function hasFailureRepairOwner(
 /** Resolves effective failure-alert policy from job config, delivery defaults, and global cron config. */
 export function resolveFailureAlert(
   state: {
-    deps: Pick<CronJobPolicyContext["deps"], "cronConfig">;
+    deps: Pick<
+      CronJobPolicyContext["deps"],
+      "cronConfig" | "defaultAgentId" | "resolveDefaultAgentId"
+    >;
     preparedFailureAlert?: CronJobPolicyContext["preparedFailureAlert"];
   },
   job: Pick<CronJob, "delivery" | "failureAlert"> &
-    Partial<Pick<CronJob, "id" | "owner" | "payload" | "schedule">>,
+    Partial<
+      Pick<
+        CronJob,
+        "id" | "owner" | "payload" | "schedule" | "agentId" | "sessionKey" | "sessionTarget"
+      >
+    >,
 ): ResolvedFailureAlert | null {
   const prepared = state.preparedFailureAlert;
   if (prepared) {
@@ -115,7 +127,13 @@ export function resolveFailureAlert(
     }
     return prepared.value;
   }
-  const globalConfig = state.deps.cronConfig?.failureAlert;
+  const defaults = resolveCronDeliveryDefaultsScope(
+    state.deps.cronConfig,
+    job,
+    state.deps.resolveDefaultAgentId?.() ?? state.deps.defaultAgentId,
+  );
+  // The owner's agent route replaces the global route fields; tuning stays global.
+  const globalConfig = resolveCronFailureAlertDefaults(defaults);
   const jobConfig = job.failureAlert === false ? undefined : job.failureAlert;
 
   if (job.failureAlert === false) {
@@ -137,7 +155,7 @@ export function resolveFailureAlert(
     hasJobRoute ? jobConfig : undefined,
   );
   const primaryRoute = hasCanonicalCronDeliveryMode(job.delivery)
-    ? resolveCronDeliveryPlan(job)
+    ? resolveCronDeliveryPlan(job, defaults)
     : undefined;
   const primaryAnnounceRoute =
     primaryRoute?.mode === "announce" && primaryRoute.requested ? primaryRoute : undefined;

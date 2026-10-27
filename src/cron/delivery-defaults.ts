@@ -1,6 +1,115 @@
 /** Shared create- and run-time defaults for cron result delivery. */
+import { normalizeAgentId } from "@openclaw/normalization-core/agent-id";
+import {
+  normalizeOptionalString,
+  normalizeOptionalThreadValue,
+} from "@openclaw/normalization-core/string-coerce";
+import type {
+  CronConfig,
+  CronDefaultDeliveryDestinationConfig,
+  CronFailureDestinationConfig,
+} from "../config/types.cron.js";
+import { normalizeMessageChannel } from "../utils/message-channel-core.js";
+import { tryResolveCronJobEffectiveAgentId } from "./agent-id.js";
+import { hasExplicitCronDeliveryTarget } from "./delivery-target-validation.js";
 import { assertCanonicalCronDeliveryMode } from "./store/delivery-codec.js";
+import type { CronAgentScope } from "./types-shared.js";
 import type { CronDelivery, CronJob } from "./types.js";
+
+/** Gateway config and job owner used to select configured default destinations. */
+export type CronDeliveryDefaultsScope = {
+  cronConfig?: Pick<CronConfig, "delivery" | "failureAlert" | "agents">;
+  /** Effective agent that owns the job; selects `cron.agents.<agentId>` defaults. */
+  agentId?: string;
+};
+
+/**
+ * Builds the defaults scope for one job. The owner follows cron ownership
+ * (explicit agentId, then the session-key agent, then the default agent) so
+ * create, preview, run, and failure-alert paths select the same agent defaults.
+ */
+export function resolveCronDeliveryDefaultsScope(
+  cronConfig: CronDeliveryDefaultsScope["cronConfig"],
+  job: CronAgentScope,
+  defaultAgentId: string | undefined,
+): CronDeliveryDefaultsScope {
+  return { cronConfig, agentId: tryResolveCronJobEffectiveAgentId(job, defaultAgentId) };
+}
+
+function resolveAgentCronDefaults(scope: CronDeliveryDefaultsScope | undefined) {
+  const agents = scope?.cronConfig?.agents;
+  const agentId = scope?.agentId?.trim();
+  if (!agents || !agentId) {
+    return undefined;
+  }
+  const normalized = normalizeAgentId(agentId);
+  for (const [key, value] of Object.entries(agents)) {
+    if (normalizeAgentId(key) === normalized) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The most specific configured primary destination wins whole: an agent default
+ * replaces the Gateway default instead of merging fields, because a recipient,
+ * thread, and account belong to the channel that supplied them.
+ */
+export function resolveCronDefaultDeliveryDestination(
+  scope: CronDeliveryDefaultsScope | undefined,
+): CronDefaultDeliveryDestinationConfig | undefined {
+  return resolveAgentCronDefaults(scope)?.delivery ?? scope?.cronConfig?.delivery;
+}
+
+/**
+ * Returns the failure-alert config whose route fields come from the job owner's
+ * agent default when one exists. Tuning (enabled, after, cooldown, skipped runs)
+ * stays Gateway-wide; the agent route replaces the global route fields whole.
+ */
+export function resolveCronFailureAlertDefaults(
+  scope: CronDeliveryDefaultsScope | undefined,
+): CronConfig["failureAlert"] {
+  const global = scope?.cronConfig?.failureAlert;
+  const agentRoute: CronFailureDestinationConfig | undefined =
+    resolveAgentCronDefaults(scope)?.failureAlert;
+  if (!agentRoute) {
+    return global;
+  }
+  return {
+    ...global,
+    mode: agentRoute.mode,
+    channel: agentRoute.channel,
+    to: agentRoute.to,
+    accountId: agentRoute.accountId,
+  };
+}
+
+/**
+ * A configured default destination replaces the remembered session route of any
+ * announce job that names no route of its own. `none` and `webhook` never gain a
+ * chat destination, and any job routing field (channel other than `last`, `to`,
+ * `threadId`, `accountId`, or owner targeting) keeps the job on its own route.
+ */
+export function cronDeliveryUsesDefaultDestination(
+  job: Pick<CronJob, "delivery">,
+  mode: CronDelivery["mode"],
+): boolean {
+  if (mode !== "announce") {
+    return false;
+  }
+  const delivery = job.delivery;
+  return (
+    !delivery ||
+    !hasExplicitCronDeliveryTarget({
+      target: delivery.target,
+      channel: normalizeMessageChannel(delivery.channel),
+      to: normalizeOptionalString(delivery.to),
+      threadId: normalizeOptionalThreadValue(delivery.threadId),
+      accountId: normalizeOptionalString(delivery.accountId),
+    })
+  );
+}
 
 /**
  * Keep create-time normalization, direct service persistence, and run-time

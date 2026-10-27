@@ -7,6 +7,11 @@ import { AgentEntrySchema } from "./zod-schema.agent-runtime.js";
 
 export { BroadcastSchema } from "./zod-schema.messages.js";
 
+/** Config map key naming one agent; agent ids normalize case-insensitively. */
+export const AgentIdKeySchema = z
+  .string()
+  .regex(/^[a-z0-9_][a-z0-9_-]{0,63}$/i, "Invalid agent id");
+
 const AgentEntryConfigSchema = z.preprocess(
   (value, ctx) => {
     if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -31,12 +36,7 @@ export const AgentsSchema = z
   .strictObject({
     ownership: z.literal("explicit").optional(),
     defaults: z.lazy(() => AgentDefaultsSchema).optional(),
-    entries: z
-      .record(
-        z.string().regex(/^[a-z0-9_][a-z0-9_-]{0,63}$/i, "Invalid agent id"),
-        AgentEntryConfigSchema,
-      )
-      .optional(),
+    entries: z.record(AgentIdKeySchema, AgentEntryConfigSchema).optional(),
   })
   .superRefine((value, ctx) => {
     const entries = Object.entries(value.entries ?? {});

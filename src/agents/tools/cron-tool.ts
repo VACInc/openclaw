@@ -513,6 +513,7 @@ export function createCronTool(opts?: CronToolOptions): AnyAgentTool {
                   const inferred = await resolveCronCreationDelivery({
                     cfg: runtimeConfig,
                     agentId: callerAgentId,
+                    job: { agentId: job.agentId, delivery },
                     currentDeliveryContext: opts.currentDeliveryContext,
                     agentSessionKey: opts.agentSessionKey,
                   });
