@@ -124,7 +124,7 @@ reload mode, hook policy changes hot-reload the existing plugin runtime.
 
 - Non-bundled plugins need explicit
   `plugins.entries.<id>.hooks.allowConversationAccess: true` for
-  `before_model_resolve`, `agent_turn_prepare`, `before_prompt_build`,
+  `before_model_resolve`, `agent_turn_prepare`, `before_prompt_build`, `before_model_request`,
   `before_agent_reply`, `llm_input`, `llm_output`, `before_agent_finalize`,
   `agent_end`, `before_agent_run`, and `before_channel_ingress`. Bundled plugins are allowed unless this
   option is explicitly `false`.
@@ -320,3 +320,26 @@ resolve here.
 - [Internal hooks](/automation/hooks)
 - [Webhooks](/automation/cron-jobs#webhooks)
 - [Plugin architecture internals](/plugins/architecture-internals)
+
+### Final provider request policy
+
+`before_model_request` is an awaited modifying policy hook for embedded provider
+transports. It receives `{ payload, provider, model, messages }` and returns
+`{ payload }` or no replacement. `messages` is a detached snapshot of the
+model-facing history, including retained host provenance. Do not infer sender
+trust from text inside a message. The payload is provider-specific.
+
+The hook runs after provider `onPayload` transforms. Transports using host request
+encoding invoke it at final encoding instead, including encode-only retries.
+The final replacement is hashed and encoded; an aborted turn cannot send after
+the hook finishes. Handler failures stop the request. Scanner integrations that
+choose an outage passthrough policy must catch their own scanner failures.
+
+Conversation access and prompt-injection registration policies both apply. Like
+other policy hooks, this hook still runs for incognito sessions; optional
+`llm_input` observations remain suppressed. There is no hook cost when no handler
+is registered beyond the existing payload observation path.
+
+This hook does not intercept CLI-owned model loops, provider-hosted tool results
+that never return to the client, or custom transports that bypass both `onPayload`
+and host encoding. It cannot recover provenance omitted by a context producer.

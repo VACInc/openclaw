@@ -1,0 +1,12 @@
+{
+  "name": "final-model-request",
+  "sources": [
+    "src/agents/embedded-agent-runner/provider-prompt-state.ts",
+    "src/plugins/hooks.ts",
+    "src/agents/embedded-agent-runner/model-request-hook.ts"
+  ],
+  "test_cmd": "node_modules/.bin/vitest run --configLoader native src/agents/embedded-agent-runner/provider-prompt-state.test.ts src/plugins/hooks.before-model-request.test.ts src/agents/embedded-agent-runner/model-request-hook.test.ts",
+  "timeout_s": 90,
+  "language": "ts",
+  "baseline_score": 0.8
+}
