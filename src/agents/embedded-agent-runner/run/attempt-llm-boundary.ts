@@ -19,6 +19,7 @@ import {
   MODEL_CONTEXT_SPANS,
   readModelPromptProjection,
   readModelPromptContextRanges,
+  resolveModelPromptContextRanges,
   projectRecordedModelPrompt,
 } from "../../../sessions/user-turn-transcript.message.js";
 import type { UserTurnTranscriptRecorder } from "../../../sessions/user-turn-transcript.types.js";
@@ -509,10 +510,7 @@ export function installModelPromptProjection(params: {
     const contextRanges =
       frozen !== undefined
         ? readModelPromptContextRanges(canonicalPrompt)
-        : (params.contextSpans ?? []).flatMap((span) => {
-            const offset = text.indexOf(span.containerText);
-            return offset < 0 ? [] : [{ start: offset + span.start, end: offset + span.end }];
-          });
+        : resolveModelPromptContextRanges(text, params.contextSpans ?? []);
     return { target, targetProjection, frozen, text, contextRanges };
   };
   const releaseCarrier =

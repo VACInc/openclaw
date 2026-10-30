@@ -123,3 +123,38 @@ it("keeps exact nonzero offsets after trusted framing is escaped", async () => {
     expect(span.containerText.slice(span.start, span.end)).toBe(outside);
   }
 });
+
+it("keeps retrieved provenance when a write hook replaces the owner text", async () => {
+  const { installModelPromptProjection } = await import("./run/attempt-llm-boundary.js");
+  const { projectRecordedModelPrompt } =
+    await import("../../sessions/user-turn-transcript.message.js");
+  const { buildModelContextSpans, collectModelContextSpans } =
+    await import("./model-request-hook.js");
+  const prefix = "Retrieved context";
+  const original = prefix + "\n\nOriginal owner request";
+  const message = { role: "user" as const, content: "Rewritten owner text", timestamp: 1 };
+  const session: Parameters<typeof installModelPromptProjection>[0]["session"] = {
+    agent: { state: { messages: [message] } },
+  };
+  const cleanup = installModelPromptProjection({
+    session,
+    transcriptPrompt: "Original owner request",
+    modelPrompt: original,
+    prependContext: prefix,
+    contextSpans: buildModelContextSpans(original, prefix),
+    shouldCapturePrompt: () => true,
+  });
+  try {
+    const transformed = await session.agent.transformContext?.([message]);
+    if (!transformed) {
+      throw new Error("projection missing");
+    }
+    const replay = transformed.map((item) => projectRecordedModelPrompt(item));
+    const spans = collectModelContextSpans(replay, []);
+    expect(spans).toHaveLength(1);
+    expect(spans[0].containerText).toBe(prefix + "\n\nRewritten owner text");
+    expect(spans[0].containerText.slice(spans[0].start, spans[0].end)).toBe(prefix);
+  } finally {
+    cleanup();
+  }
+});

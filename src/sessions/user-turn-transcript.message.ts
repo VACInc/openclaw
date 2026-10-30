@@ -174,6 +174,22 @@ export function readModelPromptContextRanges(message: unknown): { start: number;
   });
 }
 
+/** Bind known context bytes to a projection after owner text has been rewritten. */
+export function resolveModelPromptContextRanges(
+  text: string,
+  spans: readonly { containerText: string; start: number; end: number }[],
+): { start: number; end: number }[] {
+  return spans.flatMap((span) => {
+    const offset = text.indexOf(span.containerText);
+    if (offset >= 0) {
+      return [{ start: offset + span.start, end: offset + span.end }];
+    }
+    const fragment = span.containerText.slice(span.start, span.end);
+    const at = span.start === 0 ? text.indexOf(fragment) : text.lastIndexOf(fragment);
+    return at < 0 ? [] : [{ start: at, end: at + fragment.length }];
+  });
+}
+
 export function prepareModelPromptProjection(
   message: unknown,
   text: string,
