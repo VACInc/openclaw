@@ -12,6 +12,7 @@ import { isOwnedTranscriptPayload } from "../../config/sessions/transcript-json.
 import { resolveRuntimeProcessEntrypointUrl } from "../../infra/runtime-process-url.js";
 import { WorkerTaskPool } from "../../infra/worker-task-pool.js";
 import type { Message } from "../../llm/types.js";
+import type { PluginHookModelContextSpan } from "../../plugins/hook-model.types.js";
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import { isDeeplyFrozenPlainData } from "../../shared/immutable-data.js";
 import { log } from "./logger.js";
@@ -42,6 +43,8 @@ type ProviderPromptSnapshot = {
 };
 
 export type ProviderPromptState = {
+  /** Refreshed by prompt assembly; discarded with the existing run-local state. */
+  contextSpans?: readonly PluginHookModelContextSpan[];
   lastAttempt?: ProviderPromptSnapshot;
   lastRejected?: ProviderPromptSnapshot;
 };

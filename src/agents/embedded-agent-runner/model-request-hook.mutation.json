@@ -1,0 +1,1 @@
+{"name":"model-context-provenance","sources":["src/agents/embedded-agent-runner/model-request-hook.ts"],"test_cmd":"node_modules/.bin/vitest run --configLoader native --config test/vitest/vitest.agents.config.ts src/agents/embedded-agent-runner/model-request-hook.test.ts --maxWorkers=1","timeout_s":45,"language":"ts","baseline_score":0.8}

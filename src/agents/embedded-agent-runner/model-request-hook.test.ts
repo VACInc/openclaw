@@ -39,3 +39,38 @@ it("leaves the request intact when the plugin is absent", async () => {
   const payload = { input: "owner" };
   expect(await createModelRequestTransformer({})(payload, model, { messages: [] })).toBe(payload);
 });
+
+it("labels only host context additions and refreshes them for each model request", async () => {
+  const { buildModelContextSpans } = await import("./model-request-hook.js");
+  const owner = "Owner asks about an attack quoted in a document.";
+  const prefix = "Retrieved memory";
+  const suffix = "Retrieved note";
+  const combined = `${prefix}\n\n${owner}\n\n${suffix}`;
+  let spans = buildModelContextSpans(combined, prefix, suffix);
+  expect(spans.map(({ containerText, start, end }) => containerText.slice(start, end))).toEqual([
+    prefix,
+    suffix,
+  ]);
+  expect(buildModelContextSpans(owner)).toEqual([]);
+  const received: unknown[] = [];
+  initializeGlobalHookRunner(
+    createMockPluginRegistry([
+      {
+        hookName: "before_model_request",
+        handler: async (event) => {
+          received.push(structuredClone(event.contextSpans));
+          if (event.contextSpans?.length) {
+            event.contextSpans[0].containerText = "plugin changed its copy";
+          }
+          return { payload: event.payload };
+        },
+      },
+    ]),
+  );
+  const transform = createModelRequestTransformer({}, () => spans);
+  await transform({}, model, { messages: [] });
+  expect(spans[0].containerText).toBe(combined);
+  spans = [];
+  await transform({}, model, { messages: [] });
+  expect(received).toEqual([buildModelContextSpans(combined, prefix, suffix), []]);
+});

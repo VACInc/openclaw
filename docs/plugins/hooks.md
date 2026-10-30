@@ -324,10 +324,16 @@ resolve here.
 ### Final provider request policy
 
 `before_model_request` is an awaited modifying policy hook for embedded provider
-transports. It receives `{ payload, provider, model, messages }` and returns
+transports. It receives `{ payload, provider, model, messages, contextSpans }` and returns
 `{ payload }` or no replacement. `messages` is a detached snapshot of the
 model-facing history, including retained host provenance. Do not infer sender
 trust from text inside a message. The payload is provider-specific.
+
+`contextSpans` labels retrieved prepend/append context separately from the owner
+prompt. Each host-generated range contains `containerText`, `start`, and `end`
+(UTF-16 offsets). Labels are refreshed at prompt assembly and retained through
+tool turns and transport retries. System prompts and system-context instructions
+are excluded. The hook gets a detached copy, never a writable transcript.
 
 The hook runs after provider `onPayload` transforms. Transports using host request
 encoding invoke it at final encoding instead, including encode-only retries.

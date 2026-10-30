@@ -581,12 +581,15 @@ export async function prepareEmbeddedAttemptTransport(input: {
   session.agent.streamFn = wrapStreamFnWithProviderPromptState({
     streamFn: session.agent.streamFn,
     ...input.providerPromptState,
-    transformPayload: createModelRequestTransformer({
-      agentId: input.sessionAgentId,
-      sessionKey: attempt.sessionKey,
-      sessionId: attempt.sessionId,
-      workspaceDir: input.workspaceDir,
-    }),
+    transformPayload: createModelRequestTransformer(
+      {
+        agentId: input.sessionAgentId,
+        sessionKey: attempt.sessionKey,
+        sessionId: attempt.sessionId,
+        workspaceDir: input.workspaceDir,
+      },
+      () => input.providerPromptState.state.contextSpans ?? [],
+    ),
   });
   session.agent.streamFn = wrapStreamFnWithProviderReviewContinuation({
     streamFn: session.agent.streamFn,

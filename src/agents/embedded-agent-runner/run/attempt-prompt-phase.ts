@@ -21,6 +21,7 @@ import {
 import { withSessionManagerAppend } from "../../sessions/session-manager-append-admission.js";
 import { prepareGooglePromptCacheStreamFn } from "../google-prompt-cache.js";
 import { log } from "../logger.js";
+import { getProviderPromptState } from "../provider-prompt-state.js";
 import {
   persistToolResultProjections,
   persistSessionSystemPrompt,
@@ -217,6 +218,7 @@ export async function runEmbeddedAttemptPromptPhase(
       log.warn(`[tools] ${prepared.toolCatalog.emptyExplicitToolAllowlistError.message}`);
     }
     const { hookCtx, promptBuildPrependContext, promptBuildAppendContext } = promptAssembly;
+    getProviderPromptState(attempt.runId).contextSpans = promptAssembly.contextSpans ?? [];
     transcriptLeafId = promptAssembly.transcriptLeafId;
 
     const promptContext = await prepareEmbeddedAttemptPromptContext({

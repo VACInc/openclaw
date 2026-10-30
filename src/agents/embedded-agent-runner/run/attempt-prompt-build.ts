@@ -31,6 +31,7 @@ import {
   buildModelIdentityPromptLine,
 } from "../../system-prompt.js";
 import { log } from "../logger.js";
+import { buildModelContextSpans } from "../model-request-hook.js";
 import { normalizeAssistantReplayContent } from "../replay-history.js";
 import {
   createToolResultPromptProjectionState,
@@ -272,6 +273,13 @@ export async function prepareEmbeddedAttemptPromptAssembly(input: {
   if (promptBuildAppendContext) {
     effectivePrompt = `${effectivePrompt}\n\n${promptBuildAppendContext}`;
   }
+  // Keep the complete container so an identical quote elsewhere never gains this label.
+  // System/developer prompts are deliberately outside this provenance boundary.
+  const contextSpans = buildModelContextSpans(
+    effectivePrompt,
+    promptBuildPrependContext,
+    promptBuildAppendContext,
+  );
   const legacySystemPrompt = normalizeOptionalString(hookResult?.systemPrompt) ?? "";
   if (legacySystemPrompt) {
     setSystemPrompt(legacySystemPrompt);
@@ -340,6 +348,7 @@ export async function prepareEmbeddedAttemptPromptAssembly(input: {
     effectivePrompt,
     promptBuildPrependContext,
     promptBuildAppendContext,
+    contextSpans,
     effectiveTranscriptPrompt,
     originContext,
     transcriptLeafId,

@@ -1,9 +1,33 @@
 import type { Context, Model } from "openclaw/plugin-sdk/llm";
+import type { PluginHookModelContextSpan } from "../../plugins/hook-model.types.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import type { PluginHookAgentContext } from "../../plugins/hook-types.js";
 
+/** Label only additive context, before any provider framing joins it to owner text. */
+export function buildModelContextSpans(
+  containerText: string,
+  prependContext?: string,
+  appendContext?: string,
+): PluginHookModelContextSpan[] {
+  return [
+    ...(prependContext ? [{ containerText, start: 0, end: prependContext.length }] : []),
+    ...(appendContext
+      ? [
+          {
+            containerText,
+            start: containerText.length - appendContext.length,
+            end: containerText.length,
+          },
+        ]
+      : []),
+  ];
+}
+
 /** Policy sees final provider bytes and a detached copy of host message provenance. */
-export function createModelRequestTransformer(hookContext: PluginHookAgentContext) {
+export function createModelRequestTransformer(
+  hookContext: PluginHookAgentContext,
+  getContextSpans: () => readonly PluginHookModelContextSpan[] = () => [],
+) {
   return async (payload: unknown, model: Model, context: Context): Promise<unknown> => {
     const hooks = getGlobalHookRunner();
     if (!hooks?.hasHooks("before_model_request")) {
@@ -15,6 +39,7 @@ export function createModelRequestTransformer(hookContext: PluginHookAgentContex
         provider: model.provider,
         model: model.id,
         messages: structuredClone(context.messages),
+        contextSpans: structuredClone(getContextSpans()),
       },
       hookContext,
     );
