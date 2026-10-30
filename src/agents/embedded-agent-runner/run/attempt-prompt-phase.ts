@@ -218,7 +218,6 @@ export async function runEmbeddedAttemptPromptPhase(
       log.warn(`[tools] ${prepared.toolCatalog.emptyExplicitToolAllowlistError.message}`);
     }
     const { hookCtx, promptBuildPrependContext, promptBuildAppendContext } = promptAssembly;
-    getProviderPromptState(attempt.runId).contextSpans = promptAssembly.contextSpans ?? [];
     transcriptLeafId = promptAssembly.transcriptLeafId;
 
     const promptContext = await prepareEmbeddedAttemptPromptContext({
@@ -242,6 +241,7 @@ export async function runEmbeddedAttemptPromptPhase(
       systemPromptText,
       toolResultPromptProjectionState,
     });
+    getProviderPromptState(attempt.runId).contextSpans = promptContext.contextSpans;
     input.setup.prepStages.mark("prompt-context");
     if (runAbortController.signal.aborted) {
       throw createAbortableError(runAbortController.signal);

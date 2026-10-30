@@ -376,6 +376,7 @@ type PromptContextAttempt = Pick<
 type PromptAssemblyContext = {
   promptBuildPrependContext?: string;
   promptBuildAppendContext?: string;
+  contextSpans?: ReturnType<typeof buildModelContextSpans>;
   effectivePrompt: string;
   effectiveTranscriptPrompt: string;
   originContext?: ReturnType<typeof buildInterSessionPromptContext>;
@@ -534,6 +535,21 @@ export async function prepareEmbeddedAttemptPromptContext(input: {
           contextFragments,
           input.inHistorySystemUpdates,
         );
+  // A fallback keeps the accepted user projection; fresh retrievals live in
+  // the appended carrier instead. Label those exact projected bytes only.
+  const fallbackContext =
+    escapedProjection || input.inHistorySystemUpdates
+      ? projectRuntimeContextFragments(fallbackHookFragments)
+      : fallbackHookFragments.map((fragment) => fragment.text).join("\n\n");
+  const contextSpans = isDispatchedCanonicalFallback
+    ? runtimeContextMessageForCurrentTurn && fallbackContext
+      ? buildModelContextSpans(
+          runtimeContextMessageForCurrentTurn.content,
+          undefined,
+          fallbackContext,
+        )
+      : []
+    : (input.prompt.contextSpans ?? []);
   const messagesForCurrentPrompt = runtimeContextMessageForCurrentTurn
     ? [...sessionMessages, runtimeContextMessageForCurrentTurn]
     : sessionMessages;
@@ -573,6 +589,7 @@ export async function prepareEmbeddedAttemptPromptContext(input: {
   });
 
   return {
+    contextSpans,
     aggregatePressureEngaged,
     contextTokenBudget,
     ...(currentUserTimestampOverride ? { currentUserTimestampOverride } : {}),

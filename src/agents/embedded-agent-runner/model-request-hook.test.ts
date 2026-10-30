@@ -1,5 +1,6 @@
 import type { Context, Model } from "openclaw/plugin-sdk/llm";
 import { afterEach, expect, it } from "vitest";
+import type { PluginHookModelContextSpan } from "../../plugins/hook-model.types.js";
 import {
   initializeGlobalHookRunner,
   resetGlobalHookRunner,
@@ -57,7 +58,8 @@ it("labels only host context additions and refreshes them for each model request
     createMockPluginRegistry([
       {
         hookName: "before_model_request",
-        handler: async (event) => {
+        handler: async (raw) => {
+          const event = raw as { payload: unknown; contextSpans?: PluginHookModelContextSpan[] };
           received.push(structuredClone(event.contextSpans));
           if (event.contextSpans?.length) {
             event.contextSpans[0].containerText = "plugin changed its copy";
