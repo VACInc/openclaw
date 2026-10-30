@@ -23,6 +23,9 @@ import type {
   UserTurnMessagePersistenceParams,
 } from "./user-turn-transcript.types.js";
 
+// Enumerable symbols survive runtime copies but never transcript JSON or provider payloads.
+export const MODEL_CONTEXT_SPANS = Symbol.for("openclaw.modelContextSpans");
+
 const URL_LIKE_MEDIA_PATH_PATTERN = /^[a-z][a-z0-9+.-]*:/i;
 const MIME_TYPE_PATTERN = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/iu;
 
@@ -145,9 +148,36 @@ export function readModelPromptProjection(message: unknown): string | undefined 
   return projection.text;
 }
 
+/** Provenance is captured with the immutable projection, not inferred from prompt text. */
+export function readModelPromptContextRanges(message: unknown): { start: number; end: number }[] {
+  const metadata = asOptionalRecord(asOptionalRecord(message)?.["__openclaw"]);
+  const projection = asOptionalRecord(metadata?.modelPromptProjection);
+  const ranges = projection?.contextRanges;
+  if (!Array.isArray(ranges)) {
+    return [];
+  }
+  return ranges.map((value) => {
+    const range = asOptionalRecord(value);
+    if (
+      !Number.isInteger(range?.start) ||
+      !Number.isInteger(range?.end) ||
+      typeof range?.start !== "number" ||
+      typeof range.end !== "number" ||
+      range.start < 0 ||
+      range.end <= range.start ||
+      typeof projection?.text !== "string" ||
+      range.end > projection.text.length
+    ) {
+      throw new Error("Invalid stored model context provenance");
+    }
+    return { start: range.start, end: range.end };
+  });
+}
+
 export function prepareModelPromptProjection(
   message: unknown,
   text: string,
+  contextRanges?: readonly { start: number; end: number }[],
 ): PersistedUserTurnMessage | undefined {
   if (!isUserMessage(message)) {
     throw new Error("Model prompt projection lost its canonical user turn");
@@ -163,7 +193,11 @@ export function prepareModelPromptProjection(
     ...message,
     __openclaw: {
       ...message["__openclaw"],
-      modelPromptProjection: { version: 1, text },
+      modelPromptProjection: {
+        version: 1,
+        text,
+        ...(contextRanges?.length ? { contextRanges } : {}),
+      },
     },
   };
 }
@@ -204,12 +238,21 @@ export function projectRecordedModelPrompt(
     content = text;
   }
   const metadata = { ...message["__openclaw"] };
+  const ranges = readModelPromptContextRanges(
+    readModelPromptProjection(transcript) !== undefined ? transcript : message,
+  );
   delete metadata.modelPromptProjection;
   const projected: PersistedUserTurnMessage = {
     ...message,
     content,
     timestamp: transcript?.role === "user" ? transcript.timestamp : message.timestamp,
   };
+  if (ranges.length) {
+    Object.defineProperty(projected, MODEL_CONTEXT_SPANS, {
+      enumerable: true,
+      value: ranges.map((range) => ({ containerText: text, start: range.start, end: range.end })),
+    });
+  }
   delete projected["__openclaw"];
   if (Object.keys(metadata).length > 0) {
     projected["__openclaw"] = metadata;

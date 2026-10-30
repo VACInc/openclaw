@@ -16,7 +16,9 @@ import { INTER_SESSION_PROMPT_PREFIX_BASE } from "../../../sessions/input-proven
 import { hasPersistedMedia, MEDIA_ONLY_USER_TEXT } from "../../../sessions/user-turn-media.js";
 import { buildLateMediaAttachedProjection } from "../../../sessions/user-turn-transcript.js";
 import {
+  MODEL_CONTEXT_SPANS,
   readModelPromptProjection,
+  readModelPromptContextRanges,
   projectRecordedModelPrompt,
 } from "../../../sessions/user-turn-transcript.message.js";
 import type { UserTurnTranscriptRecorder } from "../../../sessions/user-turn-transcript.types.js";
@@ -61,6 +63,9 @@ const runtimeContextDetailsSchema = z.object({
 const systemUpdateDetailsSchema = z.object({
   kind: z.enum(["prompt-update", "runtime-context"]),
   turnScoped: z.boolean(),
+  contextRanges: z
+    .array(z.object({ start: z.number().int().nonnegative(), end: z.number().int().positive() }))
+    .optional(),
 });
 
 /** A session keeps its model projection across replay and process restarts. */
@@ -86,6 +91,15 @@ const runtimeContextProjections = [false, true].map((escape) =>
             content: message.content,
             timestamp: message.timestamp,
           };
+          if (details.data.contextRanges?.length) {
+            Object.defineProperty(projected, MODEL_CONTEXT_SPANS, {
+              enumerable: true,
+              value: details.data.contextRanges.map((range) => ({
+                containerText: message.content,
+                ...range,
+              })),
+            });
+          }
           if (inHistorySystemUpdates) {
             projected.operatorMessage = { turnScoped: details.data.turnScoped };
           }
@@ -401,6 +415,7 @@ export function installModelPromptProjection(params: {
   modelPrompt?: string;
   prependContext?: string;
   appendContext?: string;
+  contextSpans?: readonly { containerText: string; start: number; end: number }[];
   shouldCapturePrompt: () => boolean;
   carrier?: RuntimeContextCustomMessage;
   recorder?: UserTurnTranscriptRecorder;
@@ -491,7 +506,14 @@ export function installModelPromptProjection(params: {
     ) {
       return undefined;
     }
-    return { target, targetProjection, frozen, text };
+    const contextRanges =
+      frozen !== undefined
+        ? readModelPromptContextRanges(canonicalPrompt)
+        : (params.contextSpans ?? []).flatMap((span) => {
+            const offset = text.indexOf(span.containerText);
+            return offset < 0 ? [] : [{ start: offset + span.start, end: offset + span.end }];
+          });
+    return { target, targetProjection, frozen, text, contextRanges };
   };
   const releaseCarrier =
     params.carrier && params.recorder?.prepareModelPromptProjection
@@ -505,7 +527,11 @@ export function installModelPromptProjection(params: {
                 assertCurrent,
               );
               return projection && projection.frozen === undefined
-                ? params.recorder?.prepareModelPromptProjection?.(projection.text, assertCurrent)
+                ? params.recorder?.prepareModelPromptProjection?.(
+                    projection.text,
+                    assertCurrent,
+                    projection.contextRanges,
+                  )
                 : undefined;
             },
             { checkAfter: false },
@@ -527,7 +553,7 @@ export function installModelPromptProjection(params: {
           let { text } = projection;
           const captureProjection = params.recorder?.captureModelPromptProjection;
           if (frozen === undefined && captureProjection) {
-            const capture = () => captureProjection(text, assertCurrent);
+            const capture = () => captureProjection(text, assertCurrent, projection.contextRanges);
             const captured = await (params.withTranscriptWrite
               ? params.withTranscriptWrite(capture)
               : capture());
@@ -544,7 +570,13 @@ export function installModelPromptProjection(params: {
               ...target,
               __openclaw: {
                 ...asOptionalObjectRecord(Reflect.get(target, "__openclaw")),
-                modelPromptProjection: { version: 1, text },
+                modelPromptProjection: {
+                  version: 1,
+                  text,
+                  ...(projection.contextRanges.length
+                    ? { contextRanges: projection.contextRanges }
+                    : {}),
+                },
               },
             };
             promptMessages = messages.map((message) =>

@@ -86,7 +86,11 @@ export type SessionActorAppend = (
   /** Optional prepared session header, committed atomically before this append. */
   header?: SessionMetadataOperations["session.metadata.append"]["input"];
   /** Final prompt text joins its runtime-context carrier at the same durable point. */
-  modelPromptProjection?: { anchor: TranscriptEntryAnchor; text: string };
+  modelPromptProjection?: {
+    anchor: TranscriptEntryAnchor;
+    text: string;
+    contextRanges?: readonly { start: number; end: number }[];
+  };
 };
 
 /** The original snapshot preserves canonical adopted IDs, parents, bytes, and versions. */

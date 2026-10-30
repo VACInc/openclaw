@@ -143,7 +143,10 @@ export type SessionMessageRewriteOperations = {
     output: ReturnType<typeof commitSessionMessageRewrite>;
   };
   "session.messageRewrite.modelPrompt": {
-    input: SessionMessageRewriteSelection & { modelPromptProjection: string };
+    input: SessionMessageRewriteSelection & {
+      modelPromptProjection: string;
+      modelPromptContextRanges?: readonly { start: number; end: number }[];
+    };
     output: ReturnType<typeof commitSessionMessageRewrite>;
   };
 };
@@ -612,7 +615,10 @@ function prepareMessageRewrite(
 type SessionMessageRewriteInput = SessionMessageRewriteSelection &
   (
     | { expected: SessionMessageRewriteSnapshot; message: unknown }
-    | { modelPromptProjection: string }
+    | {
+        modelPromptProjection: string;
+        modelPromptContextRanges?: readonly { start: number; end: number }[];
+      }
   );
 
 export function commitSessionMessageRewrite(
@@ -651,7 +657,11 @@ export function applySessionMessageRewrite<T>(
       const message =
         "message" in input
           ? input.message
-          : prepareModelPromptProjection(current.event.message, input.modelPromptProjection);
+          : prepareModelPromptProjection(
+              current.event.message,
+              input.modelPromptProjection,
+              input.modelPromptContextRanges,
+            );
       const changed = message !== undefined;
       let generation: string | undefined;
       if (changed) {

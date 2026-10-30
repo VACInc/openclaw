@@ -540,6 +540,7 @@ export async function runEmbeddedAttemptPromptPhase(
             });
           }
         },
+        contextSpans: promptContext.contextSpans,
         ...(promptBuildPrependContext ? { prependContext: promptBuildPrependContext } : {}),
         ...(promptContext.runtimeContextMessageForCurrentTurn
           ? { runtimeContextMessage: promptContext.runtimeContextMessageForCurrentTurn }

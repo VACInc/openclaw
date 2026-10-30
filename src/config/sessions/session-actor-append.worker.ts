@@ -261,12 +261,13 @@ export function applySessionActorAppend(
     ) {
       throw new SqliteTranscriptMutationConflictError(append.input.scope.sessionId);
     }
-    const { anchor, text } = append.modelPromptProjection;
+    const { anchor, text, contextRanges } = append.modelPromptProjection;
     modelPromptProjection = applySessionMessageRewrite(
       {
         scope: resolveSqliteTranscriptScope(appendScope),
         target: { kind: "anchor", anchor, active: "sequence" },
         modelPromptProjection: text,
+        modelPromptContextRanges: contextRanges,
       },
       context,
       (opened, candidate, current) => {

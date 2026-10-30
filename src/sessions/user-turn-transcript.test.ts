@@ -337,7 +337,7 @@ describe("user turn transcript persistence", () => {
       const previous = first.getPersistedMessage?.();
       const admission = first.getAdmissionReceipt();
       const prepared = expectDefined(
-        await first.prepareModelPromptProjection!("enriched", () => {}),
+        await first.prepareModelPromptProjection!("enriched", () => {}, [{ start: 0, end: 3 }]),
         "prepared projection",
       );
       expect(first.getPersistedMessage?.()).toBe(previous);
@@ -348,9 +348,13 @@ describe("user turn transcript persistence", () => {
         prepared.intent.anchor,
         prepared.intent.text,
         () => {},
+        prepared.intent.contextRanges,
       );
       const captured = await prepared.onCommitted(committed);
       expect(captured).toMatchObject({ content: "original", independentMetadata: "preserved" });
+      expect(captured.__openclaw?.modelPromptProjection).toMatchObject({
+        contextRanges: [{ start: 0, end: 3 }],
+      });
       expect(readModelPromptProjection(previous)).toBeUndefined();
       expect(first.getPersistedMessage?.()).toBe(captured);
       expect(first.getAdmissionReceipt()?.generation).toBe(committed?.generation);

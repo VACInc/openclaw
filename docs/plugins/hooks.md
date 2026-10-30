@@ -331,8 +331,11 @@ trust from text inside a message. The payload is provider-specific.
 
 `contextSpans` labels retrieved prepend/append context separately from the owner
 prompt. Each host-generated range contains `containerText`, `start`, and `end`
-(UTF-16 offsets). Labels are refreshed at prompt assembly and retained through
-tool turns and transport retries. System prompts and system-context instructions
+(UTF-16 offsets). Labels are captured with the immutable model-prompt projection and restored
+through tool turns, transport retries, later turns, and process restarts.
+Protected-delimiter encodings carry matching variants with adjusted offsets.
+Older projections without ranges remain unlabelled; text is never guessed into
+a trust category. System prompts and system-context instructions
 are excluded. The hook gets a detached copy, never a writable transcript.
 
 The hook runs after provider `onPayload` transforms. Transports using host request

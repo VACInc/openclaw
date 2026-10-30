@@ -55,6 +55,7 @@ type ModelPromptProjectionParams = {
   admission: UserTurnTranscriptAdmissionReceipt;
   message: PersistedUserTurnMessage;
   text: string;
+  contextRanges?: readonly { start: number; end: number }[];
   assertCurrent: () => void;
   assertWritable: () => void;
   onCommitted: (
@@ -65,6 +66,7 @@ type ModelPromptProjectionParams = {
 
 export function preparePersistedModelPromptProjection(
   params: ModelPromptProjectionParams,
+  contextRanges = params.contextRanges,
 ): PreparedModelPromptProjection | undefined {
   if (readModelPromptProjection(params.message) !== undefined) {
     prepareModelPromptProjection(params.message, params.text);
@@ -72,7 +74,11 @@ export function preparePersistedModelPromptProjection(
   }
   params.assertWritable();
   return {
-    intent: { anchor: params.admission, text: params.text },
+    intent: {
+      anchor: params.admission,
+      text: params.text,
+      ...(contextRanges?.length ? { contextRanges } : {}),
+    },
     async onCommitted(rewritten) {
       if (!rewritten || !isUserMessage(rewritten.message)) {
         throw new Error("Model prompt projection lost its canonical user turn");
@@ -93,8 +99,9 @@ export function preparePersistedModelPromptProjection(
 
 export async function capturePersistedModelPromptProjection(
   params: ModelPromptProjectionParams,
+  contextRanges = params.contextRanges,
 ): Promise<PersistedUserTurnMessage> {
-  const prepared = preparePersistedModelPromptProjection(params);
+  const prepared = preparePersistedModelPromptProjection(params, contextRanges);
   if (!prepared) {
     return params.message;
   }
@@ -102,6 +109,7 @@ export async function capturePersistedModelPromptProjection(
     prepared.intent.anchor,
     prepared.intent.text,
     params.assertWritable,
+    prepared.intent.contextRanges,
   );
   const message = await prepared.onCommitted(rewritten);
   params.assertCurrent();

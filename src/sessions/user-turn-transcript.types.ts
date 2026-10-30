@@ -216,8 +216,14 @@ type UserTurnPersistenceOptions = {
   cwd?: string;
 };
 
+export type ModelPromptContextRange = { start: number; end: number };
+
 export type PreparedModelPromptProjection = {
-  intent: { anchor: TranscriptEntryAnchor; text: string };
+  intent: {
+    anchor: TranscriptEntryAnchor;
+    text: string;
+    contextRanges?: readonly ModelPromptContextRange[];
+  };
   onCommitted: (result: SessionMessageRewriteResult | null) => Promise<PersistedUserTurnMessage>;
 };
 
@@ -260,11 +266,13 @@ export type UserTurnTranscriptRecorder = {
   captureModelPromptProjection?: (
     text: string,
     assertCurrent: () => void,
+    contextRanges?: readonly ModelPromptContextRange[],
   ) => Promise<PersistedUserTurnMessage>;
   /** Prepare a projection for the carrier's actor commit without publishing it early. */
   prepareModelPromptProjection?: (
     text: string,
     assertCurrent: () => void,
+    contextRanges?: readonly ModelPromptContextRange[],
   ) => Promise<PreparedModelPromptProjection | undefined>;
   getAdmissionReceipt: () => UserTurnTranscriptAdmissionReceipt | undefined;
   /** Persistence and `waitForRuntimePersistence` settle the handler's write and reject on its failure. */

@@ -52,5 +52,14 @@ it.each([3, 4])(
     expect(span.containerText.slice(span.start, span.end)).toBe(`${prefix}\n\n${suffix}`);
     expect(span.containerText.slice(span.start, span.end)).not.toContain(owner);
     expect(result.systemPromptForHook).toBe("Trusted system instructions.");
+    const { normalizeMessagesForLlmBoundary } = await import("./attempt-llm-boundary.js");
+    const { collectModelContextSpans } = await import("../model-request-hook.js");
+    const carrierJson = JSON.stringify(result.runtimeContextMessageForCurrentTurn);
+    const recovered = normalizeMessagesForLlmBoundary([JSON.parse(carrierJson)], {
+      sessionVersion: version,
+      includeTimestamp: false,
+      appendOnlyRuntimeContext: true,
+    });
+    expect(collectModelContextSpans(recovered, [])).toHaveLength(1);
   },
 );

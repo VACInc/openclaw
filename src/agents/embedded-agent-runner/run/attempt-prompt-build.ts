@@ -550,6 +550,11 @@ export async function prepareEmbeddedAttemptPromptContext(input: {
         )
       : []
     : (input.prompt.contextSpans ?? []);
+  if (isDispatchedCanonicalFallback && runtimeContextMessageForCurrentTurn && contextSpans.length) {
+    runtimeContextMessageForCurrentTurn.details.contextRanges = contextSpans.map(
+      ({ start, end }) => ({ start, end }),
+    );
+  }
   const messagesForCurrentPrompt = runtimeContextMessageForCurrentTurn
     ? [...sessionMessages, runtimeContextMessageForCurrentTurn]
     : sessionMessages;
