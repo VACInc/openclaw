@@ -1456,6 +1456,15 @@ it.each([
 it.each([
   ["explicit final", true, "source", "required", "Tool-authored answer", true],
   ["default final", undefined, "source", "required", "Tool-authored answer", true],
+  ["explicit short final", true, "source", "required", "Done", true, "Done"],
+  ["default short final", undefined, "source", "required", "Done", true, "Done"],
+  ["short progress repeat", false, "source", "required", "Done", true, "Done"],
+  ["trimmed short final", true, "source", "required", "Done", true, " Done "],
+  ["distinct short final", true, "source", "required", "No", false, "Done"],
+  ["short prefix correction", true, "source", "required", "Done, but failed", false, "Done"],
+  ["short other conversation", true, "other", "required", "Done", false, "Done"],
+  ["identical emoji final", true, "source", "required", "✅", true, "✅"],
+  ["distinct emoji final", true, "source", "required", "❌", false, "✅"],
   ["continued work", undefined, "source", "required", "The operation failed", false],
   ["progress", false, "source", "required", "Final answer", false],
   ["other conversation", true, "other", "required", "Final answer", false],
@@ -1467,7 +1476,7 @@ it.each([
   ["authored silence", true, "source", "required", "NO_REPLY", true],
 ] as const)(
   "settles automatic external source delivery with %s evidence",
-  async (_label, final, delivery, terminalReplyExpectation, text, suppress) => {
+  async (_label, final, delivery, terminalReplyExpectation, text, suppress, sentText?: string) => {
     const context = captureContext("local-cli", "text");
     context.params.sourceReplyDeliveryMode = "automatic";
     context.params.messageChannel = TEST_MESSAGE_CHANNEL;
@@ -1481,7 +1490,7 @@ it.each([
           action: "send",
           channel: TEST_MESSAGE_CHANNEL,
           target: delivery === "other" ? "other-chat" : "source-chat",
-          message: "Tool-authored answer",
+          message: sentText ?? "Tool-authored answer",
           ...(final !== undefined ? { final } : {}),
           ...(delivery === "dry-run" ? { dryRun: true } : {}),
         },
