@@ -549,23 +549,13 @@ export class VoiceCallWebhookServer {
   ): Promise<WebhookResponsePayload | null> {
     const url = buildRequestUrl(req.url);
 
-    if (url.pathname === "/voice/hold-music") {
-      return {
-        statusCode: 200,
-        headers: { "Content-Type": "text/xml" },
-        body: `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">All agents are currently busy. Please hold.</Say>
-  <Play loop="0">https://s3.amazonaws.com/com.twilio.music.classical/BusyStrings.mp3</Play>
-</Response>`,
-      };
-    }
+    const isHoldMusic = url.pathname === "/voice/hold-music";
 
-    if (normalizeWebhookPath(url.pathname) !== normalizeWebhookPath(webhookPath)) {
+    if (!isHoldMusic && normalizeWebhookPath(url.pathname) !== normalizeWebhookPath(webhookPath)) {
       return { statusCode: 404, body: "Not Found" };
     }
 
-    if (req.method !== "POST") {
+    if (req.method !== "POST" && !(isHoldMusic && req.method === "GET")) {
       return { statusCode: 405, body: "Method Not Allowed" };
     }
 
@@ -620,7 +610,7 @@ export class VoiceCallWebhookServer {
         headers: req.headers as Record<string, string | string[] | undefined>,
         rawBody: body,
         url: url.toString(),
-        method: "POST",
+        method: req.method,
         query: Object.fromEntries(url.searchParams),
         remoteAddress: req.socket.remoteAddress ?? undefined,
       };
@@ -633,6 +623,11 @@ export class VoiceCallWebhookServer {
       if (!verification.verifiedRequestKey) {
         this.logger.warn("Webhook verification succeeded without request identity key");
         return { statusCode: 401, body: "Unauthorized" };
+      }
+
+      if (isHoldMusic) {
+        return buildTwilioResponse(`<Say voice="alice">All agents are currently busy. Please hold.</Say>
+<Play loop="0">https://s3.amazonaws.com/com.twilio.music.classical/BusyStrings.mp3</Play>`);
       }
 
       const isReplay = Boolean(verification.isReplay);

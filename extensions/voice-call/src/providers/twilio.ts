@@ -205,8 +205,13 @@ export class TwilioProvider implements VoiceCallProvider {
   }
 
   verifyWebhook(ctx: WebhookContext): WebhookVerificationResult {
+    // The queue callback is a separate public endpoint, not the webhook URL.
+    const publicUrl =
+      this.currentPublicUrl && new URL(ctx.url).pathname === "/voice/hold-music"
+        ? new URL("/voice/hold-music", this.currentPublicUrl).toString()
+        : this.currentPublicUrl;
     const result = verifyTwilioWebhook(ctx, this.authToken, {
-      publicUrl: this.currentPublicUrl || undefined,
+      publicUrl: publicUrl || undefined,
       allowNgrokFreeTierLoopbackBypass: this.options.allowNgrokFreeTierLoopbackBypass ?? false,
       skipVerification: this.options.skipVerification,
       allowedHosts: this.options.webhookSecurity?.allowedHosts,

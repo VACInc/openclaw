@@ -1,0 +1,15 @@
+{
+  "name": "voice-hold-auth",
+  "sources": [
+    "extensions/voice-call/src/webhook.ts",
+    "extensions/voice-call/src/providers/twilio.ts"
+  ],
+  "test_cmd": "node node_modules/vitest/vitest.mjs run --configLoader runner --config test/vitest/vitest.extension-voice-call.config.ts extensions/voice-call/src/webhook.test.ts -t 'authenticates .* hold music' --maxWorkers=1",
+  "timeout_s": 90,
+  "language": "ts",
+  "exclude_lines": [
+    "^(?!.*(?:if \\(!isHoldMusic|if \\(req.method|if \\(isHoldMusic\\)|this.currentPublicUrl && new URL)).*$"
+  ],
+  "baseline_score": 1.0,
+  "notes": "Focus mutation on the hold route admission and provider URL selection; unsigned/forged requests reject, signed GET/POST and repeated queue callbacks succeed."
+}

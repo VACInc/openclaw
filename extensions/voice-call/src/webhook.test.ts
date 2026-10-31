@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import { Readable } from "node:stream";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { createTestPluginServiceScheduler } from "openclaw/plugin-sdk/plugin-test-api";
 import type { RealtimeTranscriptionProviderPlugin } from "openclaw/plugin-sdk/realtime-transcription";
@@ -755,3 +756,54 @@ it("suppresses outbound greeting barge-in until the initial message finishes", a
     expect(respond).toHaveBeenCalledExactlyOnceWith(call.callId, "hello after greeting"),
   );
 });
+
+it.each(["GET", "POST"])(
+  "authenticates %s hold music without dispatching call events",
+  async (method) => {
+    const token = "hold-fixture";
+    const { server, carrier, processEvent } = signedTwilio(token);
+    carrier.setPublicUrl("https://voice.example.com/voice/webhook");
+    const path = "/voice/hold-music?queue=waiting";
+    const body = method === "POST" ? "CallSid=CAhold&QueueSid=QUhold" : "";
+    const send = (signature?: string, requestPath = path) => {
+      const req = Object.assign(Readable.from(body ? [body] : []), {
+        method,
+        url: requestPath,
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          ...(signature ? { "x-twilio-signature": signature } : {}),
+        },
+        socket: { remoteAddress: "127.0.0.1" },
+      });
+      return internals(server).runWebhookPipeline(
+        req as unknown as IncomingMessage,
+        "/voice/webhook",
+      );
+    };
+    expect((await send()).statusCode).toBe(401);
+    expect((await send("invalid")).statusCode).toBe(401);
+    let material = `https://voice.example.com${path}`;
+    for (const [key, value] of [...new URLSearchParams(body)].toSorted(([a], [b]) =>
+      a.localeCompare(b),
+    )) {
+      material += key + value;
+    }
+    const signature = crypto.createHmac("sha1", token).update(material).digest("base64");
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await send(signature);
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain("<Play loop=");
+    }
+    const wrongPathSignature = crypto
+      .createHmac("sha1", token)
+      .update(material.replace("/voice/hold-music", "/voice/webhook"))
+      .digest("base64");
+    expect((await send(wrongPathSignature)).statusCode).toBe(401);
+    expect(processEvent).not.toHaveBeenCalled();
+    if (method === "POST") {
+      expect(
+        (await send(wrongPathSignature, path.replace("hold-music", "webhook"))).statusCode,
+      ).toBe(200);
+    }
+  },
+);
