@@ -39,7 +39,7 @@ export type RuntimeContextCustomMessage = {
   customType: string;
   content: string;
   display: false;
-  details:
+  details: { contextRanges?: readonly { start: number; end: number }[] } & (
     | {
         source: "openclaw-runtime-context";
         runtimeContextCarrier: true;
@@ -50,7 +50,8 @@ export type RuntimeContextCustomMessage = {
         turnScoped: boolean;
         replay?: "append";
         fragments?: never;
-      };
+      }
+  );
   timestamp: number;
 };
 

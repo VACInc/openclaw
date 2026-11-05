@@ -23,6 +23,9 @@ import type {
   UserTurnMessagePersistenceParams,
 } from "./user-turn-transcript.types.js";
 
+// Enumerable symbols survive runtime copies but never transcript JSON or provider payloads.
+export const MODEL_CONTEXT_SPANS = Symbol.for("openclaw.modelContextSpans");
+
 const URL_LIKE_MEDIA_PATH_PATTERN = /^[a-z][a-z0-9+.-]*:/i;
 const MIME_TYPE_PATTERN = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/iu;
 
@@ -145,9 +148,54 @@ export function readModelPromptProjection(message: unknown): string | undefined 
   return projection.text;
 }
 
+/**
+ * Provenance is captured with the immutable projection, not inferred from prompt text.
+ * Malformed ranges are dropped so a damaged label never blocks transcript replay.
+ */
+export function readModelPromptContextRanges(message: unknown): { start: number; end: number }[] {
+  const metadata = asOptionalRecord(asOptionalRecord(message)?.["__openclaw"]);
+  const projection = asOptionalRecord(metadata?.modelPromptProjection);
+  const ranges = projection?.contextRanges;
+  const text = projection?.text;
+  if (!Array.isArray(ranges) || typeof text !== "string") {
+    return [];
+  }
+  return ranges.flatMap((value) => {
+    const range = asOptionalRecord(value);
+    const start = range?.start;
+    const end = range?.end;
+    return Number.isInteger(start) &&
+      Number.isInteger(end) &&
+      typeof start === "number" &&
+      typeof end === "number" &&
+      start >= 0 &&
+      end > start &&
+      end <= text.length
+      ? [{ start, end }]
+      : [];
+  });
+}
+
+/** Bind known context bytes to a projection after owner text has been rewritten. */
+export function resolveModelPromptContextRanges(
+  text: string,
+  spans: readonly { containerText: string; start: number; end: number }[],
+): { start: number; end: number }[] {
+  return spans.flatMap((span) => {
+    const offset = text.indexOf(span.containerText);
+    if (offset >= 0) {
+      return [{ start: offset + span.start, end: offset + span.end }];
+    }
+    const fragment = span.containerText.slice(span.start, span.end);
+    const at = span.start === 0 ? text.indexOf(fragment) : text.lastIndexOf(fragment);
+    return at < 0 ? [] : [{ start: at, end: at + fragment.length }];
+  });
+}
+
 export function prepareModelPromptProjection(
   message: unknown,
   text: string,
+  contextRanges?: readonly { start: number; end: number }[],
 ): PersistedUserTurnMessage | undefined {
   if (!isUserMessage(message)) {
     throw new Error("Model prompt projection lost its canonical user turn");
@@ -163,7 +211,11 @@ export function prepareModelPromptProjection(
     ...message,
     __openclaw: {
       ...message["__openclaw"],
-      modelPromptProjection: { version: 1, text },
+      modelPromptProjection: {
+        version: 1,
+        text,
+        ...(contextRanges?.length ? { contextRanges } : {}),
+      },
     },
   };
 }
@@ -204,12 +256,21 @@ export function projectRecordedModelPrompt(
     content = text;
   }
   const metadata = { ...message["__openclaw"] };
+  const ranges = readModelPromptContextRanges(
+    readModelPromptProjection(transcript) !== undefined ? transcript : message,
+  );
   delete metadata.modelPromptProjection;
   const projected: PersistedUserTurnMessage = {
     ...message,
     content,
     timestamp: transcript?.role === "user" ? transcript.timestamp : message.timestamp,
   };
+  if (ranges.length) {
+    Object.defineProperty(projected, MODEL_CONTEXT_SPANS, {
+      enumerable: true,
+      value: ranges.map((range) => ({ containerText: text, start: range.start, end: range.end })),
+    });
+  }
   delete projected["__openclaw"];
   if (Object.keys(metadata).length > 0) {
     projected["__openclaw"] = metadata;

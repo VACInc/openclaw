@@ -391,7 +391,7 @@ provider and config `onPayload` transforms. For transports that use host
 request encoding it runs at final encoding instead. The returned payload is
 what the transport hashes, records for context-retry admission, and sends.
 
-The event is `{ payload, provider, model, messages }`:
+The event is `{ payload, provider, model, messages, contextSpans }`:
 
 - `payload` is the provider-specific request body. Return `{ payload }` to
   replace it, or return nothing to send it unchanged. Handlers run in priority
@@ -405,6 +405,16 @@ The event is `{ payload, provider, model, messages }`:
   host-owned metadata such as `__openclaw.senderIsOwner`. Editing it does not
   change the request. Use that metadata, not text inside a message, to decide
   sender trust.
+- `contextSpans` labels plugin-retrieved context (the `prependContext` and
+  `appendContext` that `before_prompt_build` added to the current prompt)
+  separately from the owner's own text. Each span is `{ containerText, start,
+  end }` with UTF-16 offsets into `containerText`, the assembled user prompt.
+  Labels are captured with the stored model-prompt projection and restored
+  through tool turns, transport retries, later turns, and process restarts.
+  Protected-delimiter encodings carry matching variants with adjusted offsets.
+  Older stored prompts without ranges stay unlabeled; text is never guessed
+  into a trust category. System prompts and system-context instructions are
+  not labeled. The hook gets a detached copy.
 
 The hook context carries the usual agent fields (`agentId`, `sessionKey`,
 `sessionId`, `runId`, channel and sender fields when known) plus

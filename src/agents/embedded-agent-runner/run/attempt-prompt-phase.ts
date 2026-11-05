@@ -24,6 +24,7 @@ import { createFixedRequestTokenEstimator } from "../../sessions/context-token-p
 import { withSessionManagerAppend } from "../../sessions/session-manager-append-admission.js";
 import { prepareGooglePromptCacheStreamFn } from "../google-prompt-cache.js";
 import { log } from "../logger.js";
+import { getProviderPromptState } from "../provider-prompt-state.js";
 import {
   persistToolResultProjections,
   persistSessionSystemPrompt,
@@ -241,6 +242,7 @@ export async function runEmbeddedAttemptPromptPhase(
       systemPromptText,
       toolResultPromptProjectionState,
     });
+    getProviderPromptState(attempt.runId).contextSpans = promptContext.contextSpans;
     input.setup.prepStages.mark("prompt-context");
     if (runAbortController.signal.aborted) {
       throw createAbortableError(runAbortController.signal);
@@ -552,6 +554,7 @@ export async function runEmbeddedAttemptPromptPhase(
             });
           }
         },
+        contextSpans: promptContext.contextSpans,
         ...(promptBuildPrependContext ? { prependContext: promptBuildPrependContext } : {}),
         ...(promptContext.runtimeContextMessageForCurrentTurn
           ? { runtimeContextMessage: promptContext.runtimeContextMessageForCurrentTurn }

@@ -1,6 +1,13 @@
 import type { PluginHookAgentContext } from "./hook-agent-context.types.js";
 import type { AsyncPluginHook } from "./hook-handler.types.js";
 
+/** Host-owned ranges of retrieved context in an assembled user prompt. */
+export type PluginHookModelContextSpan = {
+  containerText: string;
+  start: number;
+  end: number;
+};
+
 /**
  * Final embedded provider request. `payload` is provider-specific and is what the
  * transport encodes next. `messages` is a detached copy of the model-facing history,
@@ -12,6 +19,8 @@ export type PluginHookBeforeModelRequestEvent = {
   provider: string;
   model: string;
   messages: readonly unknown[];
+  /** Host-labeled retrieved context inside the current user prompt. */
+  contextSpans?: readonly PluginHookModelContextSpan[];
 };
 
 /** Replacement payload. Return nothing to send the current payload unchanged. */

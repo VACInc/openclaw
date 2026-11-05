@@ -94,6 +94,7 @@ export function createPromptAssemblyResult(
     effectiveTranscriptPrompt: input.attempt.prompt,
     promptBuildPrependContext: undefined,
     promptBuildAppendContext: undefined,
+    contextSpans: [],
     originContext: undefined,
     transcriptLeafId: null,
   };

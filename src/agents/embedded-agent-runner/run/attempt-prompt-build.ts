@@ -31,6 +31,7 @@ import {
   buildModelIdentityPromptLine,
 } from "../../system-prompt.js";
 import { log } from "../logger.js";
+import { buildModelContextSpans } from "../model-request-hook.js";
 import { normalizeAssistantReplayContent } from "../replay-history.js";
 import {
   createToolResultPromptProjectionState,
@@ -272,6 +273,13 @@ export async function prepareEmbeddedAttemptPromptAssembly(input: {
   if (promptBuildAppendContext) {
     effectivePrompt = `${effectivePrompt}\n\n${promptBuildAppendContext}`;
   }
+  // Keep the complete container so an identical quote elsewhere never gains this label.
+  // System/developer prompts are deliberately outside this provenance boundary.
+  const contextSpans = buildModelContextSpans(
+    effectivePrompt,
+    promptBuildPrependContext,
+    promptBuildAppendContext,
+  );
   const legacySystemPrompt = normalizeOptionalString(hookResult?.systemPrompt) ?? "";
   if (legacySystemPrompt) {
     setSystemPrompt(legacySystemPrompt);
@@ -340,6 +348,7 @@ export async function prepareEmbeddedAttemptPromptAssembly(input: {
     effectivePrompt,
     promptBuildPrependContext,
     promptBuildAppendContext,
+    contextSpans,
     effectiveTranscriptPrompt,
     originContext,
     transcriptLeafId,
@@ -367,6 +376,7 @@ type PromptContextAttempt = Pick<
 type PromptAssemblyContext = {
   promptBuildPrependContext?: string;
   promptBuildAppendContext?: string;
+  contextSpans?: ReturnType<typeof buildModelContextSpans>;
   effectivePrompt: string;
   effectiveTranscriptPrompt: string;
   originContext?: ReturnType<typeof buildInterSessionPromptContext>;
@@ -525,6 +535,26 @@ export async function prepareEmbeddedAttemptPromptContext(input: {
           contextFragments,
           input.inHistorySystemUpdates,
         );
+  // A fallback keeps the accepted user projection; fresh retrievals live in
+  // the appended carrier instead. Label those exact projected bytes only.
+  const fallbackContext =
+    escapedProjection || input.inHistorySystemUpdates
+      ? projectRuntimeContextFragments(fallbackHookFragments)
+      : fallbackHookFragments.map((fragment) => fragment.text).join("\n\n");
+  const contextSpans = isDispatchedCanonicalFallback
+    ? runtimeContextMessageForCurrentTurn && fallbackContext
+      ? buildModelContextSpans(
+          runtimeContextMessageForCurrentTurn.content,
+          undefined,
+          fallbackContext,
+        )
+      : []
+    : (input.prompt.contextSpans ?? []);
+  if (isDispatchedCanonicalFallback && runtimeContextMessageForCurrentTurn && contextSpans.length) {
+    runtimeContextMessageForCurrentTurn.details.contextRanges = contextSpans.map(
+      ({ start, end }) => ({ start, end }),
+    );
+  }
   const messagesForCurrentPrompt = runtimeContextMessageForCurrentTurn
     ? [...sessionMessages, runtimeContextMessageForCurrentTurn]
     : sessionMessages;
@@ -564,6 +594,7 @@ export async function prepareEmbeddedAttemptPromptContext(input: {
   });
 
   return {
+    contextSpans,
     aggregatePressureEngaged,
     contextTokenBudget,
     ...(currentUserTimestampOverride ? { currentUserTimestampOverride } : {}),

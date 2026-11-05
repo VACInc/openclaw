@@ -31,9 +31,9 @@ import {
 import { persistUserTurnInput, stageUserTurnPendingInput } from "./user-turn-transcript-media.js";
 import { createUserTurnProcessingCompletion } from "./user-turn-transcript-processing.js";
 import {
-  capturePersistedModelPromptProjection,
+  capturePersistedModelPromptProjection as captureProjection,
   confirmPersistedSteerTargetRunId,
-  preparePersistedModelPromptProjection,
+  preparePersistedModelPromptProjection as prepareProjection,
 } from "./user-turn-transcript-updates.js";
 import {
   buildLateResolvedMediaMessage,
@@ -332,7 +332,7 @@ export function createUserTurnTranscriptRecorder(
     await admissionWrite;
   };
 
-  const prepareProjectionParams = async (text: string, assertCurrent: () => void) => {
+  const projectionParams = async (text: string, assertCurrent: () => void) => {
     await waitForRuntimePersistence();
     if (!admissionReceipt && selfPersistencePromise) {
       await selfPersistencePromise;
@@ -650,10 +650,10 @@ export function createUserTurnTranscriptRecorder(
     },
     getPersistedMessage: () =>
       admittedMessage ?? runtimePersistedMessage ?? persistedResult?.message,
-    captureModelPromptProjection: async (text, assertCurrent) =>
-      capturePersistedModelPromptProjection(await prepareProjectionParams(text, assertCurrent)),
-    prepareModelPromptProjection: async (text, assertCurrent) =>
-      preparePersistedModelPromptProjection(await prepareProjectionParams(text, assertCurrent)),
+    captureModelPromptProjection: async (text, assertCurrent, ranges) =>
+      captureProjection(await projectionParams(text, assertCurrent), ranges),
+    prepareModelPromptProjection: async (text, assertCurrent, ranges) =>
+      prepareProjection(await projectionParams(text, assertCurrent), ranges),
     getAdmissionReceipt: () => admissionReceipt,
     setAdmissionHandler: (handler) => {
       admissionHandler = handler;
