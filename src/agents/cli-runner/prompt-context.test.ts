@@ -1,7 +1,12 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { buildCliSessionDriftNote } from "../cli-session-drift.js";
 import * as media from "../media-generation-task-status.js";
-import { buildCliCurrentPrompt, prepareCliTurnPromptContext } from "./prompt-context.js";
+import { buildAgentSystemPrompt } from "../system-prompt.js";
+import {
+  buildCliCurrentPrompt,
+  prepareCliTurnPromptContext,
+  relocateClaudeCliCallerSurface,
+} from "./prompt-context.js";
 import type { CliReusableSession } from "./types.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -104,6 +109,91 @@ it("preserves private Runtime facts when optional turn context fails", async () 
   expect(turn).toMatchObject({ systemPrompt: stable, prompt: "Hello" });
   expect(turn.promptContext?.prependContext).toBe("Required current input context.");
   expect(turn.promptContext?.appendContext).toBe(`${runtimeFacts}\n\n${guidance}`);
+});
+
+it("keeps caller-surface sections out of a reused Claude CLI system prompt", async () => {
+  const shared = {
+    workspaceDir: "/tmp/openclaw",
+    promptSurface: "cli_backend" as const,
+    toolNames: ["read", "message", "show_widget", "dashboard"],
+    runtimeInfo: { channel: "telegram", host: "openclaw", os: "linux", arch: "x64" },
+  };
+  const messageContext = "### Message Context\nstable caller metadata";
+  const withSurface = buildAgentSystemPrompt({
+    ...shared,
+    modelAliasLines: ["- fast: anthropic/claude-haiku"],
+    extraSystemPrompt: `${messageContext}\n### Delivery Format\nfollow this channel contract`,
+  });
+  const withoutSurface = buildAgentSystemPrompt({
+    ...shared,
+    extraSystemPrompt: messageContext,
+  });
+  expect(withSurface).toContain("## Model Aliases");
+  expect(withSurface).toContain("### Delivery Format");
+  expect(withSurface).toContain("## UI Presentation");
+  expect(withoutSurface).not.toContain("## Model Aliases");
+  expect(withoutSurface).not.toContain("### Delivery Format");
+
+  const [first, second] = await Promise.all([
+    prepare({ systemPrompt: withSurface }),
+    prepare({ systemPrompt: withoutSurface }),
+  ]);
+  expect(first.systemPrompt).toBe(second.systemPrompt);
+  expect(first.systemPrompt).not.toContain("## Model Aliases");
+  expect(first.systemPrompt).not.toContain("### Delivery Format");
+  expect(first.systemPrompt).not.toContain("## UI Presentation");
+  expect(first.systemPrompt).toContain("### Message Context");
+  expect(first.promptContext?.appendContext).toContain("## Model Aliases");
+  expect(first.promptContext?.appendContext).toContain("- fast: anthropic/claude-haiku");
+  expect(first.promptContext?.appendContext).toContain("### Delivery Format");
+  expect(first.promptContext?.appendContext).toContain("`show_widget`");
+  expect(first.promptContext?.appendContext).toContain("`dashboard`");
+  expect(second.promptContext?.appendContext ?? "").not.toContain("## Model Aliases");
+  expect(second.promptContext?.appendContext ?? "").not.toContain("### Delivery Format");
+});
+
+it("moves Control UI sections out of the Claude CLI system prompt", async () => {
+  const shared = {
+    workspaceDir: "/tmp/openclaw",
+    promptSurface: "cli_backend" as const,
+    toolNames: ["read", "message"],
+    runtimeInfo: { host: "openclaw", os: "linux", arch: "x64" },
+  };
+  const webchat = buildAgentSystemPrompt({
+    ...shared,
+    runtimeInfo: { ...shared.runtimeInfo, channel: "webchat" },
+  });
+  const telegram = buildAgentSystemPrompt({
+    ...shared,
+    runtimeInfo: { ...shared.runtimeInfo, channel: "telegram" },
+  });
+  expect(webchat).toContain("## Control UI Embed");
+  expect(webchat).toContain("## Control UI Side Chat");
+  expect(telegram).not.toContain("## Control UI Embed");
+
+  const webchatTurn = await prepare({ systemPrompt: webchat });
+  const telegramTurn = await prepare({ systemPrompt: telegram });
+  expect(webchatTurn.systemPrompt).not.toContain("## Control UI Embed");
+  expect(webchatTurn.systemPrompt).not.toContain("## Control UI Side Chat");
+  expect(webchatTurn.promptContext?.appendContext).toContain("## Control UI Embed");
+  expect(webchatTurn.promptContext?.appendContext).toContain("[embed");
+  expect(webchatTurn.promptContext?.appendContext).toContain("## Control UI Side Chat");
+  expect(telegramTurn.systemPrompt).not.toContain("## Control UI Embed");
+  expect(telegramTurn.promptContext?.appendContext ?? "").not.toContain("## Control UI Embed");
+});
+
+it("leaves caller-surface sections in place for other CLI backends", () => {
+  const systemPrompt = "Stable.\n## Model Aliases\n- fast: provider/model";
+  expect(relocateClaudeCliCallerSurface(systemPrompt).perTurn).toContain("## Model Aliases");
+  return prepare({
+    backendId: "fixture-cli",
+    backend: { command: "fixture-cli", systemPromptArg: "--system-prompt" },
+    systemPrompt,
+    privateContext: false,
+  }).then((turn) => {
+    expect(turn.systemPrompt).toContain("## Model Aliases");
+    expect(turn.prompt).not.toContain("## Model Aliases");
+  });
 });
 
 it("lets a whole-system hook replacement remove ordinary Claude Runtime facts", async () => {

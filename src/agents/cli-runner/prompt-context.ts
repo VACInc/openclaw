@@ -179,6 +179,15 @@ export async function prepareCliTurnPromptContext(
   } catch (error) {
     cliBackendLog.warn(`cli prompt-build hook preparation failed: ${String(error)}`);
   }
+  if (params.backendId === "claude-cli") {
+    const callerSurface = relocateClaudeCliCallerSurface(systemPrompt);
+    systemPrompt = callerSurface.systemPrompt;
+    if (callerSurface.perTurn) {
+      appendContext = [appendContext, callerSurface.perTurn]
+        .filter((value) => Boolean(value?.trim()))
+        .join("\n\n");
+    }
+  }
   const logicalPrompt = composeCliPromptContext(params.prompt, { prependContext, appendContext });
   if ((prependContext || appendContext) && params.privateContext) {
     // The plugin transports private context separately; policy hooks still see all of it.
@@ -193,6 +202,69 @@ export async function prepareCliTurnPromptContext(
     };
   }
   return { prompt: logicalPrompt, systemPrompt };
+}
+
+const CLAUDE_CLI_CALLER_SURFACE_HEADINGS = new Set([
+  "## UI Presentation",
+  "## Control UI Embed",
+  "## Control UI Side Chat",
+  "## Model Aliases",
+  "### Delivery Format",
+]);
+
+function headingLevel(line: string): number | undefined {
+  if (line.startsWith("### ")) {
+    return 3;
+  }
+  if (line.startsWith("## ")) {
+    return 2;
+  }
+  if (line.startsWith("# ")) {
+    return 1;
+  }
+  return undefined;
+}
+
+/**
+ * Claude CLI caches `appendSystemPrompt` for the life of the process. These
+ * sections follow the current caller, so a reused session must carry them on
+ * the turn instead of inside that cached prompt.
+ */
+export function relocateClaudeCliCallerSurface(systemPrompt: string): {
+  systemPrompt: string;
+  perTurn?: string;
+} {
+  if (![...CLAUDE_CLI_CALLER_SURFACE_HEADINGS].some((heading) => systemPrompt.includes(heading))) {
+    return { systemPrompt };
+  }
+  const lines = systemPrompt.split("\n");
+  const kept: string[] = [];
+  const moved: string[][] = [];
+  for (let index = 0; index < lines.length;) {
+    const line = lines[index] ?? "";
+    const level = headingLevel(line);
+    if (level === undefined || !CLAUDE_CLI_CALLER_SURFACE_HEADINGS.has(line)) {
+      kept.push(line);
+      index += 1;
+      continue;
+    }
+    const block = [line];
+    index += 1;
+    while (index < lines.length) {
+      const nextLevel = headingLevel(lines[index] ?? "");
+      if (nextLevel !== undefined && nextLevel <= level) {
+        break;
+      }
+      block.push(lines[index] ?? "");
+      index += 1;
+    }
+    while (block.length > 1 && block[block.length - 1] === "") {
+      block.pop();
+    }
+    moved.push(block);
+  }
+  const perTurn = moved.map((block) => block.join("\n")).join("\n\n");
+  return perTurn ? { systemPrompt: kept.join("\n"), perTurn } : { systemPrompt };
 }
 
 /** Logical input for raw transports, policy hooks, and bounded diagnostics. */
