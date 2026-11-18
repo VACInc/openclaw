@@ -68,6 +68,13 @@ export type ProvisionCopyDetails = {
     | "helper-unavailable";
   batchCount: number;
   sourceBytes: number;
+  clonedFiles?: number;
+  clonedBytes?: number;
+  copiedFiles?: number;
+  copiedBytes?: number;
+  unreportedFiles?: number;
+  unreportedBytes?: number;
+  reflinkFallbackReason?: string;
   spawnCount: number;
   spawnMs: number;
   childMs: number;
@@ -83,7 +90,11 @@ export type FsSafeCopyReply =
   | { type: "probe"; backend: TreeCloneBackend | undefined; nativeMode: FsSafeNativeMode }
   | { type: "metadata"; entries: (CloneFileMetadata | undefined)[] }
   | { type: "acl"; acl: DarwinAclInspection }
-  | { type: "written"; workspaceEvidence?: WorktreeWorkerAuthority["workspaceEvidence"] }
+  | {
+      type: "written";
+      cloneWriteBytes?: number;
+      workspaceEvidence?: WorktreeWorkerAuthority["workspaceEvidence"];
+    }
   | {
       type: "provisioned";
       paths: string[];

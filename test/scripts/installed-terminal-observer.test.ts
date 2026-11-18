@@ -1787,7 +1787,7 @@ it.each([false, true])(
     assert(typeof probeSource === "string");
     if (!historical) {
       expect(createHash("sha256").update(probeSource).digest("hex")).toBe(
-        "d20c4ee82bfef4b497e1608d1a4eab79f60ea69e70dc41fa625579d27f888b8e",
+        "ed25993c504b1a383e6b152164c854e170972579cb8ebe547df568aff5435188",
       );
     }
     fs.writeFileSync(probe, probeSource);
